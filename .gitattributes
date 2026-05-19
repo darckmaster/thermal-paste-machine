@@ -1,0 +1,10 @@
+# Forcer LF pour tous les fichiers texte (compatibilité Linux/Raspberry Pi)
+* text=auto eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+
+# Fichiers binaires
+*.png binary
+*.jpg binary
+*.pdf binary

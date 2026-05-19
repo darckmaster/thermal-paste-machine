@@ -1,0 +1,6 @@
+opencv-contrib-python>=4.8
+pyserial>=3.5
+fpdf2>=2.7
+numpy>=1.24
+pytest>=7.0
+# PyQt5 installé via apt sur Raspberry Pi OS
