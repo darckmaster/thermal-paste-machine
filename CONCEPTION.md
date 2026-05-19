@@ -8,24 +8,124 @@
 
 ## 1. Description du système physique
 
-### Matériel
+### 1.1 Inventaire matériel
 
-| Composant | Description |
-|---|---|
-| Base mécanique | Imprimante 3D Geeetech I3 (axe X/Y/Z) |
-| Piston | Nema 17 en remplacement de l'extrudeur + vis sans fin |
-| Contrôleur machine | Carte d'origine Geeetech (firmware Marlin) |
-| Ordinateur de contrôle | Raspberry Pi (modèle à préciser) |
-| Caméra | Module caméra Raspberry Pi |
-| Interface utilisateur | Écran tactile 7 pouces |
-| Pièce à traiter | Coque de calculateur automobile |
-| Référentiel | Marqueurs ArUco encadrant la pièce |
+| Composant | Référence / Modèle | Rôle |
+|---|---|---|
+| Ordinateur de contrôle | Raspberry Pi 3B+ | Exécute le logiciel, pilote tous les périphériques |
+| Caméra | Module Caméra Raspberry Pi (CSI) — version à confirmer | Capture l'image de la pièce avant et après dépose |
+| Interface utilisateur | Écran tactile 7 pouces (800×480) | Affichage de l'IHM, saisie par le toucher |
+| Base mécanique | Imprimante 3D Geeetech I3 (axes X/Y/Z) | Déplacement de la buse sur la pièce |
+| Actionneur de dépose | Moteur Nema 17 sur axe E (ex-extrudeur) + vis sans fin | Pousse le piston de la seringue de pâte thermique |
+| Contrôleur machine | Carte d'origine Geeetech — firmware Marlin (version à confirmer) | Interprète les commandes G-code, pilote les moteurs |
+| Pièce à traiter | Coque de calculateur automobile | Support de la dépose de pâte thermique |
+| Référentiel géométrique | 4 marqueurs ArUco (DICT_4X4_50, IDs 0–3) | Permettent le calibrage de perspective par vision |
 
-### Flux de travail physique
+> **Versions à confirmer lors de la première mise en service :**
+> - Module caméra RPi : lancer `rpicam-hello --list-cameras` ou lire l'étiquette sur le module
+> - Firmware Marlin : envoyer la commande G-code `M115` via terminal série (réponse : `FIRMWARE_NAME:Marlin VERSION:x.x.x`)
+
+---
+
+### 1.2 Connexions entrées/sorties (E/S)
+
+| Interface | Protocole | Connecteur | De | Vers |
+|---|---|---|---|---|
+| CSI (Camera Serial Interface) | Liaison série MIPI CSI-2 | Nappe 15 broches | RPi 3B+ | Module caméra |
+| USB série | UART via CH340 (ou FT232) | USB Type-A → USB Type-B | RPi 3B+ | Carte Geeetech (Marlin) |
+| HDMI | HDMI 1.4 | HDMI standard | RPi 3B+ | Écran tactile 7" |
+| USB tactile | HID USB | USB Type-A | RPi 3B+ | Contrôleur tactile de l'écran |
+| Alimentation | 5 V / 2,5 A min | Micro-USB | Alimentation murale | RPi 3B+ |
+
+> **Note port série :** la carte Geeetech apparaît sous `/dev/ttyUSB0` (puce CH340) ou `/dev/ttyACM0` (puce ATmega USB natif) selon le modèle exact. À identifier lors de la première connexion avec `ls /dev/tty*` avant et après branchement USB.
+
+---
+
+### 1.3 Synoptique matériel
+
+```mermaid
+graph LR
+    subgraph RPi["🖥️ Raspberry Pi 3B+"]
+        SOFT["Logiciel Python\ncaméra · vision · machine\npath_planner · GUI · reporter"]
+    end
+
+    CAM["📷 Module Caméra RPi\n(interface CSI, nappe 15 br.)"]
+    SCREEN["🖱️ Écran tactile 7\"\n800×480 px\n(HDMI + USB touch)"]
+
+    subgraph MACHINE["⚙️ Geeetech I3 — Firmware Marlin"]
+        CTRL["Carte contrôleur\nGeeetech"]
+        AXE_XY["Axes X / Y\n(déplacement buse)"]
+        AXE_Z["Axe Z\n(hauteur buse)"]
+        PISTON["Axe E → Piston Nema 17\n(dépose pâte thermique)"]
+        HOMING["Capteurs fin de course\n(remise à zéro)"]
+        CTRL --> AXE_XY & AXE_Z & PISTON & HOMING
+    end
+
+    subgraph ZONE["🔧 Zone de travail"]
+        PIECE["Coque calculateur\nautomobile"]
+        ARUCO["Marqueurs ArUco ×4\n(coins — IDs 0, 1, 2, 3)"]
+    end
+
+    CAM -->|"CSI — nappe 15 br."| RPi
+    SCREEN -->|"HDMI + USB"| RPi
+    RPi -->|"USB série\nCH340 · 115200 baud\nprotocole G-code"| MACHINE
+
+    CAM -. "capture image\n(avant / après)" .-> ZONE
+    PISTON -. "dépose pâte\nthermique" .-> PIECE
+```
+
+> **Légende :** traits pleins = liaisons physiques permanentes · traits pointillés = interactions fonctionnelles
+
+---
+
+### 1.4 Contraintes matérielles et choix techniques
+
+#### Raspberry Pi 3B+ — limitations à prendre en compte
+
+| Ressource | Valeur RPi 3B+ | Impact sur le projet |
+|---|---|---|
+| RAM | 1 Go | Images OpenCV limitées à 1280×960 max en mémoire simultanée |
+| CPU | Cortex-A53 × 4 cœurs @ 1,4 GHz (64 bits) | Traitement ArUco en ~100–300 ms selon résolution |
+| GPU | VideoCore IV | Non utilisé dans ce projet (pas de CUDA/OpenCL nécessaire) |
+| USB | USB 2.0 ×4 | Débit série largement suffisant (115200 baud = ~11 Ko/s) |
+| Interface caméra | CSI-2 (nappe 15 br.) | Requiert `picamera2` ou pilote V4L2 (pas de simple `cv2.VideoCapture()`) |
+
+**Stratégie d'optimisation adoptée :**
+- Capture en haute résolution (ex. 1280×960) uniquement pour la photo du rapport
+- Traitement ArUco en résolution réduite (640×480) pour la rapidité
+- Pas de traitement vidéo temps réel : capture déclenchée sur demande uniquement
+
+#### Module caméra RPi — interface logicielle
+
+Le module caméra Raspberry Pi utilise l'interface CSI (non USB), donc `cv2.VideoCapture(0)` seul ne fonctionne pas sans configuration. Deux approches possibles :
+
+| Approche | Librairie | Avantage | Inconvénient |
+|---|---|---|---|
+| **V4L2** (recommandée) | `cv2.VideoCapture("/dev/video0")` après `modprobe bcm2835-v4l2` | Unifie l'interface avec le reste du code OpenCV | Nécessite d'activer le pilote V4L2 au démarrage |
+| **picamera2** | `picamera2` (MIT) | API native RPi, meilleur contrôle exposition/balance | Code spécifique RPi, non portable sur Windows |
+
+> **Décision à prendre en Phase 1** : choisir l'approche et documenter ici le résultat.
+
+#### Firmware Marlin — commandes utilisées
+
+Les commandes G-code utilisées dans ce projet sont standard Marlin depuis la version 1.1.x. Le projet est donc compatible avec toutes les versions récentes de Marlin installées sur les cartes Geeetech.
+
+| Commande | Disponible depuis | Description |
+|---|---|---|
+| `G28` | Marlin 1.0+ | Homing tous axes |
+| `G1 X Y Z F` | Marlin 1.0+ | Déplacement linéaire |
+| `G1 E F` | Marlin 1.0+ | Avance extrudeur (→ piston) |
+| `M114` | Marlin 1.0+ | Position courante |
+| `M112` | Marlin 1.0+ | Arrêt d'urgence |
+| `M115` | Marlin 1.0+ | Version firmware |
+
+---
+
+### 1.5 Flux de travail physique
 
 ```
 [Plateau reculé] → [Photo de la pièce] → [Choix zone/quantité]
-    → [Dépose automatique] → [Photo résultat] → [Rapport]
+    → [Dépose automatique] → [Photo résultat] → [Rapport PDF]
 ```
 
 ---
@@ -90,20 +190,38 @@ IDLE → CAPTURE → CONFIGURE → RUNNING → DONE → IDLE
 
 ## 3. Stack technique
 
-| Besoin | Librairie | Version cible | Justification |
-|---|---|---|---|
-| Interface tactile | PyQt5 | ≥ 5.15 | Mature, bien documenté, bon rendu tactile |
-| Vision / ArUco | OpenCV + contrib | ≥ 4.8 | Standard industrie, ArUco intégré dans contrib |
-| Communication machine | pyserial | ≥ 3.5 | Communication USB/UART avec Marlin |
-| Rapports PDF | fpdf2 | ≥ 2.7 | Simple, pur Python, pas de dépendances lourdes |
-| Calcul numérique | numpy | ≥ 1.24 | Algèbre vectorielle pour les trajectoires |
-| Tests | pytest | ≥ 7.0 | Standard Python |
+Toutes les librairies utilisées sont **open source** et utilisables en entreprise sans licence tierce payante.
 
-### Installation (Raspberry Pi OS)
+| Besoin | Librairie | Licence | Version cible | Justification |
+|---|---|---|---|---|
+| Interface tactile | PyQt5 | GPL v3* | ≥ 5.15 | Mature, bien documenté, bon rendu tactile |
+| Vision / ArUco | opencv-contrib-python | Apache 2.0 | ≥ 4.8 | Standard industrie, module ArUco intégré |
+| Caméra RPi (CSI) | picamera2 | BSD | ≥ 0.3 | API officielle Raspberry Pi, ou V4L2 via OpenCV |
+| Communication machine | pyserial | BSD | ≥ 3.5 | Communication USB/UART avec Marlin |
+| Rapports PDF | fpdf2 | LGPL | ≥ 2.7 | Simple, pur Python, pas de dépendances lourdes |
+| Calcul numérique | numpy | BSD | ≥ 1.24 | Algèbre vectorielle pour les trajectoires |
+| Tests | pytest | MIT | ≥ 7.0 | Standard Python |
+
+> *PyQt5 est sous licence GPL v3 pour sa version open source. Dans un contexte d'usage interne (logiciel non distribué à des tiers), cette licence ne pose aucune contrainte. Si le logiciel devait être distribué commercialement, il faudrait envisager PySide6 (LGPL).
+
+### Installation (Raspberry Pi OS — Bullseye ou Bookworm)
 
 ```bash
-sudo apt update && sudo apt install -y python3-pip python3-pyqt5 libatlas-base-dev
+# Dépendances système
+sudo apt update && sudo apt install -y python3-pip python3-pyqt5 libatlas-base-dev python3-picamera2
+
+# Activer le pilote V4L2 pour la caméra CSI (si approche OpenCV retenue)
+echo "bcm2835-v4l2" | sudo tee /etc/modules-load.d/bcm2835-v4l2.conf
+
+# Dépendances Python
 pip3 install opencv-contrib-python pyserial fpdf2 numpy pytest
+```
+
+### Installation (Windows — développement sans matériel)
+
+```bash
+pip install opencv-contrib-python pyserial fpdf2 numpy pytest PyQt5
+# picamera2 non disponible sur Windows — la classe Camera devra être mockée pour les tests
 ```
 
 ---
