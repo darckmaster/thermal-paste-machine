@@ -99,7 +99,53 @@ thermal-paste-machine/
 
 ## Conventions de code
 
-- **Langue** : noms de variables/fonctions en anglais, commentaires et docstrings en français
+- **Langue des identifiants** : noms de variables/fonctions en anglais (convention Python universelle)
+- **Langue des commentaires** : tous les commentaires et docstrings **en français**, sans exception
 - **Style** : PEP 8, type hints sur toutes les interfaces publiques
 - **Tests** : un fichier `tests/test_<module>.py` par module, lancé avec `pytest`
-- **Commits** : un commit par phase ou sous-tâche significative, message en français
+
+### Commentaires — règle didactique (IMPORTANT)
+
+Le projet est pédagogique : chaque ligne de code non triviale doit être commentée en français, de façon à ce qu'un lecteur puisse comprendre **ce que fait la ligne ET pourquoi**, sans avoir à consulter la documentation externe.
+
+**Exemple attendu :**
+```python
+# Ouvrir le flux vidéo depuis la caméra connectée à l'index donné (0 = première caméra USB)
+self._cap = cv2.VideoCapture(self._index)
+
+# Vérifier que l'ouverture a réussi (la caméra peut être occupée par un autre processus)
+if not self._cap.isOpened():
+    raise RuntimeError("Impossible d'ouvrir la caméra")
+```
+
+**Exemple à éviter :**
+```python
+self._cap = cv2.VideoCapture(self._index)  # VideoCapture
+```
+
+### Commits — règle d'autoportance (IMPORTANT)
+
+Chaque message de commit doit être **autoporteur** : un développeur qui lit le log git doit comprendre sans ouvrir les fichiers ce qui a été fait et pourquoi. Le message doit contenir :
+
+1. **Une ligne de titre** résumant l'action (ex: `Phase 1 — Implémentation de modules/camera.py`)
+2. **Le contexte** : quelle phase, quel objectif, quelle contrainte a motivé le changement
+3. **Les ajouts/modifications fonctionnels** : ce que le code fait désormais (comportement, pas syntaxe)
+4. **Les fichiers modifiés** listés explicitement
+
+**Exemple de bon commit :**
+```
+Phase 1 — Implémentation de modules/camera.py
+
+Contexte : Phase 1 du plan de développement — validation de la chaîne
+logicielle caméra sur Raspberry Pi.
+
+Ajouts fonctionnels :
+- Classe Camera : ouverture du flux, capture d'une image BGR, libération
+- Gestion d'erreur si la caméra est absente ou déjà utilisée
+- Script de démonstration : affichage temps réel avec cv2.imshow()
+
+Fichiers modifiés :
+- modules/camera.py (nouveau)
+- tests/demo_camera.py (nouveau)
+- tests/test_camera.py (nouveau)
+```
