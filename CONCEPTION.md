@@ -2,13 +2,26 @@
 
 **Projet** : Automatisation de la dépose de pâte thermique sur coques de calculateur automobile  
 **Contexte** : Projet d'études — apprentissage progressif  
-**Dernière mise à jour** : 2026-05-19  
+**Dernière mise à jour** : 2026-05-27  
 
 ---
 
 ## 1. Description du système physique
 
-### 1.1 Inventaire matériel
+### 1.1 Stratégie matérielle — deux machines, un seul logiciel
+
+Le projet utilise **deux machines successives** avec le même firmware Marlin, ce qui permet de développer et valider le logiciel sur la machine disponible immédiatement, puis de le transférer sur la machine de production sans réécriture.
+
+| Machine | Rôle | Calendrier |
+|---|---|---|
+| **Geeetech I3 (imprimante modifiée)** | Proof of concept — développement et validation logicielle | Maintenant → fin juin 2026 |
+| **CNC cible** (carte Marlin) | Machine de production finale | Assemblage juillet 2026 |
+
+> **Portabilité** : les deux machines parlent le même G-code Marlin. Le passage de l'une à l'autre se limite à la mise à jour des paramètres de `config.py` (port série, dimensions de la zone de travail, limites d'axes).
+
+---
+
+### 1.2 Inventaire matériel — Machine PoC (Geeetech I3)
 
 | Composant | Référence / Modèle | Rôle |
 |---|---|---|
@@ -25,19 +38,32 @@
 > - Module caméra RPi : lancer `rpicam-hello --list-cameras` ou lire l'étiquette sur le module
 > - Firmware Marlin : envoyer la commande G-code `M115` via terminal série (réponse : `FIRMWARE_NAME:Marlin VERSION:x.x.x`)
 
+### 1.3 Inventaire matériel — Machine cible (CNC)
+
+| Composant | Référence / Modèle | Statut |
+|---|---|---|
+| Base mécanique | CNC (à confirmer) | ⬜ À assembler |
+| Contrôleur machine | Carte CNC avec firmware Marlin | ⬜ À identifier |
+| Ordinateur de contrôle | Même Raspberry Pi 3B+ | ✅ Réutilisé depuis Geeetech |
+| Caméra + écran | Même module CSI + écran 7" | ✅ Réutilisés depuis Geeetech |
+
+> L'assemblage mécanique de la CNC (fixation des axes, câblage moteurs, configuration Marlin) est une étape hardware distincte du développement logiciel. Elle est planifiée en juillet 2026 après validation du logiciel sur la Geeetech.
+
 ---
 
-### 1.2 Connexions entrées/sorties (E/S)
+### 1.4 Connexions entrées/sorties (E/S)
+
+Ces connexions sont identiques sur les deux machines (Geeetech et CNC cible), seul le port série peut changer.
 
 | Interface | Protocole | Connecteur | De | Vers |
 |---|---|---|---|---|
 | CSI (Camera Serial Interface) | Liaison série MIPI CSI-2 | Nappe 15 broches | RPi 3B+ | Module caméra |
-| USB série | UART via CH340 (ou FT232) | USB Type-A → USB Type-B | RPi 3B+ | Carte Geeetech (Marlin) |
+| USB série | UART via CH340 (ou FT232) | USB Type-A → USB Type-B | RPi 3B+ | Carte contrôleur Marlin |
 | HDMI | HDMI 1.4 | HDMI standard | RPi 3B+ | Écran tactile 7" |
 | USB tactile | HID USB | USB Type-A | RPi 3B+ | Contrôleur tactile de l'écran |
 | Alimentation | 5 V / 2,5 A min | Micro-USB | Alimentation murale | RPi 3B+ |
 
-> **Note port série :** la carte Geeetech apparaît sous `/dev/ttyUSB0` (puce CH340) ou `/dev/ttyACM0` (puce ATmega USB natif) selon le modèle exact. À identifier lors de la première connexion avec `ls /dev/tty*` avant et après branchement USB.
+> **Note port série :** la carte contrôleur apparaît sous `/dev/ttyUSB0` (puce CH340) ou `/dev/ttyACM0` (puce ATmega USB natif). À identifier lors de chaque branchement avec `ls /dev/tty*` avant et après connexion USB.
 
 ---
 
@@ -332,21 +358,85 @@ class PathPlanner:
 
 ## 8. Plan de développement
 
-### Estimation globale
+### Vue d'ensemble — trois parties
+
+| Partie | Objectif | Deadline | Jalon |
+|---|---|---|---|
+| **A — Logiciel sur Geeetech** | Développer et valider tout le logiciel sur le PoC | Fin juin 2026 | Logiciel fonctionnel sur Geeetech |
+| **B — Intégration CNC** | Assembler la CNC cible et porter le logiciel | Fin juillet 2026 | **Soutenance blanche** |
+| **C — Finalisation** | Corrections, rapport, préparation soutenance | Fin août 2026 | **Soutenance finale** |
+
+---
+
+### Partie A — Logiciel sur Geeetech (PoC)
 
 | Phase | Description | Sessions | Durée estimée | Cumul |
 |---|---|---|---|---|
-| 1 | Environnement & Caméra de base | 1 session × ~2h | ~2h | ~2h |
-| 2 | Détection ArUco & calibrage | 3 sessions × ~2h | ~6h | ~8h |
-| 3 | Communication machine (G-code) | 2 sessions × ~2h | ~4h | ~12h |
-| 4 | Interface graphique (squelette PyQt5) | 3 sessions × ~2h | ~6h | ~18h |
-| 5 | Sélection de zone & trajectoire | 3 sessions × ~2h | ~6h | ~24h |
-| 6 | Intégration du workflow complet | 3 sessions × ~2h | ~6h | ~30h |
-| 7 | Génération de rapport PDF | 2 sessions × ~2h | ~4h | ~34h |
-| 8 | Tests, robustesse, finitions | 3 sessions × ~2h | ~6h | ~40h |
-| **Total** | | **20 sessions** | **~40h** | |
+| 0 | Identification matériel (caméra, port, firmware Marlin) | 1 session × ~2h | ~2h | ~2h |
+| 1 | Caméra de base (`camera.py`) | 1 session × ~2h | ~2h | ~4h |
+| 2 | Détection ArUco & calibrage (`vision.py`) | 3 sessions × ~2h | ~6h | ~10h |
+| 3 | Communication G-code Marlin (`machine.py`) | 2 sessions × ~2h | ~4h | ~14h |
+| 4 | Interface graphique squelette (`gui/`) | 3 sessions × ~2h | ~6h | ~20h |
+| 5 | Sélection zone & trajectoire (`path_planner.py`) | 3 sessions × ~2h | ~6h | ~26h |
+| 6 | Intégration workflow complet (`main.py`) | 3 sessions × ~2h | ~6h | ~32h |
+| 7 | Génération rapport PDF (`reporter.py`) | 2 sessions × ~2h | ~4h | ~36h |
+| 8 | Tests, robustesse, finitions (Geeetech) | 3 sessions × ~2h | ~6h | ~42h |
+| **Total A** | | **21 sessions** | **~42h** | |
 
-> **Contexte deadline** : Fin juin 2026 (≈ 6 semaines depuis mi-mai). Rythme cible : **3 à 4 sessions par semaine** pour tenir le planning.
+> **Contrainte** : vacances 15–19 juin inclus (aucune session).  
+> **Rythme cible** : 3 à 4 sessions/semaine + 1 session le week-end pour tenir fin juin.
+
+> ⚠️ **Point d'attention — semaine du 8 au 14 juin (semaine la plus chargée du projet) :**  
+> La phase 4 (interface graphique — 3 sessions) tombe exactement la même semaine que la deadline du premier draft rapport (15 juin).  
+> Il faudra gérer les deux en parallèle : sessions de dev en journée, rédaction rapport le soir.  
+> La phase 4 peut être légèrement décalée (démarrer le 10, finir les 13–14 en week-end), mais le draft rapport lui ne peut pas attendre — il est dû avant le départ en vacances.  
+> **Recommandation** : avancer autant que possible sur le draft rapport dès la semaine du 1er juin, pour n'avoir que la relecture finale à faire le 13–14 juin.
+
+---
+
+### Partie B — Intégration sur CNC cible
+
+| Phase | Description | Type | Durée estimée |
+|---|---|---|---|
+| 9 | Assemblage mécanique de la CNC cible | **Hardware** | ~2 semaines (juillet) |
+| 9a | — Montage châssis, axes, motorisation | Hardware | ~3–4 jours |
+| 9b | — Câblage électrique (moteurs, fin de course, alimentation) | Hardware | ~2–3 jours |
+| 9c | — Configuration firmware Marlin (paramètres CNC) | Firmware | ~2 jours |
+| 9d | — Tests mécaniques (homing, déplacements manuels) | Test | ~1–2 jours |
+| 10 | Portage logiciel : adaptation `config.py` + calibrage caméra | Logiciel | 2 sessions × ~2h |
+| 11 | Validation complète du système sur CNC (cycles réels) | Validation | 3 sessions × ~2h |
+| **Total B** | | **5 sessions + ~2 sem. hardware** | **~10h + hardware** |
+
+**Jalon B ≈ fin juillet 2026 → SOUTENANCE BLANCHE**
+
+---
+
+### Activité parallèle — Rédaction du rapport (toute la durée du projet)
+
+La rédaction du rapport se fait **en parallèle** du développement, à raison de ~1h/soir en semaine.
+
+| Période | Mode | Charge | Objectif |
+|---|---|---|---|
+| 27 mai → 14 juin | ~1h/soir | ~3h/semaine | **Premier draft complet → 15 juin** |
+| 22 juin → 31 juillet | ~1h/soir + week-end | ~3–5h/semaine | Rapport enrichi après chaque phase |
+| 1 août → 24 août | Intensif | Priorité principale | Finalisation, relecture, remise |
+
+> **Jalon intermédiaire : premier draft remis le 15 juin 2026** (avant départ en vacances).  
+> Source principale : ce document `CONCEPTION.md` — chaque section correspond à une section du rapport.
+
+---
+
+### Partie C — Finalisation
+
+| Phase | Description | Durée estimée |
+|---|---|---|
+| 12 | Corrections de bugs (retours soutenance blanche) | ~1 semaine |
+| 13 | Finalisation et relecture rapport | ~3 semaines |
+| **Total C** | | **~4 semaines** |
+
+**Jalon C ≈ fin août 2026 → SOUTENANCE FINALE**
+
+---
 
 ---
 
@@ -581,7 +671,138 @@ class PathPlanner:
 - [ ] Chaque erreur prévisible (caméra absente, machine déconnectée, marqueurs non détectés) affiche un message compréhensible à l'utilisateur
 - [ ] Un utilisateur non technique peut utiliser l'application sans aide (test avec un tiers)
 
-**Attendus mesurables :** Démo complète réussie devant un tiers sur matériel réel.
+**Attendus mesurables :** Démo complète réussie devant un tiers sur matériel réel (Geeetech).
+
+---
+
+### Phase 9 — Assemblage de la CNC cible
+
+**Objectif** : Monter et configurer la machine de production (CNC) avec le même firmware Marlin  
+**Type** : Hardware — pas de code à écrire, sauf configuration Marlin  
+**Durée estimée** : ~2 semaines en juillet 2026
+
+**Étapes :**
+
+#### 9a — Montage mécanique (~3–4 jours)
+- Assembler le châssis de la CNC
+- Monter les axes X/Y/Z avec les rails et chariots
+- Fixer le motoréducteur / actionneur de dépose (remplace l'extrudeur)
+- Installer les supports de seringue
+
+#### 9b — Câblage électrique (~2–3 jours)
+- Connecter les moteurs Nema 17 à la carte contrôleur
+- Câbler les fins de course (homing X/Y/Z)
+- Connecter l'alimentation de la carte et des moteurs
+- Brancher le Raspberry Pi en USB sur la carte Marlin
+
+#### 9c — Configuration firmware Marlin (~2 jours)
+- Identifier la version de Marlin installée (`M115`)
+- Configurer les paramètres machine dans Marlin :
+  - Dimensions de la zone de travail (X/Y/Z en mm)
+  - Sens de déplacement des moteurs
+  - Finesse des pas moteurs (steps/mm)
+  - Vitesses et accélérations
+- Flasher la carte si nécessaire
+
+#### 9d — Tests mécaniques (~1–2 jours)
+- Tester le homing (`G28`) sur chaque axe
+- Vérifier les déplacements manuels (pas de collision)
+- Tester l'actionneur de dépose avec une seringue vide
+
+**Critères de validation :**
+- [ ] La CNC effectue un homing propre sur les 3 axes sans collision
+- [ ] `G1 X50 Y50 Z5` déplace la buse à la position attendue (±1 mm)
+- [ ] L'actionneur de dépose avance et recule sur commande G-code
+- [ ] Aucun bruit anormal, vibration excessive ou échauffement moteur
+
+**Attendus mesurables :** Machine opérationnelle mécaniquement, prête à recevoir le logiciel.
+
+---
+
+### Phase 10 — Portage logiciel sur la CNC
+
+**Objectif** : Adapter les paramètres de configuration et valider la connexion logiciel → CNC  
+**Sessions estimées** : 2 sessions (~4h)
+
+**Livrables** :
+- `modules/config.py` mis à jour avec les paramètres CNC (port série, dimensions zone)
+- Recalibrage ArUco pour la nouvelle géométrie caméra/pièce (si la hauteur a changé)
+
+**Déroulé suggéré :**
+1. Identifier le port série de la CNC (`ls /dev/tty*`)
+2. Mettre à jour `config.py` (port, zone de travail en mm, limites d'axes)
+3. Lancer `tests/demo_machine.py` sur la CNC — vérifier homing et déplacements
+4. Si la hauteur caméra a changé : recalibrer les ArUco (relancer les étapes Phase 2)
+5. Lancer l'application complète en mode test (sans pâte)
+
+**Critères de validation :**
+- [ ] `demo_machine.py` fonctionne sur la CNC sans erreur série
+- [ ] Les marqueurs ArUco sont détectés correctement avec la nouvelle géométrie
+- [ ] L'application se lance et navigue entre les écrans sans crash
+
+**Attendus mesurables :** Connexion logiciel → CNC établie, ArUco calibrés.
+
+---
+
+### Phase 11 — Validation complète sur CNC
+
+**Objectif** : Effectuer des cycles complets de dépose réelle sur la CNC cible  
+**Sessions estimées** : 3 sessions (~6h)
+- Session 1 : Premier cycle complet sans pâte (vérification trajectoires)
+- Session 2 : Cycles avec pâte thermique réelle — réglages quantité
+- Session 3 : Validation finale + démonstration (soutenance blanche)
+
+**Livrables** :
+- Rapport PDF généré sur la CNC (preuve de fonctionnement)
+- `CONCEPTION.md` mis à jour : bilan de la phase d'intégration
+
+**Critères de validation :**
+- [ ] Cycle complet photo → sélection → dépose → rapport fonctionne sur CNC
+- [ ] La précision de dépose est comparable à la Geeetech (±1 mm)
+- [ ] Le rapport PDF contient des photos réelles prises sur la CNC
+- [ ] 3 cycles consécutifs réussis sans intervention manuelle
+
+**Attendus mesurables :** Démo live devant le tuteur ou l'équipe — système opérationnel sur CNC.
+
+---
+
+### Phase 12 — Corrections de bugs (post soutenance blanche)
+
+**Objectif** : Traiter les retours et anomalies identifiés lors de la soutenance blanche  
+**Durée estimée** : ~1 semaine (début août)
+
+**Déroulé suggéré :**
+1. Lister tous les retours de la soutenance blanche (bugs, ergonomie, manques)
+2. Prioriser : critique (bloquant) / important / mineur
+3. Corriger les bugs critiques et importants en priorité
+4. Valider les corrections sur la CNC
+
+**Critères de validation :**
+- [ ] Tous les bugs critiques signalés sont corrigés
+- [ ] Un cycle de régression vérifie que les corrections n'ont pas cassé l'existant
+
+---
+
+### Phase 13 — Rédaction du rapport de soutenance
+
+**Objectif** : Rédiger le rapport final du projet de stage  
+**Durée estimée** : ~3 semaines (août)
+
+**Structure suggérée du rapport :**
+1. Introduction et contexte industriel
+2. Description du système physique (matériel, synoptique)
+3. Architecture logicielle (modules, GUI, machine à états)
+4. Développement et résultats par phase
+5. Problèmes rencontrés et solutions apportées
+6. Bilan et perspectives (améliorations possibles)
+7. Conclusion
+
+> `CONCEPTION.md` est la source principale pour les sections 2, 3 et 4 — le maintenir à jour au fil du projet permet de réduire considérablement le travail de rédaction finale.
+
+**Critères de validation :**
+- [ ] Rapport relu par le tuteur de stage avant soumission
+- [ ] Toutes les figures (synoptique, captures d'écran, photos) sont incluses
+- [ ] Les résultats de chaque phase sont documentés avec des mesures réelles
 
 ---
 
@@ -600,6 +821,7 @@ class PathPlanner:
 | Date | Phase | Ce qui a été fait |
 |---|---|---|
 | 2026-05-19 | — | Définition de l'architecture et du plan de développement |
+| 2026-05-27 | — | Révision plan : ajout machine CNC cible, phases 9-13, planning Excel |
 
 ---
 

@@ -14,9 +14,22 @@
 | Projet | Automatisation de la dépose de pâte thermique sur coques de calculateur automobile |
 | Cadre | Projet de stage — BUT Informatique 3ème année (anciennement DUT) |
 | Développeur | Étudiant en BUT3, niveau débutant–intermédiaire en Python |
-| Deadline | Fin juin 2026 |
+| Deadline logiciel (Geeetech) | Fin juin 2026 |
+| Deadline intégration CNC | Fin juillet 2026 (soutenance blanche) |
+| Deadline finale | Fin août 2026 (soutenance) |
 | Dépôt GitHub | `https://github.com/darckmaster/thermal-paste-machine` |
 | Branche principale | `master` |
+
+### Deux machines — rôles distincts
+
+| Machine | Rôle | Statut |
+|---|---|---|
+| **Geeetech I3 (imprimante modifiée)** | **Proof of concept** — plateforme de développement et validation logicielle | Disponible maintenant |
+| **CNC cible** (avec carte Marlin) | **Machine de production** — destination finale du logiciel et du Raspberry Pi | À assembler en juillet |
+
+> **Stratégie** : tout le logiciel est développé et validé sur la Geeetech (même firmware Marlin).  
+> Une fois validé, le logiciel et le Raspberry Pi sont portés sur la CNC cible, qui utilise le même protocole G-code.  
+> Le portage est quasi transparent côté code — seuls les paramètres machine (zone de travail, port série) changent.
 
 **Enjeux du projet :**
 - Le code est **didactique** : il doit pouvoir être relu et compris ligne par ligne, manuellement, par l'étudiant ou son tuteur
@@ -105,6 +118,8 @@ Remove-Item .commit_msg.txt
 
 ### Inventaire confirmé
 
+#### Machine PoC (Geeetech I3 — développement et validation)
+
 | Composant | Modèle / Référence | Statut |
 |---|---|---|
 | Ordinateur de contrôle | Raspberry Pi **3B+** (1 Go RAM, Cortex-A53 ×4 @ 1,4 GHz) | ✅ Confirmé |
@@ -114,6 +129,17 @@ Remove-Item .commit_msg.txt
 | Actionneur de dépose | Moteur **Nema 17** sur axe E (ex-extrudeur) + vis sans fin | ✅ Confirmé |
 | Contrôleur machine | Carte Geeetech — firmware **Marlin** via USB série 115200 baud | ✅ Confirmé (version à identifier) |
 | Référentiel | 4 marqueurs **ArUco** DICT_4X4_50 — IDs 0, 1, 2, 3 | ✅ Arrêté |
+
+#### Machine cible (CNC — production)
+
+| Composant | Modèle / Référence | Statut |
+|---|---|---|
+| Base mécanique | CNC (à confirmer) | ⬜ À assembler |
+| Contrôleur machine | Carte CNC — firmware **Marlin** (même protocole G-code) | ⬜ À identifier |
+| Ordinateur de contrôle | Même Raspberry Pi 3B+ | ✅ Réutilisé |
+| Caméra + écran | Même module CSI + écran 7" | ✅ Réutilisés |
+
+> Le portage logiciel Geeetech → CNC se limite aux paramètres de `config.py` (port série, limites de déplacement, zone de travail).
 
 ### Connexions E/S
 
@@ -163,8 +189,11 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ## 8. Plan de développement — avancement
 
+### Partie A — Logiciel sur Geeetech (PoC) · deadline fin juin 2026
+
 | Phase | Module principal | Statut | Sessions |
 |---|---|---|---|
+| 0 | Identification matériel (caméra, port série, firmware) | ⬜ À faire | 0 / 1 |
 | 1 | `modules/camera.py` — caméra de base | ⬜ À faire | 0 / 1 |
 | 2 | `modules/vision.py` — ArUco & calibrage | ⬜ À faire | 0 / 3 |
 | 3 | `modules/machine.py` — G-code Marlin | ⬜ À faire | 0 / 2 |
@@ -172,10 +201,43 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 | 5 | `modules/path_planner.py` + zone | ⬜ À faire | 0 / 3 |
 | 6 | `main.py` — intégration workflow complet | ⬜ À faire | 0 / 3 |
 | 7 | `modules/reporter.py` — rapport PDF | ⬜ À faire | 0 / 2 |
-| 8 | Tests, robustesse, finitions | ⬜ À faire | 0 / 3 |
+| 8 | Tests, robustesse, finitions (Geeetech) | ⬜ À faire | 0 / 3 |
 
-**Total estimé : 20 sessions × ~2h = ~40h**  
-**Rythme cible : 3 à 4 sessions/semaine pour tenir la deadline fin juin 2026**
+**Sous-total Partie A : 21 sessions × ~2h = ~42h**  
+**Jalon A : Logiciel validé sur Geeetech ≈ début juillet 2026**
+
+> **En parallèle de toute la Partie A** : rédaction du rapport (~1h/soir en semaine, chez soi)  
+> **Jalon intermédiaire : premier draft rapport → 15 juin 2026** (à remettre avant les vacances)
+
+### Partie B — Intégration sur CNC cible · deadline fin juillet 2026
+
+| Phase | Description | Statut | Durée estimée |
+|---|---|---|---|
+| 9 | Assemblage de la CNC cible (mécanique + câblage) | ⬜ À faire | ~2 semaines (hardware) |
+| 10 | Portage logiciel : adaptation `config.py` + tests sur CNC | ⬜ À faire | 0 / 2 sessions |
+| 11 | Validation complète du système sur CNC cible | ⬜ À faire | 0 / 3 sessions |
+
+**Jalon B : Système validé sur CNC ≈ fin juillet → SOUTENANCE BLANCHE**
+
+### Partie C — Finalisation · deadline fin août 2026
+
+| Phase | Description | Statut | Durée estimée |
+|---|---|---|---|
+| 12 | Corrections de bugs (retours soutenance blanche) | ⬜ À faire | ~1 semaine |
+| 13 | Finalisation et relecture rapport | ⬜ À faire | ~3 semaines |
+
+**Jalon C : Rapport remis → SOUTENANCE FINALE fin août 2026**
+
+### Rédaction rapport — activité en parallèle (fil conducteur du projet)
+
+| Période | Mode | Charge | Objectif |
+|---|---|---|---|
+| 27 mai → 14 juin | ~1h/soir en semaine | ~3h/semaine | **Draft complet → 15 juin** (avant vacances) |
+| 22 juin → 31 juillet | ~1h/soir + week-ends | ~3–5h/semaine | Rapport à jour après chaque phase validée |
+| 1 août → 24 août | Mode intensif | Priorité principale | Finalisation, relecture, figures, remise |
+
+> **Jalon intermédiaire critique : premier draft du rapport remis le 15 juin 2026** (jour du départ en vacances).  
+> Le `CONCEPTION.md` est le brouillon permanent — le maintenir à jour après chaque session réduit fortement le travail de rédaction finale.
 
 > Mettre à jour après chaque session : ⬜ À faire → 🔄 En cours → ✅ Validé
 
@@ -332,5 +394,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | Date | Contenu | Résultat |
 |---|---|---|
 | 2026-05-19 | Session 0 — Initialisation : architecture, CONCEPTION.md, CLAUDE.md, dépôt GitHub, synoptique hardware, règles de dev | Dépôt créé et poussé. Toutes les règles posées. Questions ouvertes identifiées. |
+| 2026-05-27 | Révision plan de développement : ajout machine CNC cible, phases 9-13 (assemblage, portage, validation CNC, corrections, rapport), planning Excel généré | CLAUDE.md et CONCEPTION.md mis à jour. Fichier `assets/planning.xlsx` créé avec jalons. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.
