@@ -57,7 +57,7 @@
 ```
 1. git pull origin master           ← synchroniser avant tout
 2. Lire la section "Prochaine session" de ce fichier
-3. Vérifier le tableau d'avancement (section 8)
+3. Vérifier le tableau d'avancement (section 9)
 4. Ouvrir CONCEPTION.md pour le contexte technique détaillé
 5. Commencer par un bref résumé oral de là où on en est
 ```
@@ -114,7 +114,75 @@ Remove-Item .commit_msg.txt
 
 ---
 
-## 5. Matériel — état des connaissances
+## 5. Mode de travail dual — chez soi / au boulot
+
+Le projet se déroule dans deux environnements aux contraintes opposées. Le setup logiciel et le découpage des activités doivent en tenir compte.
+
+### 5.1 Les deux environnements
+
+| Lieu | Quand | Matériel | Internet |
+|---|---|---|---|
+| **Chez soi** | Soir / week-end | PC perso complet + Geeetech *sans* dispositif de seringue | Oui (PC) |
+| **Entreprise** | Journée | Téléphone 5G + clavier Bluetooth + Geeetech *avec* dispositif de seringue. PC entreprise sans internet → inutilisable pour Claude Code. | Uniquement via téléphone 5G |
+
+### 5.2 Setup mobile pour les sessions au boulot
+
+Le RPi du projet devient le poste de travail mobile. Il joue trois rôles à la fois : ordinateur de contrôle (rôle final du projet), pont vers Claude Code, et interface avec la Geeetech + caméra CSI.
+
+```
+[Téléphone 5G] ──tethering USB──> [RPi 3B+] ──USB──> [Geeetech + seringue]
+       ▲                             ▲
+       │ SSH (clavier Bluetooth)     │ Caméra CSI
+       └─────────────────────────────┘
+```
+
+**À transporter au boulot** : RPi 3B+ + alim, module caméra CSI, câble USB vers Geeetech, câble USB pour tethering téléphone → RPi, téléphone + clavier BT + support pliant.
+
+**Outils installés sur le RPi (une fois, à la maison)** :
+- `openssh-server` activé
+- **Tailscale** (`curl -fsSL https://tailscale.com/install.sh | sh`) — VPN mesh gratuit qui perce les NAT 5G sans config
+- **Claude Code** (`npm install -g @anthropic-ai/claude-code`)
+- Toutes les dépendances Python du projet (cf. section 12) — pour ne pas brûler la 5G au boulot
+
+**Outils installés sur le téléphone** :
+- **Termius** (Play Store) — client SSH avec ergonomie clavier BT
+- **Tailscale** (Play Store) — même compte que le RPi
+- Tethering USB activé (préférer USB au WiFi hotspot : moins de batterie, plus stable)
+
+### 5.3 Workflow type d'une journée au boulot
+
+```
+1. Arrivée : brancher RPi (secteur), USB vers Geeetech, USB tethering au téléphone
+2. Activer le partage de connexion du téléphone → le RPi a internet via 5G
+3. Termius : SSH vers le RPi (via Tailscale OU IP locale du tethering)
+4. cd thermal-paste-machine && git pull && claude
+5. Session Claude Code normale, avec accès matériel réel
+6. Avant de partir : git push pour synchroniser
+```
+
+Le soir à la maison : `git pull` sur le PC, on continue sur grand écran.
+
+### 5.4 Répartition optimale des activités
+
+| Quand | Activités idéales |
+|---|---|
+| **Soir / week-end (chez soi)** | Logique pure : `path_planner.py`, GUI PyQt5, refactor, rédaction du rapport. Tests G-code « à vide » (déplacements XYZ sans extrusion). |
+| **Journée (entreprise)** | Tests caméra CSI réels, calibrage ArUco, **tests dépose seringue** (irremplaçables), validation workflow end-to-end. |
+
+> **Bénéfice indirect** : le RPi étant la machine cible finale, on développe *sur* la machine cible dès maintenant. La Phase 0 (identification matériel) et toutes les calibrations doivent de toute façon se faire au boulot.
+
+### 5.5 Points d'attention
+
+- **Conso 5G** : ~50 Mo par session Claude Code. Faire tous les `apt` / `pip install` chez soi.
+- **Politique entreprise** : vérifier avec le tuteur qu'apporter le RPi et le brancher à la Geeetech est autorisé.
+- **Batterie téléphone** : le tethering USB consomme ; le RPi 3B+ ne recharge pas le téléphone → prévoir une power bank.
+- **Si tethering refusé** : repli sur un dongle 4G/5G dédié branché sur le RPi (~20 €). Tailscale fonctionne pareil.
+
+> **Document complet** : voir `assets/setup_travail_mobile.docx` pour le détail des étapes d'installation et la liste des achats.
+
+---
+
+## 6. Matériel — état des connaissances
 
 ### Inventaire confirmé
 
@@ -155,7 +223,7 @@ Remove-Item .commit_msg.txt
 
 ---
 
-## 6. Questions ouvertes (à résoudre avant ou en Phase 1)
+## 7. Questions ouvertes (à résoudre avant ou en Phase 1)
 
 Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont résolus.
 
@@ -172,7 +240,7 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ---
 
-## 7. Prochaine session — agenda
+## 8. Prochaine session — agenda
 
 **Séance de conception hardware (avant Phase 1)**
 
@@ -187,7 +255,7 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ---
 
-## 8. Plan de développement — avancement
+## 9. Plan de développement — avancement
 
 ### Partie A — Logiciel sur Geeetech (PoC) · deadline fin juin 2026
 
@@ -243,7 +311,7 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ---
 
-## 9. Décisions techniques arrêtées
+## 10. Décisions techniques arrêtées
 
 Ces choix sont actés — ne pas les remettre en question sans raison documentée.
 
@@ -261,7 +329,7 @@ Ces choix sont actés — ne pas les remettre en question sans raison documenté
 
 ---
 
-## 10. Structure du projet
+## 11. Structure du projet
 
 ```
 thermal-paste-machine/
@@ -295,7 +363,7 @@ thermal-paste-machine/
 
 ---
 
-## 11. Règles techniques
+## 12. Règles techniques
 
 ### Librairies — open source uniquement
 
@@ -334,7 +402,7 @@ pip install opencv-contrib-python pyserial fpdf2 numpy pytest PyQt5
 
 ---
 
-## 12. Conventions de code
+## 13. Conventions de code
 
 ### Commentaires — règle didactique (CRITIQUE)
 
@@ -389,11 +457,12 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 
 ---
 
-## 13. Historique des sessions
+## 14. Historique des sessions
 
 | Date | Contenu | Résultat |
 |---|---|---|
 | 2026-05-19 | Session 0 — Initialisation : architecture, CONCEPTION.md, CLAUDE.md, dépôt GitHub, synoptique hardware, règles de dev | Dépôt créé et poussé. Toutes les règles posées. Questions ouvertes identifiées. |
 | 2026-05-27 | Révision plan de développement : ajout machine CNC cible, phases 9-13 (assemblage, portage, validation CNC, corrections, rapport), planning Excel généré | CLAUDE.md et CONCEPTION.md mis à jour. Fichier `assets/planning.xlsx` créé avec jalons. |
+| 2026-05-28 | Conception du mode de travail dual chez soi / au boulot : RPi mobile au boulot piloté en SSH depuis téléphone 5G + clavier BT (Termius + Tailscale), répartition des activités logiciel/matériel selon le lieu | Nouvelle section 5 dans CLAUDE.md. Document détaillé `assets/setup_travail_mobile.docx` créé. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.
