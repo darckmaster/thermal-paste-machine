@@ -32,8 +32,8 @@ cd thermal-paste-machine
 Configurer son identité Git si ce n'est pas déjà fait :
 
 ```bash
-git config user.name "darckmaster"
-git config user.email "guichard.erwann@gmail.com"
+git config user.name "name_user"
+git config user.email "mail_user"
 ```
 
 ---
