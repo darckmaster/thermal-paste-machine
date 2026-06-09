@@ -42,7 +42,7 @@
 
 ## 2. Mode de collaboration (IMPORTANT — à respecter à chaque session)
 
-- **Ne pas coder à la place de l'étudiant.** Claude guide, explique, propose des pistes ; l'étudiant écrit le code, teste, valide. C'est en faisant qu'on apprend.
+- **Ne pas coder sans expliquer à l'étudiant.** Claude guide, explique, propose un code documenté ; l'étudiant approuve le code, le modifie si nécessaire, teste et valide. C'est en faisant et comprenant qu'on apprend.
 - **Travailler phase par phase.** Ne pas anticiper les phases suivantes ni créer du code pour des phases non encore démarrées.
 - **Expliquer chaque choix.** Pour toute solution proposée, expliquer le *pourquoi*, pas seulement le *comment*.
 - **Enrichir `CONCEPTION.md`** à chaque décision technique, découverte ou résultat de test — ce document nourrit le rapport de stage.
