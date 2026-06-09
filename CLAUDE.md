@@ -191,7 +191,7 @@ Le soir à la maison : `git pull` sur le PC, on continue sur grand écran.
 | Composant | Modèle / Référence | Statut |
 |---|---|---|
 | Ordinateur de contrôle | Raspberry Pi **3B+** (1 Go RAM, Cortex-A53 ×4 @ 1,4 GHz) | ✅ Confirmé |
-| Caméra | Module Caméra Raspberry Pi — interface **CSI** (nappe 15 br.) | ✅ Confirmé (version à identifier) |
+| Caméra | **Philips SPC 1330NC** — interface **USB**, détectée par OpenCV index 0 | ✅ Confirmé |
 | Interface utilisateur | Écran tactile **7 pouces 800×480** | ✅ Confirmé |
 | Base mécanique | Imprimante 3D **Geeetech I3** modifiée | ✅ Confirmé (modèle exact à identifier) |
 | Actionneur de dépose | Moteur **Nema 17** sur axe E (ex-extrudeur) + vis sans fin | ✅ Confirmé |
@@ -205,7 +205,7 @@ Le soir à la maison : `git pull` sur le PC, on continue sur grand écran.
 | Base mécanique | CNC (à confirmer) | ⬜ À assembler |
 | Contrôleur machine | Carte CNC — firmware **Marlin** (même protocole G-code) | ⬜ À identifier |
 | Ordinateur de contrôle | Même Raspberry Pi 3B+ | ✅ Réutilisé |
-| Caméra + écran | Même module CSI + écran 7" | ✅ Réutilisés |
+| Caméra + écran | Même Philips SPC 1330NC USB + écran 7" | ✅ Réutilisés |
 
 > Le portage logiciel Geeetech → CNC se limite aux paramètres de `config.py` (port série, limites de déplacement, zone de travail).
 
@@ -213,12 +213,13 @@ Le soir à la maison : `git pull` sur le PC, on continue sur grand écran.
 
 | Interface | Protocole | De | Vers |
 |---|---|---|---|
-| CSI (nappe 15 broches) | MIPI CSI-2 | RPi 3B+ | Module caméra |
+| USB | UVC (webcam standard) | RPi 3B+ | Philips SPC 1330NC (caméra) |
 | USB (puce CH340 ou ATmega) | UART série 115200 baud | RPi 3B+ | Carte Geeetech (Marlin) |
 | HDMI | HDMI 1.4 | RPi 3B+ | Écran tactile 7" |
 | USB | HID (touch) | RPi 3B+ | Contrôleur tactile écran |
 
-> Port série : apparaît sous `/dev/ttyUSB0` (CH340) ou `/dev/ttyACM0` (ATmega natif).  
+> Caméra : détectée sous `/dev/video0`, accessible via `cv2.VideoCapture(0)` sans configuration supplémentaire.  
+> Port série Marlin : apparaît sous `/dev/ttyUSB0` (CH340) ou `/dev/ttyACM0` (ATmega natif).  
 > Identifier avec `ls /dev/tty*` avant et après branchement USB.
 
 ---
@@ -229,10 +230,10 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 | # | Question | Comment y répondre |
 |---|---|---|
-| Q1 | Version du module caméra RPi (v1 / v2 / v3 / NoIR) | `rpicam-hello --list-cameras` sur le RPi, ou lire l'étiquette du module |
+| ~~Q1~~ | ~~Version du module caméra RPi~~ | ✅ **Résolu** — caméra Philips SPC 1330NC USB (OpenCV index 0) |
 | Q2 | Version exacte du firmware Marlin | Envoyer `M115` via terminal série (ex: `screen /dev/ttyUSB0 115200`) |
 | Q3 | Port série Geeetech : `/dev/ttyUSB0` ou `/dev/ttyACM0` | `ls /dev/tty*` avant/après branchement USB |
-| Q4 | Choix interface caméra : **V4L2** ou **picamera2** | À décider en Phase 1 selon tests de performance |
+| ~~Q4~~ | ~~Choix interface caméra : V4L2 ou picamera2~~ | ✅ **Résolu** — `cv2.VideoCapture(0)` direct via USB (UVC), pas de picamera2 |
 | Q5 | Taille réelle de la zone de travail (en mm) | Mesurer sur la machine physique |
 | Q6 | Distance caméra → pièce (hauteur en mm) | Mesurer sur la machine physique |
 | Q7 | Taille des marqueurs ArUco à imprimer (en mm) | Dépend de la distance caméra/pièce — à calculer |
@@ -244,11 +245,13 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 **Séance de conception hardware (avant Phase 1)**
 
-- [ ] Identifier la version du module caméra (Q1)
+- [x] ~~Identifier la version du module caméra (Q1)~~ → Philips SPC 1330NC USB, OpenCV index 0
+- [x] ~~Choix interface caméra (Q4)~~ → `cv2.VideoCapture(0)`, pas de picamera2
 - [ ] Identifier la version Marlin via M115 (Q2)
 - [ ] Identifier le port série Geeetech (Q3)
 - [ ] Mesurer la zone de travail et la distance caméra/pièce (Q5, Q6)
 - [ ] Calculer la taille des marqueurs ArUco à imprimer (Q7)
+- [ ] Tester la Philips SPC 1330NC : vérifier résolution max, `cv2.VideoCapture(0)` sur RPi
 - [ ] Créer le synoptique Draw.io (sauvegarder dans `assets/synoptique.drawio`)
 - [ ] Mettre à jour `CONCEPTION.md` et `CLAUDE.md` avec toutes ces réponses
 - [ ] Si tout est clarifié : démarrer **Phase 1** (`modules/camera.py`)
@@ -324,8 +327,9 @@ Ces choix sont actés — ne pas les remettre en question sans raison documenté
 | Licence des librairies | Open source uniquement (MIT/BSD/Apache/LGPL/GPL usage interne) | Utilisabilité en entreprise sans coût |
 | Interface PyQt5 | Fenêtre 800×480 plein écran | Correspond à la résolution de l'écran tactile 7" |
 | Langue du code | Identifiants en anglais, commentaires en français | Convention Python + lisibilité pour le rapport |
+| Caméra | **Philips SPC 1330NC USB** — `cv2.VideoCapture(0)` | Connecteur CSI du RPi défaillant ; webcam USB fonctionnelle, pilote UVC standard, aucune config supplémentaire |
 
-**Décisions en attente :** interface caméra (V4L2 vs picamera2) — à trancher en Phase 1.
+**Décisions en attente :** résolution max de la Philips SPC 1330NC à confirmer sur le RPi (Q6, Q7 dépendent de la résolution réelle).
 
 ---
 
@@ -370,8 +374,7 @@ thermal-paste-machine/
 | Librairie | Licence | Rôle | RPi | Windows |
 |---|---|---|---|---|
 | PyQt5 | GPL v3* | Interface graphique tactile | `apt` | `pip` |
-| opencv-contrib-python | Apache 2.0 | Vision, ArUco, homographie | `pip` | `pip` |
-| picamera2 | BSD | Caméra CSI native RPi | `apt` | ✗ non dispo |
+| opencv-contrib-python | Apache 2.0 | Vision, ArUco, homographie, capture USB | `pip` | `pip` |
 | pyserial | BSD | Communication G-code Marlin | `pip` | `pip` |
 | fpdf2 | LGPL | Génération PDF | `pip` | `pip` |
 | numpy | BSD | Calcul vectoriel trajectoires | `pip` | `pip` |
@@ -384,20 +387,20 @@ thermal-paste-machine/
 ```bash
 # Dépendances système
 sudo apt update && sudo apt install -y \
-    python3-pip python3-pyqt5 libatlas-base-dev python3-picamera2
-
-# Activer le pilote V4L2 pour accès caméra via OpenCV (si approche V4L2 retenue)
-echo "bcm2835-v4l2" | sudo tee /etc/modules-load.d/bcm2835-v4l2.conf
+    python3-pip python3-pyqt5 libatlas-base-dev
 
 # Dépendances Python
 pip3 install opencv-contrib-python pyserial fpdf2 numpy pytest
 ```
 
+> La caméra Philips SPC 1330NC est une webcam USB standard (pilote UVC, intégré au noyau Linux).  
+> Aucune configuration système supplémentaire n'est nécessaire — `cv2.VideoCapture(0)` fonctionne directement.
+
 ### Installation (Windows — dev sans matériel)
 
 ```bash
 pip install opencv-contrib-python pyserial fpdf2 numpy pytest PyQt5
-# picamera2 indisponible sur Windows — mocker la classe Camera pour les tests
+# La Camera peut être mockée pour les tests sans matériel
 ```
 
 ---
@@ -464,5 +467,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-05-19 | Session 0 — Initialisation : architecture, CONCEPTION.md, CLAUDE.md, dépôt GitHub, synoptique hardware, règles de dev | Dépôt créé et poussé. Toutes les règles posées. Questions ouvertes identifiées. |
 | 2026-05-27 | Révision plan de développement : ajout machine CNC cible, phases 9-13 (assemblage, portage, validation CNC, corrections, rapport), planning Excel généré | CLAUDE.md et CONCEPTION.md mis à jour. Fichier `assets/planning.xlsx` créé avec jalons. |
 | 2026-05-28 | Conception du mode de travail dual chez soi / au boulot : RPi mobile au boulot piloté en SSH depuis téléphone 5G + clavier BT (Termius + Tailscale), répartition des activités logiciel/matériel selon le lieu | Nouvelle section 5 dans CLAUDE.md. Document détaillé `assets/setup_travail_mobile.docx` créé. |
+| 2026-06-09 | Changement de caméra : connecteur CSI du RPi défaillant → remplacement par webcam **Philips SPC 1330NC USB** détectée sous OpenCV index 0. Décision : `cv2.VideoCapture(0)` sans picamera2 ni pilote V4L2. | CLAUDE.md et CONCEPTION.md mis à jour. Q1 et Q4 résolus. picamera2 retiré des dépendances. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.
