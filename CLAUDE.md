@@ -235,27 +235,33 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 | Q3 | Port série Geeetech : `/dev/ttyUSB0` ou `/dev/ttyACM0` | `ls /dev/tty*` avant/après branchement USB |
 | ~~Q4~~ | ~~Choix interface caméra : V4L2 ou picamera2~~ | ✅ **Résolu** — `cv2.VideoCapture(0)` direct via USB (UVC), pas de picamera2 |
 | Q5 | Taille réelle de la zone de travail (en mm) | Mesurer sur la machine physique |
-| Q6 | Distance caméra → pièce (hauteur en mm) | Mesurer sur la machine physique |
-| Q7 | Taille des marqueurs ArUco à imprimer (en mm) | Dépend de la distance caméra/pièce — à calculer |
+| ~~Q6~~ | ~~Distance caméra → pièce (hauteur en mm)~~ | ✅ **Résolu** — ~100–110 mm (10–11 cm, mesuré le 2026-06-11) |
+| ~~Q7~~ | ~~Taille des marqueurs ArUco à imprimer (en mm)~~ | ✅ **Résolu** — 28 mm × 28 mm (marqueurs imprimés, détection confirmée) |
 | Q8 | Volume de pâte par mm² (quantité de référence) | Calibrage expérimental lors des tests de dépose |
 
 ---
 
 ## 8. Prochaine session — agenda
 
-**Phase 1 terminée ✅ — démarrer Phase 2 : Détection ArUco & calibrage géométrique**
+**Phase 2 en cours 🔄 — Session 1 terminée, démarrer Session 2 : Homographie**
 
-Questions matérielles à résoudre avant ou pendant Phase 2 :
-- [ ] Identifier la version Marlin via M115 (Q2) — `screen /dev/ttyUSB0 115200` puis envoyer `M115`
-- [ ] Identifier le port série Geeetech (Q3) — `ls /dev/tty*` avant/après branchement USB
-- [ ] Mesurer la zone de travail XY (Q5) et la distance caméra/pièce en mm (Q6)
-- [ ] Calculer la taille des marqueurs ArUco à imprimer (Q7) — dépend de Q6
-- [ ] Imprimer les 4 marqueurs ArUco (IDs 0–3, `DICT_4X4_50`) et les positionner
+Résolu en Session 1 :
+- [x] Détection ArUco en temps réel (`detect_markers()`) — 4 marqueurs simultanés ✅
+- [x] Q6 : distance caméra/pièce ≈ 100–110 mm
+- [x] Q7 : marqueurs 28 mm × 28 mm, `config.py` mis à jour
+- [x] Fix affichage PyQt5 (cv2.imshow cassé sous Wayland RPi OS Bookworm)
 
-Démarrage Phase 2 (`modules/vision.py`) :
-- [ ] Lire la théorie homographie (section 4.2 du CONCEPTION.md)
-- [ ] Détecter les 4 marqueurs ArUco sur une image live
-- [ ] Calculer l'homographie et redresser l'image (`cv2.findHomography` + `cv2.warpPerspective`)
+Session 2 — à faire :
+- [ ] Écrire `compute_homography(detected_markers)` dans `vision.py`
+- [ ] Écrire `warp_image(image, homography, output_size)` dans `vision.py`
+- [ ] Écrire `pixel_to_mm(px, py, homography)` dans `vision.py`
+- [ ] Mettre à jour `demo_vision.py` pour afficher l'image redressée
+- [ ] Valider : une règle de 100 mm dans la zone mesure 100 ± 2 mm sur l'image calibrée
+
+Questions encore ouvertes :
+- [ ] Q2 : version Marlin (`M115` via terminal série) — pour Phase 3
+- [ ] Q3 : port série Geeetech (`ls /dev/tty*` avant/après USB) — pour Phase 3
+- [ ] Q5 : zone de travail XY en mm — pour Phase 5
 
 ---
 
@@ -267,7 +273,7 @@ Démarrage Phase 2 (`modules/vision.py`) :
 |---|---|---|---|
 | 0 | Identification matériel (caméra, port série, firmware) | ⬜ À faire | 0 / 1 |
 | 1 | `modules/camera.py` — caméra de base | ✅ Validé | 1 / 1 |
-| 2 | `modules/vision.py` — ArUco & calibrage | ⬜ À faire | 0 / 3 |
+| 2 | `modules/vision.py` — ArUco & calibrage | 🔄 En cours | 1 / 3 |
 | 3 | `modules/machine.py` — G-code Marlin | ⬜ À faire | 0 / 2 |
 | 4 | `gui/` — interface graphique squelette | ⬜ À faire | 0 / 3 |
 | 5 | `modules/path_planner.py` + zone | ⬜ À faire | 0 / 3 |
@@ -470,5 +476,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-05-28 | Conception du mode de travail dual chez soi / au boulot : RPi mobile au boulot piloté en SSH depuis téléphone 5G + clavier BT (Termius + Tailscale), répartition des activités logiciel/matériel selon le lieu | Nouvelle section 5 dans CLAUDE.md. Document détaillé `assets/setup_travail_mobile.docx` créé. |
 | 2026-06-09 | Changement de caméra : connecteur CSI du RPi défaillant → remplacement par webcam **Philips SPC 1330NC USB** détectée sous OpenCV index 0. Décision : `cv2.VideoCapture(0)` sans picamera2 ni pilote V4L2. | CLAUDE.md et CONCEPTION.md mis à jour. Q1 et Q4 résolus. picamera2 retiré des dépendances. |
 | 2026-06-11 | **Phase 1** — Création de `modules/camera.py` (classe `Camera` : open, capture, release), `tests/test_camera.py` (4 tests pytest), `tests/demo_camera.py` (flux temps réel), `conftest.py`. Résolution 1280×960 confirmée sur RPi. | 4/4 tests passés. Phase 1 ✅ validée. |
+| 2026-06-11 | **Phase 2 Session 1** — Création de `modules/vision.py` (classe `VisionProcessor`, `detect_markers()`), `tests/test_vision.py` (5 tests), `tests/demo_vision.py` (détection ArUco temps réel PyQt5). Fix affichage : `cv2.imshow` cassé sous Wayland → migration vers PyQt5 pour les démos. Q6 et Q7 résolus : caméra à 100–110 mm, marqueurs 28×28 mm. | 9/9 tests passés. Détection 4 marqueurs simultanée confirmée. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.

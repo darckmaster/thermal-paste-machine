@@ -7,7 +7,7 @@ CAMERA_HEIGHT = 960
 
 # ArUco
 ARUCO_DICT_ID = "DICT_4X4_50"
-ARUCO_MARKER_SIZE_MM = 20.0  # Taille réelle des marqueurs en mm
+ARUCO_MARKER_SIZE_MM = 28.0  # Taille réelle des marqueurs en mm (mesurée : 2.8 cm × 2.8 cm)
 
 # Machine (Marlin)
 SERIAL_PORT = "/dev/ttyUSB0"    # Ou /dev/ttyACM0 selon branchement
