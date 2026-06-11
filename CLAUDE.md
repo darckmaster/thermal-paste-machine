@@ -234,7 +234,7 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 | Q2 | Version exacte du firmware Marlin | Envoyer `M115` via terminal série (ex: `screen /dev/ttyUSB0 115200`) |
 | Q3 | Port série Geeetech : `/dev/ttyUSB0` ou `/dev/ttyACM0` | `ls /dev/tty*` avant/après branchement USB |
 | ~~Q4~~ | ~~Choix interface caméra : V4L2 ou picamera2~~ | ✅ **Résolu** — `cv2.VideoCapture(0)` direct via USB (UVC), pas de picamera2 |
-| Q5 | Taille réelle de la zone de travail (en mm) | Mesurer sur la machine physique |
+| ~~Q5~~ | ~~Taille réelle de la zone de travail (en mm)~~ | ✅ **Résolu** — 152 mm × 106 mm (mesuré centre-à-centre des marqueurs, 2026-06-11) |
 | ~~Q6~~ | ~~Distance caméra → pièce (hauteur en mm)~~ | ✅ **Résolu** — ~100–110 mm (10–11 cm, mesuré le 2026-06-11) |
 | ~~Q7~~ | ~~Taille des marqueurs ArUco à imprimer (en mm)~~ | ✅ **Résolu** — 28 mm × 28 mm (marqueurs imprimés, détection confirmée) |
 | Q8 | Volume de pâte par mm² (quantité de référence) | Calibrage expérimental lors des tests de dépose |
@@ -251,12 +251,15 @@ Résolu en Session 1 :
 - [x] Q7 : marqueurs 28 mm × 28 mm, `config.py` mis à jour
 - [x] Fix affichage PyQt5 (cv2.imshow cassé sous Wayland RPi OS Bookworm)
 
-Session 2 — à faire :
-- [ ] Écrire `compute_homography(detected_markers)` dans `vision.py`
-- [ ] Écrire `warp_image(image, homography, output_size)` dans `vision.py`
-- [ ] Écrire `pixel_to_mm(px, py, homography)` dans `vision.py`
-- [ ] Mettre à jour `demo_vision.py` pour afficher l'image redressée
-- [ ] Valider : une règle de 100 mm dans la zone mesure 100 ± 2 mm sur l'image calibrée
+Session 2 terminée ✅ :
+- [x] `compute_homography()`, `warp_image()`, `pixel_to_mm()` implémentés
+- [x] Démo côte à côte (original + redressé) — image redressée validée visuellement
+- [x] Q5 résolu : zone de travail 152×106 mm
+
+Session 3 — à faire :
+- [ ] Validation métrologique : placer une règle dans la zone et vérifier que 100 mm → 100 ± 2 mm sur l'image redressée
+- [ ] Vérifier `pixel_to_mm()` sur un point connu physiquement
+- [ ] Mettre à jour `CONCEPTION.md` avec les résultats de validation
 
 Questions encore ouvertes :
 - [ ] Q2 : version Marlin (`M115` via terminal série) — pour Phase 3
@@ -477,5 +480,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-06-09 | Changement de caméra : connecteur CSI du RPi défaillant → remplacement par webcam **Philips SPC 1330NC USB** détectée sous OpenCV index 0. Décision : `cv2.VideoCapture(0)` sans picamera2 ni pilote V4L2. | CLAUDE.md et CONCEPTION.md mis à jour. Q1 et Q4 résolus. picamera2 retiré des dépendances. |
 | 2026-06-11 | **Phase 1** — Création de `modules/camera.py` (classe `Camera` : open, capture, release), `tests/test_camera.py` (4 tests pytest), `tests/demo_camera.py` (flux temps réel), `conftest.py`. Résolution 1280×960 confirmée sur RPi. | 4/4 tests passés. Phase 1 ✅ validée. |
 | 2026-06-11 | **Phase 2 Session 1** — Création de `modules/vision.py` (classe `VisionProcessor`, `detect_markers()`), `tests/test_vision.py` (5 tests), `tests/demo_vision.py` (détection ArUco temps réel PyQt5). Fix affichage : `cv2.imshow` cassé sous Wayland → migration vers PyQt5 pour les démos. Q6 et Q7 résolus : caméra à 100–110 mm, marqueurs 28×28 mm. | 9/9 tests passés. Détection 4 marqueurs simultanée confirmée. |
+| 2026-06-11 | **Phase 2 Session 2** — Ajout `compute_homography()`, `warp_image()`, `pixel_to_mm()` dans `vision.py`. Démo côte à côte (original + redressé). Q5 résolu : zone de travail 152×106 mm (mesuré). | 14/14 tests passés. Image redressée validée visuellement. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.

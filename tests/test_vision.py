@@ -3,7 +3,12 @@ import numpy as np
 import pytest
 
 from modules.vision import VisionProcessor
-from modules.config import ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM
+from modules.config import (
+    ARUCO_DICT_ID,
+    ARUCO_MARKER_SIZE_MM,
+    WORK_AREA_WIDTH_MM,
+    WORK_AREA_HEIGHT_MM,
+)
 
 
 @pytest.fixture
@@ -81,3 +86,99 @@ def test_init_dictionnaire_inconnu() -> None:
     """VisionProcessor doit lever ValueError si le dictionnaire n'est pas reconnu."""
     with pytest.raises(ValueError):
         VisionProcessor(aruco_dict_id="DICT_INEXISTANT")
+
+
+# ---------------------------------------------------------------------------
+# Fixture partagée pour les tests d'homographie (Session 2)
+# ---------------------------------------------------------------------------
+
+def _marqueurs_synthetiques() -> dict:
+    """Crée un dict de marqueurs synthétiques à des positions pixel connues.
+
+    Les centres sont placés aux 4 coins d'un rectangle dans une image 600×400 px :
+        ID 0 → centre (100, 50)   → coin haut-gauche
+        ID 1 → centre (500, 50)   → coin haut-droit
+        ID 2 → centre (500, 350)  → coin bas-droit
+        ID 3 → centre (100, 350)  → coin bas-gauche
+
+    Chaque marqueur est représenté par 4 coins autour de son centre (±10 px).
+    """
+    def coins_autour(cx, cy, demi=10):
+        # Les 4 coins d'un carré centré en (cx, cy), dans l'ordre horaire OpenCV
+        return np.array([
+            [cx - demi, cy - demi],  # haut-gauche
+            [cx + demi, cy - demi],  # haut-droit
+            [cx + demi, cy + demi],  # bas-droit
+            [cx - demi, cy + demi],  # bas-gauche
+        ], dtype=np.float32)
+
+    return {
+        0: coins_autour(100, 50),
+        1: coins_autour(500, 50),
+        2: coins_autour(500, 350),
+        3: coins_autour(100, 350),
+    }
+
+
+def test_compute_homography_retourne_matrice_3x3(vision: VisionProcessor) -> None:
+    """compute_homography() doit retourner une matrice numpy de forme (3, 3)."""
+    marqueurs = _marqueurs_synthetiques()
+    H = vision.compute_homography(marqueurs)
+
+    assert isinstance(H, np.ndarray), "H doit être un np.ndarray"
+    assert H.shape == (3, 3), f"H doit être (3, 3), obtenu {H.shape}"
+
+
+def test_compute_homography_marqueurs_manquants(vision: VisionProcessor) -> None:
+    """compute_homography() doit lever ValueError si un marqueur est absent."""
+    marqueurs_incomplets = {0: np.zeros((4, 2)), 1: np.zeros((4, 2))}  # IDs 2 et 3 absents
+
+    with pytest.raises(ValueError):
+        vision.compute_homography(marqueurs_incomplets)
+
+
+def test_pixel_to_mm_coins_de_la_zone(vision: VisionProcessor) -> None:
+    """Les centres des marqueurs doivent mapper vers les coins de la zone de travail (±1 mm)."""
+    marqueurs = _marqueurs_synthetiques()
+    H = vision.compute_homography(marqueurs)
+
+    # Tolérance : 1 mm (les centres synthétiques sont exacts, l'erreur vient des flottants)
+    tolerance = 1.0
+
+    x, y = vision.pixel_to_mm(100, 50, H)
+    assert abs(x - 0) < tolerance and abs(y - 0) < tolerance, \
+        f"ID 0 attendu (0, 0), obtenu ({x:.1f}, {y:.1f})"
+
+    x, y = vision.pixel_to_mm(500, 50, H)
+    assert abs(x - WORK_AREA_WIDTH_MM) < tolerance and abs(y - 0) < tolerance, \
+        f"ID 1 attendu ({WORK_AREA_WIDTH_MM}, 0), obtenu ({x:.1f}, {y:.1f})"
+
+    x, y = vision.pixel_to_mm(300, 200, H)
+    assert abs(x - WORK_AREA_WIDTH_MM / 2) < tolerance and abs(y - WORK_AREA_HEIGHT_MM / 2) < tolerance, \
+        f"Centre attendu ({WORK_AREA_WIDTH_MM/2}, {WORK_AREA_HEIGHT_MM/2}), obtenu ({x:.1f}, {y:.1f})"
+
+
+def test_warp_image_dimensions_correctes(vision: VisionProcessor) -> None:
+    """warp_image() doit retourner une image aux dimensions exactes demandées."""
+    marqueurs = _marqueurs_synthetiques()
+    H = vision.compute_homography(marqueurs)
+
+    # Image source quelconque (600×400, fond gris)
+    image_source = np.full((400, 600, 3), 128, dtype=np.uint8)
+
+    output_size = (300, 200)  # 2 px/mm sur une zone 150×100 mm
+    image_warpee = vision.warp_image(image_source, H, output_size)
+
+    assert image_warpee.shape == (200, 300, 3), \
+        f"Dimensions attendues (200, 300, 3), obtenues {image_warpee.shape}"
+
+
+def test_warp_image_retourne_numpy_array(vision: VisionProcessor) -> None:
+    """warp_image() doit retourner un np.ndarray."""
+    marqueurs = _marqueurs_synthetiques()
+    H = vision.compute_homography(marqueurs)
+    image_source = np.full((400, 600, 3), 128, dtype=np.uint8)
+
+    result = vision.warp_image(image_source, H, (300, 200))
+
+    assert isinstance(result, np.ndarray), "warp_image() doit retourner un np.ndarray"

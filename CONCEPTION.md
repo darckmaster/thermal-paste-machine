@@ -811,6 +811,7 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 
 - [x] **Résolution caméra** : ✅ 1280×960 confirmée sur RPi 3B+ (Philips SPC 1330NC, 2026-06-11)
 - [x] **Taille des marqueurs ArUco** : ✅ 28 mm × 28 mm — marqueurs imprimés, détection 4/4 confirmée à ~100–110 mm de distance (2026-06-11)
+- [x] **Zone de travail** : ✅ 152 mm × 106 mm (mesuré centre-à-centre marqueurs ArUco, 2026-06-11)
 - [ ] **Volume de pâte par mm²** : Paramètre de calibrage à déterminer expérimentalement
 - [ ] **Port série** : `/dev/ttyUSB0` ou `/dev/ttyACM0` selon le branchement
 - [ ] **Modèle Raspberry Pi** : Impact sur les performances OpenCV temps réel
