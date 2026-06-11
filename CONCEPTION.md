@@ -454,12 +454,14 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 4. Écrire le script de démo avec `cv2.imshow()`
 
 **Critères de validation :**
-- [ ] L'image s'affiche en temps réel sans lag visible
-- [ ] La résolution est configurable via `config.py`
-- [ ] `camera.release()` ferme proprement le flux (pas de processus zombie)
-- [ ] Le test `pytest tests/test_camera.py` passe sans erreur
+- [x] L'image s'affiche en temps réel sans lag visible
+- [x] La résolution est configurable via `config.py`
+- [x] `camera.release()` ferme proprement le flux (pas de processus zombie)
+- [x] Le test `pytest tests/test_camera.py` passe sans erreur
 
 **Attendus mesurables :** Image nette à la résolution configurée, sans artefacts. Temps d'ouverture du flux < 3 secondes.
+
+**Résultats (2026-06-11) :** 4/4 tests passés. Résolution réelle confirmée à 1280×960 (conforme à la config). Philips SPC 1330NC supporte bien 1280×960 sur RPi 3B+.
 
 ---
 

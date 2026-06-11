@@ -243,18 +243,19 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ## 8. Prochaine session — agenda
 
-**Séance de conception hardware (avant Phase 1)**
+**Phase 1 terminée ✅ — démarrer Phase 2 : Détection ArUco & calibrage géométrique**
 
-- [x] ~~Identifier la version du module caméra (Q1)~~ → Philips SPC 1330NC USB, OpenCV index 0
-- [x] ~~Choix interface caméra (Q4)~~ → `cv2.VideoCapture(0)`, pas de picamera2
-- [ ] Identifier la version Marlin via M115 (Q2)
-- [ ] Identifier le port série Geeetech (Q3)
-- [ ] Mesurer la zone de travail et la distance caméra/pièce (Q5, Q6)
-- [ ] Calculer la taille des marqueurs ArUco à imprimer (Q7)
-- [ ] Tester la Philips SPC 1330NC : vérifier résolution max, `cv2.VideoCapture(0)` sur RPi
-- [ ] Créer le synoptique Draw.io (sauvegarder dans `assets/synoptique.drawio`)
-- [ ] Mettre à jour `CONCEPTION.md` et `CLAUDE.md` avec toutes ces réponses
-- [ ] Si tout est clarifié : démarrer **Phase 1** (`modules/camera.py`)
+Questions matérielles à résoudre avant ou pendant Phase 2 :
+- [ ] Identifier la version Marlin via M115 (Q2) — `screen /dev/ttyUSB0 115200` puis envoyer `M115`
+- [ ] Identifier le port série Geeetech (Q3) — `ls /dev/tty*` avant/après branchement USB
+- [ ] Mesurer la zone de travail XY (Q5) et la distance caméra/pièce en mm (Q6)
+- [ ] Calculer la taille des marqueurs ArUco à imprimer (Q7) — dépend de Q6
+- [ ] Imprimer les 4 marqueurs ArUco (IDs 0–3, `DICT_4X4_50`) et les positionner
+
+Démarrage Phase 2 (`modules/vision.py`) :
+- [ ] Lire la théorie homographie (section 4.2 du CONCEPTION.md)
+- [ ] Détecter les 4 marqueurs ArUco sur une image live
+- [ ] Calculer l'homographie et redresser l'image (`cv2.findHomography` + `cv2.warpPerspective`)
 
 ---
 
@@ -265,7 +266,7 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 | Phase | Module principal | Statut | Sessions |
 |---|---|---|---|
 | 0 | Identification matériel (caméra, port série, firmware) | ⬜ À faire | 0 / 1 |
-| 1 | `modules/camera.py` — caméra de base | ⬜ À faire | 0 / 1 |
+| 1 | `modules/camera.py` — caméra de base | ✅ Validé | 1 / 1 |
 | 2 | `modules/vision.py` — ArUco & calibrage | ⬜ À faire | 0 / 3 |
 | 3 | `modules/machine.py` — G-code Marlin | ⬜ À faire | 0 / 2 |
 | 4 | `gui/` — interface graphique squelette | ⬜ À faire | 0 / 3 |
@@ -329,7 +330,7 @@ Ces choix sont actés — ne pas les remettre en question sans raison documenté
 | Langue du code | Identifiants en anglais, commentaires en français | Convention Python + lisibilité pour le rapport |
 | Caméra | **Philips SPC 1330NC USB** — `cv2.VideoCapture(0)` | Connecteur CSI du RPi défaillant ; webcam USB fonctionnelle, pilote UVC standard, aucune config supplémentaire |
 
-**Décisions en attente :** résolution max de la Philips SPC 1330NC à confirmer sur le RPi (Q6, Q7 dépendent de la résolution réelle).
+**Résolution confirmée :** Philips SPC 1330NC supporte 1280×960 sur RPi 3B+ (confirmé le 2026-06-11 via `camera.width`/`camera.height`). Q6 / Q7 : distance caméra/pièce et taille marqueurs ArUco restent à mesurer physiquement.
 
 ---
 
@@ -468,5 +469,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-05-27 | Révision plan de développement : ajout machine CNC cible, phases 9-13 (assemblage, portage, validation CNC, corrections, rapport), planning Excel généré | CLAUDE.md et CONCEPTION.md mis à jour. Fichier `assets/planning.xlsx` créé avec jalons. |
 | 2026-05-28 | Conception du mode de travail dual chez soi / au boulot : RPi mobile au boulot piloté en SSH depuis téléphone 5G + clavier BT (Termius + Tailscale), répartition des activités logiciel/matériel selon le lieu | Nouvelle section 5 dans CLAUDE.md. Document détaillé `assets/setup_travail_mobile.docx` créé. |
 | 2026-06-09 | Changement de caméra : connecteur CSI du RPi défaillant → remplacement par webcam **Philips SPC 1330NC USB** détectée sous OpenCV index 0. Décision : `cv2.VideoCapture(0)` sans picamera2 ni pilote V4L2. | CLAUDE.md et CONCEPTION.md mis à jour. Q1 et Q4 résolus. picamera2 retiré des dépendances. |
+| 2026-06-11 | **Phase 1** — Création de `modules/camera.py` (classe `Camera` : open, capture, release), `tests/test_camera.py` (4 tests pytest), `tests/demo_camera.py` (flux temps réel), `conftest.py`. Résolution 1280×960 confirmée sur RPi. | 4/4 tests passés. Phase 1 ✅ validée. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.
