@@ -2,7 +2,7 @@
 
 **Projet** : Automatisation de la dépose de pâte thermique sur coques de calculateur automobile  
 **Contexte** : Projet d'études — apprentissage progressif  
-**Dernière mise à jour** : 2026-06-09  
+**Dernière mise à jour** : 2026-06-12  
 
 ---
 
@@ -34,7 +34,7 @@ Le projet utilise **deux machines successives** avec le même firmware Marlin, c
 | Pièce à traiter | Coque de calculateur automobile | Support de la dépose de pâte thermique |
 | Référentiel géométrique | 4 marqueurs ArUco (DICT_4X4_50, IDs 0–3) | Permettent le calibrage de perspective par vision |
 
-> **Caméra** : Philips SPC 1330NC USB — détectée par OpenCV via `cv2.VideoCapture(0)`. Résolution max à confirmer sur le RPi (`v4l2-ctl --list-formats-ext -d /dev/video0`).  
+> **Caméra** : Philips SPC 1330NC USB — détectée par OpenCV via `cv2.VideoCapture(0)`. Résolution max confirmée : **1280×960** (vérifié le 2026-06-11 via `camera.width`/`camera.height`). Hauteur de montage : **200 mm** au-dessus de la zone de travail (mesure du 2026-06-12).  
 > **Firmware Marlin** : à confirmer avec `M115` via terminal série (`screen /dev/ttyUSB0 115200`).
 
 ### 1.3 Inventaire matériel — Machine cible (CNC)
@@ -129,8 +129,9 @@ La Philips SPC 1330NC est une webcam USB standard (pilote UVC, natif Linux). Ell
 |---|---|---|
 | Index OpenCV | `0` | Confirmé en test |
 | Nœud kernel | `/dev/video0` | `ls /dev/video*` |
-| Résolution max | À confirmer | `v4l2-ctl --list-formats-ext -d /dev/video0` |
+| Résolution max | **1280×960** ✅ | Confirmé le 2026-06-11 via `camera.width`/`camera.height` |
 | Pilote | UVC (intégré au noyau) | Aucune installation nécessaire |
+| Hauteur de montage | **200 mm** | Mesurée physiquement le 2026-06-12 |
 
 #### Firmware Marlin — commandes utilisées
 
@@ -166,12 +167,13 @@ thermal_paste_dispenser/
 ├── main.py                  # Point d'entrée, machine à états principale
 │
 ├── modules/
-│   ├── camera.py            # Capture image et calibrage géométrique
-│   ├── vision.py            # Traitement d'image, détection marqueurs
-│   ├── machine.py           # Communication série G-code avec Marlin
-│   ├── path_planner.py      # Calcul des trajectoires de dépose
-│   ├── reporter.py          # Génération de rapport PDF
-│   └── config.py            # Paramètres globaux et constantes
+│   ├── camera.py            # ✅ Phase 1 — capture image via USB (classe Camera)
+│   ├── vision.py            # 🔄 Phase 2 — détection ArUco, homographie, pixel→mm
+│   ├── calibration.py       # 🔄 Phase 2 — calibration objectif, correction distorsion
+│   ├── machine.py           # ⬜ Phase 3 — communication série G-code avec Marlin
+│   ├── path_planner.py      # ⬜ Phase 5 — calcul des trajectoires de dépose
+│   ├── reporter.py          # ⬜ Phase 7 — génération de rapport PDF
+│   └── config.py            # ✅ Paramètres globaux et constantes
 │
 ├── gui/
 │   ├── app.py               # Fenêtre principale PyQt5, gestionnaire d'écrans
@@ -253,7 +255,7 @@ pip install opencv-contrib-python pyserial fpdf2 numpy pytest PyQt5
 
 ## 4. Module : Caméra & Vision (Phase 1 & 2)
 
-### 4.1 Capture (`modules/camera.py`)
+### 4.1 Capture (`modules/camera.py`) ✅ Phase 1 validée
 
 **Responsabilité** : Ouvrir le flux caméra, capturer une image sur demande.
 
@@ -263,26 +265,55 @@ class Camera:
     def __init__(self, device_index: int = 0)
     def capture(self) -> np.ndarray          # Retourne image BGR
     def release(self)
+    # Attributs publics : self.width, self.height (résolution réelle appliquée)
 ```
 
-### 4.2 Calibrage ArUco (`modules/vision.py`)
+**Résultats (2026-06-11) :** 4/4 tests pytest passés. Résolution 1280×960 confirmée sur RPi 3B+. Warm-up de 10 frames dans `__init__` pour éviter les images noires au démarrage.
 
-**Principe** : 4 marqueurs ArUco de dictionnaire connu sont placés aux coins de la zone de travail. La détection de leurs coins permet de calculer une transformation de perspective (homographie) qui redresse l'image.
+### 4.2 Calibrage ArUco (`modules/vision.py`) 🔄 Phase 2 en cours
 
-**Marqueurs recommandés** : Dictionnaire `DICT_4X4_50`, IDs 0, 1, 2, 3 (coin haut-gauche, haut-droit, bas-droit, bas-gauche).
+**Principe** : 4 marqueurs ArUco placés aux coins de la zone de travail permettent de calculer une homographie (transformation de perspective) qui redresse l'image et convertit les pixels en mm.
+
+**Marqueurs** : Dictionnaire `DICT_4X4_50`, IDs 0–3 (coin haut-gauche, haut-droit, bas-droit, bas-gauche). Taille physique : 28 mm × 28 mm. Zone de travail : 151 × 104 mm (centre-à-centre, mesuré le 2026-06-12).
 
 **Interface publique :**
 ```python
 class VisionProcessor:
     def __init__(self, aruco_dict_id, marker_real_size_mm: float)
-    def detect_markers(self, image: np.ndarray) -> dict      # {id: corners}
-    def compute_homography(self, detected_markers) -> np.ndarray
+    def detect_markers(self, image: np.ndarray) -> dict           # {id: corners (4,2)}
+    def compute_homography(self, detected_markers: dict) -> np.ndarray  # matrice H 3×3
     def warp_image(self, image, homography, output_size) -> np.ndarray
     def pixel_to_mm(self, px, py, homography) -> tuple[float, float]
 ```
 
-**Principe de la transformation de perspective :**
-OpenCV permet de calculer une matrice H (3×3) telle que pour tout point `p` dans l'image source, `H·p` donne sa position dans l'image redressée à l'échelle réelle.
+**Principe de l'homographie :**
+`cv2.getPerspectiveTransform` calcule une matrice H (3×3) à partir de 4 paires de points (centres des marqueurs en pixels → positions réelles en mm). Pour tout point `p` dans l'image source, `H·p` donne ses coordonnées en mm dans le repère de la zone de travail.
+
+**Résultats sessions 1 & 2 (2026-06-11) :** 14/14 tests passés. Détection 4 marqueurs simultanée confirmée. Image redressée validée visuellement.
+
+### 4.3 Calibration objectif (`modules/calibration.py`) 🔄 Phase 2 en cours
+
+**Problème** : Les objectifs de webcam bon marché introduisent une **barrel distortion** — les objets au centre de l'image paraissent plus grands qu'ils ne le sont. L'homographie corrige la perspective mais pas cette distorsion, ce qui cause une erreur de mesure d'environ **10 %** sur les distances intérieures à la zone de travail (mesuré le 2026-06-12 avec la Philips SPC 1330NC à 200 mm de hauteur).
+
+**Solution** : Calibration one-shot avec un échiquier imprimé. Les coefficients de distorsion sont calculés avec `cv2.calibrateCamera`, sauvegardés dans `assets/camera_calibration.npz`, et appliqués via `cv2.undistort` avant tout traitement.
+
+**Procédure de calibration (une seule fois) :**
+1. Imprimer `assets/chessboard_calibration.png` sur A4 paysage (25 mm/carré)
+2. Lancer `tests/demo_calibration.py` et capturer 15+ frames sous différents angles
+3. Les coefficients sont sauvegardés automatiquement dans `assets/camera_calibration.npz`
+
+**Interface publique :**
+```python
+generate_chessboard_image(output_path)                       # génère le PNG à imprimer
+calibrate(images, chessboard_size, square_size_mm)           # → (camera_matrix, dist_coeffs, error)
+undistort(image, camera_matrix, dist_coeffs)                 # → image corrigée (mêmes dimensions)
+save_calibration(path, camera_matrix, dist_coeffs)           # sauvegarde .npz
+load_calibration(path)                                       # → (camera_matrix, dist_coeffs) ou (None, None)
+```
+
+**Critère de qualité :** erreur de reprojection < 1.0 px (acceptable), < 0.5 px (excellent).
+
+**Précision attendue après calibration :** ≤ 2 mm sur 100 mm (vs ~10 mm sans calibration).
 
 ---
 
@@ -486,13 +517,19 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 6. Valider avec une règle physique dans le champ
 
 **Critères de validation :**
-- [ ] Les 4 marqueurs sont détectés de manière fiable (> 95% des captures)
-- [ ] L'image redressée est rectangulaire et sans distorsion visible
-- [ ] Une règle de 100 mm dans la zone mesure 100 ± 2 mm sur l'image calibrée
-- [ ] La fonction `pixel_to_mm()` retourne des coordonnées cohérentes
-- [ ] `pytest tests/test_vision.py` passe sur une image de référence fournie
+- [x] Les 4 marqueurs sont détectés de manière fiable (> 95% des captures) ✅ confirmé
+- [x] L'image redressée est rectangulaire et sans distorsion visible ✅ validé visuellement
+- [ ] Une règle de 100 mm dans la zone mesure 100 ± 2 mm sur l'image calibrée — **en attente** : calibration objectif à exécuter chez soi (échiquier à imprimer)
+- [x] La fonction `pixel_to_mm()` retourne des coordonnées cohérentes ✅ (distance marqueur-à-marqueur correcte à ±3 mm)
+- [x] `pytest tests/test_vision.py` passe — 14/14 tests ✅
 
-**Attendus mesurables :** Précision de conversion pixel → mm ≤ 2% sur toute la zone de travail.
+**Attendus mesurables :** Précision de conversion pixel → mm ≤ 2 mm sur 100 mm, après calibration objectif.
+
+**Résultat de la validation métrologique (2026-06-12) :**
+- Sans calibration : erreur ~10 % (barrel distortion de l'objectif)
+- Marqueur 0→1 : 148,8 mm (attendu 151 mm) — écart -2,2 mm (imprécision du clic)
+- Marqueur 0→3 : 106,7 mm (attendu 104 mm) — écart +2,7 mm (imprécision du clic)
+- Géométrie correcte ; l'écart résiduel vient de la distorsion non corrigée sur les mesures intérieures
 
 ---
 
@@ -810,11 +847,13 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 ## 9. Questions ouvertes / Décisions à prendre
 
 - [x] **Résolution caméra** : ✅ 1280×960 confirmée sur RPi 3B+ (Philips SPC 1330NC, 2026-06-11)
-- [x] **Taille des marqueurs ArUco** : ✅ 28 mm × 28 mm — marqueurs imprimés, détection 4/4 confirmée à ~100–110 mm de distance (2026-06-11)
-- [x] **Zone de travail** : ✅ 152 mm × 106 mm (mesuré centre-à-centre marqueurs ArUco, 2026-06-11)
-- [ ] **Volume de pâte par mm²** : Paramètre de calibrage à déterminer expérimentalement
-- [ ] **Port série** : `/dev/ttyUSB0` ou `/dev/ttyACM0` selon le branchement
-- [ ] **Modèle Raspberry Pi** : Impact sur les performances OpenCV temps réel
+- [x] **Taille des marqueurs ArUco** : ✅ 28 mm × 28 mm — marqueurs imprimés, détection 4/4 confirmée
+- [x] **Zone de travail** : ✅ **151 mm × 104 mm** (re-mesuré centre-à-centre marqueurs ArUco, 2026-06-12 — correction de la mesure initiale de 152×106)
+- [x] **Hauteur caméra** : ✅ **200 mm** au-dessus de la zone de travail (mesuré 2026-06-12)
+- [x] **Distorsion objectif** : ✅ Barrel distortion ~10 % identifiée et traitée via `cv2.calibrateCamera` (2026-06-12). Calibration à exécuter avec l'échiquier imprimé.
+- [ ] **Volume de pâte par mm²** : Paramètre de calibrage à déterminer expérimentalement (Phase 3/5)
+- [ ] **Port série** : `/dev/ttyUSB0` ou `/dev/ttyACM0` selon le branchement (Phase 3)
+- [ ] **Version firmware Marlin** : À confirmer avec `M115` (Phase 3)
 
 ---
 
@@ -825,6 +864,10 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 | 2026-05-19 | — | Définition de l'architecture et du plan de développement |
 | 2026-05-27 | — | Révision plan : ajout machine CNC cible, phases 9-13, planning Excel |
 | 2026-06-09 | — | Changement caméra : connecteur CSI RPi défaillant → Philips SPC 1330NC USB (OpenCV index 0, UVC). picamera2 retiré. Toute la documentation mise à jour. |
+| 2026-06-11 | Phase 1 | Création `camera.py` (classe Camera : open, capture, release, warm-up). 4/4 tests pytest passés. Résolution 1280×960 confirmée. |
+| 2026-06-11 | Phase 2 S1 | Création `vision.py` (VisionProcessor, detect_markers). Fix affichage Wayland → PyQt5. 9/9 tests passés. Détection 4 marqueurs confirmée. |
+| 2026-06-11 | Phase 2 S2 | Ajout compute_homography, warp_image, pixel_to_mm. Démo côte à côte validée visuellement. 14/14 tests passés. |
+| 2026-06-12 | Phase 2 S3 | Validation métrologique : barrel distortion ~10 % identifiée. Re-mesure zone 151×104 mm, hauteur caméra 200 mm. Création `calibration.py`, `demo_calibration.py`, `demo_validation.py`, `chessboard_calibration.png`. Calibration à exécuter chez soi. |
 
 ---
 
