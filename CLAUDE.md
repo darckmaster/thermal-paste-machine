@@ -234,8 +234,8 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 | Q2 | Version exacte du firmware Marlin | Envoyer `M115` via terminal série (ex: `screen /dev/ttyUSB0 115200`) |
 | Q3 | Port série Geeetech : `/dev/ttyUSB0` ou `/dev/ttyACM0` | `ls /dev/tty*` avant/après branchement USB |
 | ~~Q4~~ | ~~Choix interface caméra : V4L2 ou picamera2~~ | ✅ **Résolu** — `cv2.VideoCapture(0)` direct via USB (UVC), pas de picamera2 |
-| ~~Q5~~ | ~~Taille réelle de la zone de travail (en mm)~~ | ✅ **Résolu** — 152 mm × 106 mm (mesuré centre-à-centre des marqueurs, 2026-06-11) |
-| ~~Q6~~ | ~~Distance caméra → pièce (hauteur en mm)~~ | ✅ **Résolu** — ~100–110 mm (10–11 cm, mesuré le 2026-06-11) |
+| ~~Q5~~ | ~~Taille réelle de la zone de travail (en mm)~~ | ✅ **Résolu** — 151 mm × 104 mm (re-mesuré centre-à-centre des marqueurs, 2026-06-12) |
+| ~~Q6~~ | ~~Distance caméra → pièce (hauteur en mm)~~ | ✅ **Résolu** — 200 mm (20 cm, re-mesuré 2026-06-12) |
 | ~~Q7~~ | ~~Taille des marqueurs ArUco à imprimer (en mm)~~ | ✅ **Résolu** — 28 mm × 28 mm (marqueurs imprimés, détection confirmée) |
 | Q8 | Volume de pâte par mm² (quantité de référence) | Calibrage expérimental lors des tests de dépose |
 
@@ -243,28 +243,36 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ## 8. Prochaine session — agenda
 
-**Phase 2 en cours 🔄 — Session 1 terminée, démarrer Session 2 : Homographie**
+**Phase 2 en cours 🔄 — Session 4 : finaliser la validation (chez soi)**
 
-Résolu en Session 1 :
-- [x] Détection ArUco en temps réel (`detect_markers()`) — 4 marqueurs simultanés ✅
-- [x] Q6 : distance caméra/pièce ≈ 100–110 mm
+Session 1 ✅ :
+- [x] Détection ArUco en temps réel (`detect_markers()`) — 4 marqueurs simultanés
+- [x] Q6 : distance caméra/pièce ≈ 100–110 mm (mis à jour à 200 mm en session 3)
 - [x] Q7 : marqueurs 28 mm × 28 mm, `config.py` mis à jour
 - [x] Fix affichage PyQt5 (cv2.imshow cassé sous Wayland RPi OS Bookworm)
 
-Session 2 terminée ✅ :
+Session 2 ✅ :
 - [x] `compute_homography()`, `warp_image()`, `pixel_to_mm()` implémentés
 - [x] Démo côte à côte (original + redressé) — image redressée validée visuellement
-- [x] Q5 résolu : zone de travail 152×106 mm
+- [x] Q5 résolu : zone de travail 151×104 mm (re-mesuré en session 3)
 
-Session 3 — à faire :
-- [ ] Validation métrologique : placer une règle dans la zone et vérifier que 100 mm → 100 ± 2 mm sur l'image redressée
-- [ ] Vérifier `pixel_to_mm()` sur un point connu physiquement
-- [ ] Mettre à jour `CONCEPTION.md` avec les résultats de validation
+Session 3 ✅ (2026-06-12, au boulot) :
+- [x] Validation métrologique → diagnostic barrel distortion (~10 % d'erreur au centre)
+- [x] Re-mesure physique : zone de travail 151×104 mm, hauteur caméra 200 mm
+- [x] `modules/calibration.py` créé (calibrate, undistort, save/load)
+- [x] `tests/demo_calibration.py` créé (outil interactif échiquier → .npz)
+- [x] `tests/demo_validation.py` créé (charge calibration automatiquement si présente)
+- [x] `assets/chessboard_calibration.png` généré (échiquier à imprimer)
+
+Session 4 — à faire **chez soi** :
+- [ ] Imprimer `assets/chessboard_calibration.png` (A4 paysage, taille réelle, 25 mm/carré)
+- [ ] Lancer `python tests/demo_calibration.py` — capturer 15+ frames → générer `assets/camera_calibration.npz`
+- [ ] Lancer `python tests/demo_validation.py` — vérifier que l'erreur passe sous 2 mm
+- [ ] Mettre à jour `CONCEPTION.md` avec les résultats de validation finale
 
 Questions encore ouvertes :
 - [ ] Q2 : version Marlin (`M115` via terminal série) — pour Phase 3
 - [ ] Q3 : port série Geeetech (`ls /dev/tty*` avant/après USB) — pour Phase 3
-- [ ] Q5 : zone de travail XY en mm — pour Phase 5
 
 ---
 
@@ -276,7 +284,7 @@ Questions encore ouvertes :
 |---|---|---|---|
 | 0 | Identification matériel (caméra, port série, firmware) | ⬜ À faire | 0 / 1 |
 | 1 | `modules/camera.py` — caméra de base | ✅ Validé | 1 / 1 |
-| 2 | `modules/vision.py` — ArUco & calibrage | 🔄 En cours | 1 / 3 |
+| 2 | `modules/vision.py` — ArUco & calibrage | 🔄 En cours | 3 / 4 |
 | 3 | `modules/machine.py` — G-code Marlin | ⬜ À faire | 0 / 2 |
 | 4 | `gui/` — interface graphique squelette | ⬜ À faire | 0 / 3 |
 | 5 | `modules/path_planner.py` + zone | ⬜ À faire | 0 / 3 |
@@ -338,8 +346,9 @@ Ces choix sont actés — ne pas les remettre en question sans raison documenté
 | Interface PyQt5 | Fenêtre 800×480 plein écran | Correspond à la résolution de l'écran tactile 7" |
 | Langue du code | Identifiants en anglais, commentaires en français | Convention Python + lisibilité pour le rapport |
 | Caméra | **Philips SPC 1330NC USB** — `cv2.VideoCapture(0)` | Connecteur CSI du RPi défaillant ; webcam USB fonctionnelle, pilote UVC standard, aucune config supplémentaire |
+| Correction distorsion objectif | `cv2.calibrateCamera` + `cv2.undistort` (échiquier 9×6, 25 mm/carré) | Barrel distortion mesurée à ~10 % d'erreur sans correction ; calibration one-shot sauvegardée dans `assets/camera_calibration.npz` |
 
-**Résolution confirmée :** Philips SPC 1330NC supporte 1280×960 sur RPi 3B+ (confirmé le 2026-06-11 via `camera.width`/`camera.height`). Q6 / Q7 : distance caméra/pièce et taille marqueurs ArUco restent à mesurer physiquement.
+**Résolution confirmée :** Philips SPC 1330NC supporte 1280×960 sur RPi 3B+ (confirmé le 2026-06-11). Hauteur caméra : 200 mm. Zone de travail : 151×104 mm (re-mesuré 2026-06-12).
 
 ---
 
@@ -356,8 +365,9 @@ thermal-paste-machine/
 │
 ├── modules/
 │   ├── config.py            # ✅ Créé — paramètres globaux (caméra, machine, ArUco)
-│   ├── camera.py            # ⬜ Phase 1 — capture image via CSI/V4L2
-│   ├── vision.py            # ⬜ Phase 2 — détection ArUco, homographie
+│   ├── camera.py            # ✅ Phase 1 — capture image via USB
+│   ├── vision.py            # 🔄 Phase 2 — détection ArUco, homographie
+│   ├── calibration.py       # 🔄 Phase 2 — calibration objectif, undistortion
 │   ├── machine.py           # ⬜ Phase 3 — communication G-code Marlin
 │   ├── path_planner.py      # ⬜ Phase 5 — calcul des trajectoires
 │   └── reporter.py          # ⬜ Phase 7 — génération PDF
@@ -481,5 +491,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-06-11 | **Phase 1** — Création de `modules/camera.py` (classe `Camera` : open, capture, release), `tests/test_camera.py` (4 tests pytest), `tests/demo_camera.py` (flux temps réel), `conftest.py`. Résolution 1280×960 confirmée sur RPi. | 4/4 tests passés. Phase 1 ✅ validée. |
 | 2026-06-11 | **Phase 2 Session 1** — Création de `modules/vision.py` (classe `VisionProcessor`, `detect_markers()`), `tests/test_vision.py` (5 tests), `tests/demo_vision.py` (détection ArUco temps réel PyQt5). Fix affichage : `cv2.imshow` cassé sous Wayland → migration vers PyQt5 pour les démos. Q6 et Q7 résolus : caméra à 100–110 mm, marqueurs 28×28 mm. | 9/9 tests passés. Détection 4 marqueurs simultanée confirmée. |
 | 2026-06-11 | **Phase 2 Session 2** — Ajout `compute_homography()`, `warp_image()`, `pixel_to_mm()` dans `vision.py`. Démo côte à côte (original + redressé). Q5 résolu : zone de travail 152×106 mm (mesuré). | 14/14 tests passés. Image redressée validée visuellement. |
+| 2026-06-12 | **Phase 2 Session 3** — Validation métrologique sur machine réelle à 200 mm de hauteur. Diagnostic : barrel distortion ~10 % d'erreur. Re-mesure physique : 151×104 mm. Implémentation `modules/calibration.py` + `tests/demo_calibration.py` + `tests/demo_validation.py`. Échiquier 9×6 généré pour calibration. | Code calibration implémenté. Calibration elle-même à effectuer chez soi (impression échiquier requise). |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.
