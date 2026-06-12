@@ -11,6 +11,11 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# Supprimer le warning Qt "wrong permissions on runtime directory /run/user/1000"
+# Ce warning est bénin mais polluant : Qt réclame 0700 sur ce dossier, systemd le crée
+# parfois en 0770. La variable QT_LOGGING_RULES désactive uniquement cette catégorie de log.
+os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.application=false")
+
 import cv2
 import numpy as np
 from PyQt5.QtWidgets import (

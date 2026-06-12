@@ -4,6 +4,7 @@
 CAMERA_INDEX = 0
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 960
+CAMERA_HEIGHT_MM = 200.0  # Hauteur physique de la caméra au-dessus de la zone de travail (mm)
 
 # ArUco
 ARUCO_DICT_ID = "DICT_4X4_50"
@@ -16,8 +17,8 @@ MACHINE_FEEDRATE_MOVE = 3000    # mm/min, déplacements rapides
 MACHINE_FEEDRATE_DISPENSE = 100 # mm/min, dépose pâte
 
 # Zone de travail (à calibrer)
-WORK_AREA_WIDTH_MM = 152.0   # Mesuré le 2026-06-11 : distance centre-à-centre marqueurs 0↔1
-WORK_AREA_HEIGHT_MM = 106.0  # Mesuré le 2026-06-11 : distance centre-à-centre marqueurs 0↔3
+WORK_AREA_WIDTH_MM = 151.0   # Mesuré le 2026-06-12 : distance centre-à-centre marqueurs 0↔1
+WORK_AREA_HEIGHT_MM = 104.0  # Mesuré le 2026-06-12 : distance centre-à-centre marqueurs 0↔3
 DISPENSE_Z_HEIGHT_MM = 1.0      # Hauteur buse au-dessus de la pièce
 
 # Interface

@@ -24,6 +24,11 @@ class Camera:
         self.width: int = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height: int = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+        # Lire et jeter les premières images — les webcams USB retournent souvent
+        # des images noires pendant l'initialisation du capteur (~10 frames suffisent)
+        for _ in range(10):
+            self._cap.read()
+
     def capture(self) -> np.ndarray:
         """Capture une image et la retourne sous forme de tableau numpy BGR."""
         # Lire une image depuis le flux (ret = succès booléen, frame = image numpy BGR)
