@@ -243,38 +243,42 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ## 8. Prochaine session — agenda
 
-**Phase 3 en cours 🔄 — Session 1 validée / Session 2 : test axe E seringue**
+**Phases 4–7 ✅ validées — Phase 8 à démarrer**
 
 Phase 2 — Vision ✅ (3 sessions) + calibration optique en attente :
 - [x] ArUco, homographie, pixel→mm validés
 - [x] `modules/calibration.py` créé — à exécuter avec échiquier imprimé
-- [ ] Calibration optique : imprimer échiquier, capturer 15 poses, valider erreur < 2 mm
+- [ ] **Calibration optique** : imprimer échiquier 9×6 (25 mm/carré), capturer 15 poses, valider erreur < 2 mm
+  → Reporter avec `python3 tests/demo_calibration.py` dès que le plateau est disponible
 
-Phase 3 — Session 1 ✅ (2026-07-01, au boulot) :
-- [x] Q2 résolu : Marlin 1.1.8 (`M115`)
-- [x] Q3 résolu : port `/dev/ttyUSB0`, baudrate **250000**
-- [x] `modules/machine.py` créé (classe `Machine` complète)
-- [x] `tests/test_machine.py` : 10/10 tests unitaires (mock série)
-- [x] `tests/demo_machine.py` créé (script interactif)
-- [x] Connexion, homing, déplacements XYZ validés sur machine réelle
-- [x] Axe E (seringue) : `dispense(10.0)` et `dispense(-10.0)` validés ✅ 2026-07-01
-- [x] Fix protection extrusion à froid : `M302 S0` ajouté dans `connect()`
-- [x] **Phase 3 → ✅ Entièrement validée**
+Phase 3 ✅ :
+- [x] machine.py validé — Marlin 1.1.8, port ttyUSB0, baudrate 250000, axe E confirmé
 
-Phase 4 — Session 1 ✅ (2026-07-01, au boulot) :
-- [x] `gui/app.py` : fenêtre 800×480, `QStackedWidget`, navigation par signaux
-- [x] `gui/screen_capture.py` : flux caméra live (10 fps), Capturer/Valider/Reprendre
-- [x] `gui/screen_zone.py` : affiche photo + slider quantité (placeholder)
-- [x] `gui/screen_run.py` : barre de progression simulée + arrêt d'urgence (placeholder)
-- [x] `gui/screen_report.py` : résumé + bouton nouvelle pièce (placeholder)
-- [x] `main.py` : point d'entrée
-- [x] Navigation complète validée sur RPi avec écran tactile
+Phase 4 ✅ :
+- [x] GUI 4 écrans complet — navigation validée sur RPi + écran tactile
+- [x] Bouton **Homing (G28)** ajouté sur screen_capture (thread séparé, non bloquant)
 
-Sessions 2 & 3 — à planifier :
-- [ ] Phase 5 (sélection zone) avant d'enrichir screen_zone.py
-- [ ] Phase 6 (intégration machine) pour screen_run.py
-- [ ] Phase 7 (PDF) pour screen_report.py
-- [ ] Test tactile complet : boutons ≥ 44×44 px, navigation 10 cycles
+Phase 5 ✅ :
+- [x] Tracé polyline (clic-par-clic) sur screen_zone — ArUco détecté sur la photo
+- [x] `modules/path_planner.py` — `generate_path_from_line()` validé
+
+Phase 6 ✅ :
+- [x] Intégration machine dans screen_run (QThread RunWorker)
+- [x] **Fix repère ArUco ↔ machine** : marqueur 0 = bas-gauche confirmé (2026-07-01)
+- [x] Offset machine mesuré : X=20 mm, Y=50 mm (M114 au-dessus du marqueur 0)
+- [x] Tracé en W reproduit correctement sur la machine ✅
+
+Phase 7 ✅ :
+- [x] `modules/reporter.py` — génération PDF (fpdf2) : photo + résumé statut/longueur/volume
+- [x] screen_report.py mis à jour — données réelles + bouton PDF fonctionnel
+- [ ] **Test PDF cycle complet** : à valider lors de la prochaine session (machine + seringue)
+
+**Prochaine session : Phase 8 — Tests, robustesse, finitions**
+- [ ] Test PDF avec cycle complet (homing → capture → tracé → dépose → rapport)
+- [ ] Calibration optique (échiquier)
+- [ ] Tests tactiles : vérifier boutons ≥ 44×44 px
+- [ ] Gestion des cas d'erreur : caméra absente, machine débranchée en cours de dépose
+- [ ] Vérifier que `pytest` passe toujours après les modifications de cette session
 
 ---
 
@@ -284,15 +288,15 @@ Sessions 2 & 3 — à planifier :
 
 | Phase | Module principal | Statut | Sessions |
 |---|---|---|---|
-| 0 | Identification matériel (caméra, port série, firmware) | ⬜ À faire | 0 / 1 |
+| 0 | Identification matériel (caméra, port série, firmware) | ✅ Validé | 1 / 1 |
 | 1 | `modules/camera.py` — caméra de base | ✅ Validé | 1 / 1 |
 | 2 | `modules/vision.py` — ArUco & calibrage | 🔄 En cours | 3 / 4 |
 | 3 | `modules/machine.py` — G-code Marlin | ✅ Validé | 1 / 2 |
-| 4 | `gui/` — interface graphique squelette | 🔄 En cours | 1 / 3 |
-| 5 | `modules/path_planner.py` + zone | ⬜ À faire | 0 / 3 |
-| 6 | `main.py` — intégration workflow complet | ⬜ À faire | 0 / 3 |
-| 7 | `modules/reporter.py` — rapport PDF | ⬜ À faire | 0 / 2 |
-| 8 | Tests, robustesse, finitions (Geeetech) | ⬜ À faire | 0 / 3 |
+| 4 | `gui/` — interface graphique squelette | ✅ Validé | 2 / 3 |
+| 5 | `modules/path_planner.py` + zone polyline | ✅ Validé | 1 / 3 |
+| 6 | Intégration workflow complet (screen_run + offset machine) | ✅ Validé | 1 / 3 |
+| 7 | `modules/reporter.py` — rapport PDF | ✅ Validé | 1 / 2 |
+| 8 | Tests, robustesse, finitions (Geeetech) | 🔄 En cours | 0 / 3 |
 
 **Sous-total Partie A : 21 sessions × ~2h = ~42h**  
 **Jalon A : Logiciel validé sur Geeetech ≈ début juillet 2026**
@@ -341,7 +345,7 @@ Ces choix sont actés — ne pas les remettre en question sans raison documenté
 | Décision | Choix retenu | Justification |
 |---|---|---|
 | Marqueurs ArUco | DICT_4X4_50, IDs 0–3 | Standard, robuste, bien supporté par OpenCV |
-| Communication machine | USB série, 115200 baud, protocole G-code Marlin | Imposé par le firmware de la Geeetech |
+| Communication machine | USB série, **250000 baud**, protocole G-code Marlin | Confirmé 2026-07-01 — Geeetech configurée à 250000 (pas 115200) |
 | Résolution capture | 1280×960 pour photos rapport, 640×480 pour traitement ArUco | Compromis performance RPi 3B+ / précision |
 | Fins de ligne | LF sur toutes les machines (`.gitattributes`) | Compatibilité Linux/RPi |
 | Licence des librairies | Open source uniquement (MIT/BSD/Apache/LGPL/GPL usage interne) | Utilisabilité en entreprise sans coût |
@@ -351,6 +355,9 @@ Ces choix sont actés — ne pas les remettre en question sans raison documenté
 | Correction distorsion objectif | `cv2.calibrateCamera` + `cv2.undistort` (échiquier 9×6, 25 mm/carré) | Barrel distortion mesurée à ~10 % d'erreur sans correction ; calibration one-shot sauvegardée dans `assets/camera_calibration.npz` |
 
 **Résolution confirmée :** Philips SPC 1330NC supporte 1280×960 sur RPi 3B+ (confirmé le 2026-06-11). Hauteur caméra : 200 mm. Zone de travail : 151×104 mm (re-mesuré 2026-06-12).
+
+| Repère ArUco ↔ machine | Marqueur 0 = **bas-gauche** de l'image. X+ machine = droite image. Y+ machine = haut image. Offset mesuré : X=20 mm, Y=50 mm (M114, 2026-07-01) | Nécessaire pour convertir coordonnées ArUco → G-code machine |
+| Terminal série RPi | `picocom -b 250000 --imap lfcrlf --echo /dev/ttyUSB0` | `screen` non installé ; `minicom` ne supporte pas 250000 baud |
 
 ---
 
@@ -370,16 +377,16 @@ thermal-paste-machine/
 │   ├── camera.py            # ✅ Phase 1 — capture image via USB
 │   ├── vision.py            # 🔄 Phase 2 — détection ArUco, homographie
 │   ├── calibration.py       # 🔄 Phase 2 — calibration objectif, undistortion
-│   ├── machine.py           # ⬜ Phase 3 — communication G-code Marlin
-│   ├── path_planner.py      # ⬜ Phase 5 — calcul des trajectoires
-│   └── reporter.py          # ⬜ Phase 7 — génération PDF
+│   ├── machine.py           # ✅ Phase 3 — communication G-code Marlin
+│   ├── path_planner.py      # ✅ Phase 5 — calcul des trajectoires (polyline)
+│   └── reporter.py          # ✅ Phase 7 — génération PDF
 │
 ├── gui/
-│   ├── app.py               # ⬜ Phase 4 — fenêtre principale PyQt5
-│   ├── screen_capture.py    # ⬜ Phase 4 — écran 1 : prise de photo
-│   ├── screen_zone.py       # ⬜ Phase 4/5 — écran 2 : sélection zone
-│   ├── screen_run.py        # ⬜ Phase 4/6 — écran 3 : exécution
-│   └── screen_report.py     # ⬜ Phase 4/7 — écran 4 : rapport
+│   ├── app.py               # ✅ Phase 4 — fenêtre principale PyQt5
+│   ├── screen_capture.py    # ✅ Phase 4 — écran 1 : prise de photo + bouton Homing
+│   ├── screen_zone.py       # ✅ Phase 4/5 — écran 2 : tracé polyline + ArUco
+│   ├── screen_run.py        # ✅ Phase 4/6 — écran 3 : exécution (QThread + offset machine)
+│   └── screen_report.py     # ✅ Phase 4/7 — écran 4 : rapport + export PDF
 │
 ├── assets/                  # Ressources statiques (synoptique Draw.io, icônes...)
 ├── reports/                 # PDFs générés à l'exécution (gitignorés)
@@ -496,5 +503,9 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-06-12 | **Phase 2 Session 3** — Validation métrologique sur machine réelle à 200 mm de hauteur. Diagnostic : barrel distortion ~10 % d'erreur. Re-mesure physique : 151×104 mm. Implémentation `modules/calibration.py` + `tests/demo_calibration.py` + `tests/demo_validation.py`. Échiquier 9×6 généré pour calibration. | Code calibration implémenté. Calibration elle-même à effectuer chez soi (impression échiquier requise). |
 | 2026-07-01 | **Phase 3 — Complète** — Firmware Marlin 1.1.8, port ttyUSB0, baudrate 250000. `modules/machine.py` (connexion, G90, M302 S0, home, move_to, dispense, emergency_stop). Fix protection extrusion à froid (M302 S0). Validation complète sur machine réelle : XYZ + axe E (dispense ±10 mm). | 10/10 tests passés. Tous les axes validés. Phase 3 ✅. |
 | 2026-07-01 | **Phase 4 Session 1** — Création GUI PyQt5 complète : `gui/app.py` (MainWindow + QStackedWidget + navigation signaux), `gui/screen_capture.py` (flux caméra live 10fps, capture, validation), `gui/screen_zone.py` / `screen_run.py` / `screen_report.py` (placeholders navigables), `main.py`. | Navigation 4 écrans validée sur RPi + écran tactile. Écran 1 caméra fonctionnel. Placeholders 2-4 opérationnels. |
+| 2026-07-01 | **Phases 5 & 6** — `screen_zone.py` : sélection de zone par tracé polyline (clic-par-clic, overlay coloré, ArUco détecté sur la photo). `path_planner.py` : `generate_path_from_line()`. `screen_run.py` : exécution G-code réelle via QThread (RunWorker). Premier test réel : tracé en W dessiné → déplacement machine incorrect (repère ArUco non aligné avec repère machine). | Phases 5 & 6 implémentées. Bug repère identifié. |
+| 2026-07-01 | **Fix repère ArUco ↔ machine** — Diagnostic : marqueur 0 = bas-gauche (non haut-gauche comme codé). Mesuré avec M114 : X=20, Y=50 mm depuis home. `vision.py` : dst_pts corrigé (ID0=BL, ID1=TL, ID2=TR, ID3=BR). `config.py` : MACHINE_ORIGIN_X=20, MACHINE_ORIGIN_Y=50. `screen_run.py` : offset appliqué + homing G28 ajouté. Terminal série : `picocom -b 250000 --imap lfcrlf --echo`. | Tracé en W reproduit correctement sur la machine ✅. Écart distances résiduel (~10 %) = distorsion objectif, sera corrigé par calibration échiquier. |
+| 2026-07-01 | **Phase 7** — `modules/reporter.py` (fpdf2 : photo + résumé statut/longueur/volume estimé). `screen_report.py` mis à jour avec données réelles + export PDF fonctionnel. `screen_run.py` : signal `run_finished(str)` avec statut. `app.py` : stockage image/points/quantité pour le rapport. | Phase 7 ✅. Test PDF cycle complet à finaliser lors de la prochaine session. |
+| 2026-07-01 | **Bouton Homing** — `screen_capture.py` : bouton "Homing (G28)" avec `HomingWorker` (QThread). Fix GC : worker stocké en attribut d'instance (`self._homing_worker`) pour éviter la destruction prématurée par Python. Homing validé sur machine réelle. | Bouton Homing fonctionnel ✅. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.
