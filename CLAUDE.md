@@ -239,6 +239,8 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 | ~~Q7~~ | ~~Taille des marqueurs ArUco à imprimer (en mm)~~ | ✅ **Résolu** — 28 mm × 28 mm (marqueurs imprimés, détection confirmée) |
 | Q8 | Volume de pâte par mm² (quantité de référence) | Calibrage expérimental lors des tests de dépose |
 
+**Écart de distance résiduel (~10 %)** : confirmé encore présent lors du test PDF cycle complet du 2026-07-01. Cause connue = distorsion de l'objectif (barrel distortion), sera corrigé par la calibration échiquier (Q8 / section 8 agenda).
+
 ---
 
 ## 8. Prochaine session — agenda
@@ -271,10 +273,10 @@ Phase 6 ✅ :
 Phase 7 ✅ :
 - [x] `modules/reporter.py` — génération PDF (fpdf2) : photo + résumé statut/longueur/volume
 - [x] screen_report.py mis à jour — données réelles + bouton PDF fonctionnel
-- [ ] **Test PDF cycle complet** : à valider lors de la prochaine session (machine + seringue)
+- [x] **Test PDF cycle complet** validé sur machine réelle (homing → capture → tracé → dépose → rapport) — 2026-07-01
 
 **Prochaine session : Phase 8 — Tests, robustesse, finitions**
-- [ ] Test PDF avec cycle complet (homing → capture → tracé → dépose → rapport)
+- [ ] Corriger `tests/test_vision.py::test_pixel_to_mm_coins_de_la_zone` (résidu du fix de repère ArUco — marqueurs synthétiques pas mis à jour pour la convention ID0=bas-gauche)
 - [ ] Calibration optique (échiquier)
 - [ ] Tests tactiles : vérifier boutons ≥ 44×44 px
 - [ ] Gestion des cas d'erreur : caméra absente, machine débranchée en cours de dépose
@@ -296,7 +298,7 @@ Phase 7 ✅ :
 | 5 | `modules/path_planner.py` + zone polyline | ✅ Validé | 1 / 3 |
 | 6 | Intégration workflow complet (screen_run + offset machine) | ✅ Validé | 1 / 3 |
 | 7 | `modules/reporter.py` — rapport PDF | ✅ Validé | 1 / 2 |
-| 8 | Tests, robustesse, finitions (Geeetech) | 🔄 En cours | 0 / 3 |
+| 8 | Tests, robustesse, finitions (Geeetech) | 🔄 En cours | 1 / 3 |
 
 **Sous-total Partie A : 21 sessions × ~2h = ~42h**  
 **Jalon A : Logiciel validé sur Geeetech ≈ début juillet 2026**
@@ -507,5 +509,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-07-01 | **Fix repère ArUco ↔ machine** — Diagnostic : marqueur 0 = bas-gauche (non haut-gauche comme codé). Mesuré avec M114 : X=20, Y=50 mm depuis home. `vision.py` : dst_pts corrigé (ID0=BL, ID1=TL, ID2=TR, ID3=BR). `config.py` : MACHINE_ORIGIN_X=20, MACHINE_ORIGIN_Y=50. `screen_run.py` : offset appliqué + homing G28 ajouté. Terminal série : `picocom -b 250000 --imap lfcrlf --echo`. | Tracé en W reproduit correctement sur la machine ✅. Écart distances résiduel (~10 %) = distorsion objectif, sera corrigé par calibration échiquier. |
 | 2026-07-01 | **Phase 7** — `modules/reporter.py` (fpdf2 : photo + résumé statut/longueur/volume estimé). `screen_report.py` mis à jour avec données réelles + export PDF fonctionnel. `screen_run.py` : signal `run_finished(str)` avec statut. `app.py` : stockage image/points/quantité pour le rapport. | Phase 7 ✅. Test PDF cycle complet à finaliser lors de la prochaine session. |
 | 2026-07-01 | **Bouton Homing** — `screen_capture.py` : bouton "Homing (G28)" avec `HomingWorker` (QThread). Fix GC : worker stocké en attribut d'instance (`self._homing_worker`) pour éviter la destruction prématurée par Python. Homing validé sur machine réelle. | Bouton Homing fonctionnel ✅. |
+| 2026-07-01 | **Phase 8 (début) — Test PDF cycle complet** — Validation de `reporter.py` en deux temps : (1) `tests/demo_reporter.py` créé (image + tracé synthétiques, sans matériel) — PDF vérifié via `pdftotext`/`pdfimages` (calculs longueur/volume exacts, image JPEG bien intégrée, statut succès/urgence correct) ; (2) cycle complet réel sur la Geeetech au boulot (homing → capture → tracé → dépose → export PDF) — fonctionnel de bout en bout. Écart de distance résiduel (~10 %) toujours présent, cause connue (distorsion objectif), en attente de la calibration échiquier. Résidu identifié à corriger : `test_pixel_to_mm_coins_de_la_zone` échoue (marqueurs synthétiques du test pas mis à jour après le fix de repère ID0=bas-gauche). | Test PDF cycle complet ✅. Phase 8 démarrée (1/3). |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.
