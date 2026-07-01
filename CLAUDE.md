@@ -195,7 +195,7 @@ Le soir à la maison : `git pull` sur le PC, on continue sur grand écran.
 | Interface utilisateur | Écran tactile **7 pouces 800×480** | ✅ Confirmé |
 | Base mécanique | Imprimante 3D **Geeetech I3** modifiée | ✅ Confirmé (modèle exact à identifier) |
 | Actionneur de dépose | Moteur **Nema 17** sur axe E (ex-extrudeur) + vis sans fin | ✅ Confirmé |
-| Contrôleur machine | Carte Geeetech — firmware **Marlin** via USB série 115200 baud | ✅ Confirmé (version à identifier) |
+| Contrôleur machine | Carte Geeetech — firmware **Marlin 1.1.8** via USB série **250000 baud** — port `/dev/ttyUSB0` | ✅ Confirmé (2026-07-01, `M115`) |
 | Référentiel | 4 marqueurs **ArUco** DICT_4X4_50 — IDs 0, 1, 2, 3 | ✅ Arrêté |
 
 #### Machine cible (CNC — production)
@@ -214,7 +214,7 @@ Le soir à la maison : `git pull` sur le PC, on continue sur grand écran.
 | Interface | Protocole | De | Vers |
 |---|---|---|---|
 | USB | UVC (webcam standard) | RPi 3B+ | Philips SPC 1330NC (caméra) |
-| USB (puce CH340 ou ATmega) | UART série 115200 baud | RPi 3B+ | Carte Geeetech (Marlin) |
+| USB (puce CH340) | UART série **250000 baud** | RPi 3B+ | Carte Geeetech (Marlin 1.1.8) |
 | HDMI | HDMI 1.4 | RPi 3B+ | Écran tactile 7" |
 | USB | HID (touch) | RPi 3B+ | Contrôleur tactile écran |
 
@@ -231,8 +231,8 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 | # | Question | Comment y répondre |
 |---|---|---|
 | ~~Q1~~ | ~~Version du module caméra RPi~~ | ✅ **Résolu** — caméra Philips SPC 1330NC USB (OpenCV index 0) |
-| Q2 | Version exacte du firmware Marlin | Envoyer `M115` via terminal série (ex: `screen /dev/ttyUSB0 115200`) |
-| Q3 | Port série Geeetech : `/dev/ttyUSB0` ou `/dev/ttyACM0` | `ls /dev/tty*` avant/après branchement USB |
+| ~~Q2~~ | ~~Version exacte du firmware Marlin~~ | ✅ **Résolu** — Marlin 1.1.8 (compilé 2022-09-25, confirmé 2026-07-01) |
+| ~~Q3~~ | ~~Port série Geeetech : `/dev/ttyUSB0` ou `/dev/ttyACM0`~~ | ✅ **Résolu** — `/dev/ttyUSB0` (puce CH340), baudrate **250000** |
 | ~~Q4~~ | ~~Choix interface caméra : V4L2 ou picamera2~~ | ✅ **Résolu** — `cv2.VideoCapture(0)` direct via USB (UVC), pas de picamera2 |
 | ~~Q5~~ | ~~Taille réelle de la zone de travail (en mm)~~ | ✅ **Résolu** — 151 mm × 104 mm (re-mesuré centre-à-centre des marqueurs, 2026-06-12) |
 | ~~Q6~~ | ~~Distance caméra → pièce (hauteur en mm)~~ | ✅ **Résolu** — 200 mm (20 cm, re-mesuré 2026-06-12) |
@@ -243,36 +243,31 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ## 8. Prochaine session — agenda
 
-**Phase 2 en cours 🔄 — Session 4 : finaliser la validation (chez soi)**
+**Phase 3 en cours 🔄 — Session 1 validée / Session 2 : test axe E seringue**
 
-Session 1 ✅ :
-- [x] Détection ArUco en temps réel (`detect_markers()`) — 4 marqueurs simultanés
-- [x] Q6 : distance caméra/pièce ≈ 100–110 mm (mis à jour à 200 mm en session 3)
-- [x] Q7 : marqueurs 28 mm × 28 mm, `config.py` mis à jour
-- [x] Fix affichage PyQt5 (cv2.imshow cassé sous Wayland RPi OS Bookworm)
+Phase 2 — Vision ✅ (3 sessions) + calibration optique en attente :
+- [x] ArUco, homographie, pixel→mm validés
+- [x] `modules/calibration.py` créé — à exécuter avec échiquier imprimé
+- [ ] Calibration optique : imprimer échiquier, capturer 15 poses, valider erreur < 2 mm
 
-Session 2 ✅ :
-- [x] `compute_homography()`, `warp_image()`, `pixel_to_mm()` implémentés
-- [x] Démo côte à côte (original + redressé) — image redressée validée visuellement
-- [x] Q5 résolu : zone de travail 151×104 mm (re-mesuré en session 3)
+Phase 3 — Session 1 ✅ (2026-07-01, au boulot) :
+- [x] Q2 résolu : Marlin 1.1.8 (`M115`)
+- [x] Q3 résolu : port `/dev/ttyUSB0`, baudrate **250000**
+- [x] `modules/machine.py` créé (classe `Machine` complète)
+- [x] `tests/test_machine.py` : 10/10 tests unitaires (mock série)
+- [x] `tests/demo_machine.py` créé (script interactif)
+- [x] Connexion, homing, déplacements XYZ validés sur machine réelle
+- [ ] Axe E (seringue) : non testé — moteur non branché
 
-Session 3 ✅ (2026-06-12, au boulot) :
-- [x] Validation métrologique → diagnostic barrel distortion (~10 % d'erreur au centre)
-- [x] Re-mesure physique : zone de travail 151×104 mm, hauteur caméra 200 mm
-- [x] `modules/calibration.py` créé (calibrate, undistort, save/load)
-- [x] `tests/demo_calibration.py` créé (outil interactif échiquier → .npz)
-- [x] `tests/demo_validation.py` créé (charge calibration automatiquement si présente)
-- [x] `assets/chessboard_calibration.png` généré (échiquier à imprimer)
+Phase 3 — Session 2 — à faire **au boulot** (avec moteur E branché) :
+- [ ] Brancher le moteur Nema 17 sur le connecteur E de la carte
+- [ ] Lancer `python tests/demo_machine.py` → tester `dispense(1.0)` et `dispense(-1.0)`
+- [ ] Vérifier visuellement que le piston avance/recule de 1 mm
+- [ ] Phase 3 → ✅ Validé
 
-Session 4 — à faire **chez soi** :
-- [ ] Imprimer `assets/chessboard_calibration.png` (A4 paysage, taille réelle, 25 mm/carré)
-- [ ] Lancer `python tests/demo_calibration.py` — capturer 15+ frames → générer `assets/camera_calibration.npz`
-- [ ] Lancer `python tests/demo_validation.py` — vérifier que l'erreur passe sous 2 mm
-- [ ] Mettre à jour `CONCEPTION.md` avec les résultats de validation finale
-
-Questions encore ouvertes :
-- [ ] Q2 : version Marlin (`M115` via terminal série) — pour Phase 3
-- [ ] Q3 : port série Geeetech (`ls /dev/tty*` avant/après USB) — pour Phase 3
+Prochaine phase possible **chez soi** (Phase 4 — GUI PyQt5) :
+- Pas besoin du matériel pour la structure de navigation
+- Démarrer avec la fenêtre principale 800×480 et le `QStackedWidget`
 
 ---
 
@@ -285,7 +280,7 @@ Questions encore ouvertes :
 | 0 | Identification matériel (caméra, port série, firmware) | ⬜ À faire | 0 / 1 |
 | 1 | `modules/camera.py` — caméra de base | ✅ Validé | 1 / 1 |
 | 2 | `modules/vision.py` — ArUco & calibrage | 🔄 En cours | 3 / 4 |
-| 3 | `modules/machine.py` — G-code Marlin | ⬜ À faire | 0 / 2 |
+| 3 | `modules/machine.py` — G-code Marlin | 🔄 En cours | 1 / 2 |
 | 4 | `gui/` — interface graphique squelette | ⬜ À faire | 0 / 3 |
 | 5 | `modules/path_planner.py` + zone | ⬜ À faire | 0 / 3 |
 | 6 | `main.py` — intégration workflow complet | ⬜ À faire | 0 / 3 |
@@ -492,5 +487,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-06-11 | **Phase 2 Session 1** — Création de `modules/vision.py` (classe `VisionProcessor`, `detect_markers()`), `tests/test_vision.py` (5 tests), `tests/demo_vision.py` (détection ArUco temps réel PyQt5). Fix affichage : `cv2.imshow` cassé sous Wayland → migration vers PyQt5 pour les démos. Q6 et Q7 résolus : caméra à 100–110 mm, marqueurs 28×28 mm. | 9/9 tests passés. Détection 4 marqueurs simultanée confirmée. |
 | 2026-06-11 | **Phase 2 Session 2** — Ajout `compute_homography()`, `warp_image()`, `pixel_to_mm()` dans `vision.py`. Démo côte à côte (original + redressé). Q5 résolu : zone de travail 152×106 mm (mesuré). | 14/14 tests passés. Image redressée validée visuellement. |
 | 2026-06-12 | **Phase 2 Session 3** — Validation métrologique sur machine réelle à 200 mm de hauteur. Diagnostic : barrel distortion ~10 % d'erreur. Re-mesure physique : 151×104 mm. Implémentation `modules/calibration.py` + `tests/demo_calibration.py` + `tests/demo_validation.py`. Échiquier 9×6 généré pour calibration. | Code calibration implémenté. Calibration elle-même à effectuer chez soi (impression échiquier requise). |
+| 2026-07-01 | **Phase 3 Session 1** — Identification firmware Marlin 1.1.8 (M115), port `/dev/ttyUSB0`, baudrate 250000. Création `modules/machine.py` (classe `Machine`), `tests/test_machine.py` (10 tests mock), `tests/demo_machine.py`. Validation sur machine réelle : connexion, homing, déplacements XYZ. Axe E non testé (moteur non branché). | 10/10 tests passés. Connexion + homing + XYZ validés sur Geeetech réelle. Phase 3 à 1/2 session. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.

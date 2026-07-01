@@ -2,7 +2,7 @@
 
 **Projet** : Automatisation de la dépose de pâte thermique sur coques de calculateur automobile  
 **Contexte** : Projet d'études — apprentissage progressif  
-**Dernière mise à jour** : 2026-06-12  
+**Dernière mise à jour** : 2026-07-01  
 
 ---
 
@@ -30,12 +30,12 @@ Le projet utilise **deux machines successives** avec le même firmware Marlin, c
 | Interface utilisateur | Écran tactile 7 pouces (800×480) | Affichage de l'IHM, saisie par le toucher |
 | Base mécanique | Imprimante 3D Geeetech I3 (axes X/Y/Z) | Déplacement de la buse sur la pièce |
 | Actionneur de dépose | Moteur Nema 17 sur axe E (ex-extrudeur) + vis sans fin | Pousse le piston de la seringue de pâte thermique |
-| Contrôleur machine | Carte d'origine Geeetech — firmware Marlin (version à confirmer) | Interprète les commandes G-code, pilote les moteurs |
+| Contrôleur machine | Carte d'origine Geeetech — firmware **Marlin 1.1.8** (compilé 2022-09-25) | Interprète les commandes G-code, pilote les moteurs |
 | Pièce à traiter | Coque de calculateur automobile | Support de la dépose de pâte thermique |
 | Référentiel géométrique | 4 marqueurs ArUco (DICT_4X4_50, IDs 0–3) | Permettent le calibrage de perspective par vision |
 
 > **Caméra** : Philips SPC 1330NC USB — détectée par OpenCV via `cv2.VideoCapture(0)`. Résolution max confirmée : **1280×960** (vérifié le 2026-06-11 via `camera.width`/`camera.height`). Hauteur de montage : **200 mm** au-dessus de la zone de travail (mesure du 2026-06-12).  
-> **Firmware Marlin** : à confirmer avec `M115` via terminal série (`screen /dev/ttyUSB0 115200`).
+> **Firmware Marlin** : **Marlin 1.1.8** (compilé 2022-09-25) — confirmé le 2026-07-01 via `M115`. Port série : `/dev/ttyUSB0` (puce CH340). Baudrate : **250000** (configuré dans l'EEPROM de la Geeetech). Steps/mm : X=80.80, Y=80.80, Z=2560.00, E=102.00. Vitesse max Z : 2 mm/s = 120 mm/min.
 
 ### 1.3 Inventaire matériel — Machine cible (CNC)
 
@@ -94,7 +94,7 @@ graph LR
 
     CAM -->|"USB — UVC"| RPi
     SCREEN -->|"HDMI + USB"| RPi
-    RPi -->|"USB série\nCH340 · 115200 baud\nprotocole G-code"| MACHINE
+    RPi -->|"USB série\nCH340 · 250000 baud\nprotocole G-code"| MACHINE
 
     CAM -. "capture image\n(avant / après)" .-> ZONE
     PISTON -. "dépose pâte\nthermique" .-> PIECE
@@ -113,7 +113,7 @@ graph LR
 | RAM | 1 Go | Images OpenCV limitées à 1280×960 max en mémoire simultanée |
 | CPU | Cortex-A53 × 4 cœurs @ 1,4 GHz (64 bits) | Traitement ArUco en ~100–300 ms selon résolution |
 | GPU | VideoCore IV | Non utilisé dans ce projet (pas de CUDA/OpenCL nécessaire) |
-| USB | USB 2.0 ×4 | Débit série largement suffisant (115200 baud = ~11 Ko/s) |
+| USB | USB 2.0 ×4 | Débit série largement suffisant (250000 baud = ~24 Ko/s) |
 | Interface caméra | USB (UVC) | Philips SPC 1330NC — `cv2.VideoCapture(0)` directement, aucun pilote supplémentaire |
 
 **Stratégie d'optimisation adoptée :**
@@ -317,33 +317,52 @@ load_calibration(path)                                       # → (camera_matri
 
 ---
 
-## 5. Module : Communication Machine (Phase 3)
+## 5. Module : Communication Machine (Phase 3) ✅ Session 1 validée
 
-### Protocole G-code (Marlin)
+### Protocole G-code (Marlin 1.1.8)
 
-La Geeetech I3 utilise le firmware **Marlin** et communique via USB série (115200 baud par défaut).
+La Geeetech I3 utilise le firmware **Marlin 1.1.8** et communique via USB série à **250000 baud** (puce CH340, port `/dev/ttyUSB0`). Confirmé le 2026-07-01.
 
-**Commandes clés :**
+**Point clé — reset automatique à l'ouverture du port :**  
+L'ouverture du port série sur une carte Arduino déclenche un reset via la ligne DTR. Marlin envoie ~20 lignes de configuration au démarrage. `connect()` attend 2 secondes puis vide le buffer avant d'envoyer la moindre commande.
+
+**Paramètres machine confirmés (M115 + M203) :**
+
+| Axe | Steps/mm | Vitesse max | Vitesse utilisée |
+|---|---|---|---|
+| X | 80.80 | 24 000 mm/min | 3 000 mm/min (`MACHINE_FEEDRATE_XY`) |
+| Y | 80.80 | 24 000 mm/min | 3 000 mm/min (`MACHINE_FEEDRATE_XY`) |
+| Z | 2 560.00 | **120 mm/min** | 100 mm/min (`MACHINE_FEEDRATE_Z`) |
+| E (seringue) | 102.00 | 2 700 mm/min | 100 mm/min (`MACHINE_FEEDRATE_DISPENSE`) |
+
+> L'axe Z est très lent (vis à bille haute précision). Ne jamais utiliser `MACHINE_FEEDRATE_XY` pour Z.
+
+**Commandes G-code utilisées :**
 
 | Commande | Description |
 |---|---|
-| `G28` | Homing (remise à zéro tous les axes) |
-| `G1 X{x} Y{y} Z{z} F{vitesse}` | Déplacement linéaire |
-| `G1 E{val} F{vitesse}` | Avance du piston (axe E = extrudeur → piston) |
-| `M114` | Demande position courante |
-| `M0` | Pause |
+| `G28` | Homing tous axes (30–60 s) |
+| `G90` | Mode absolu — position cible relative à (0,0,0) |
+| `G91` | Mode relatif — déplacement relatif à la position courante |
+| `G1 X Y F` | Déplacement XY linéaire |
+| `G1 Z F` | Déplacement Z (vitesse réduite) |
+| `G1 E F` | Avance piston seringue |
+| `M400` | Attendre fin physique de tous les mouvements |
+| `M112` | Arrêt d'urgence (pas de réponse `ok`) |
 
-**Interface publique :**
+**Interface publique implémentée (`modules/machine.py`) :**
 ```python
-class MachineController:
-    def __init__(self, port: str, baudrate: int = 115200)
-    def connect(self) -> bool
-    def send_gcode(self, command: str) -> str    # Retourne la réponse "ok"
-    def home(self)
-    def move_to(self, x: float, y: float, z: float, feedrate: int = 1000)
-    def dispense(self, amount_mm: float, feedrate: int = 100)
-    def emergency_stop(self)
-    def disconnect(self)
+class Machine:
+    def __init__(self, port: str, baudrate: int, feedrate_xy: int,
+                 feedrate_z: int, feedrate_dispense: int)
+    def connect(self) -> None          # Ouvre port, attend reset, force G90
+    def disconnect(self) -> None
+    def is_connected(self) -> bool
+    def send_command(self, cmd: str) -> list   # Envoie G-code, attend 'ok'
+    def home(self) -> None             # G28
+    def move_to(self, x, y, z: float) -> None  # G1 XY + G1 Z + M400
+    def dispense(self, amount_mm: float) -> None  # G91 + G1 E + M400 + G90
+    def emergency_stop(self) -> None   # M112 direct (pas d'attente 'ok')
 ```
 
 ---
@@ -536,30 +555,28 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 ### Phase 3 — Communication machine (G-code Marlin)
 **Objectif** : Piloter la machine depuis Python via G-code série  
 **Sessions estimées** : 2 sessions (~4h)
-- Session 1 : Protocole G-code + connexion série + commandes de base
-- Session 2 : Test sur machine réelle + commandes de dépose
+- Session 1 ✅ : Protocole G-code + connexion série + commandes de base + test sur machine réelle
+- Session 2 : Test dépose seringue (moteur E à brancher)
 
 **Livrables** :
-- `modules/machine.py` — classe `MachineController`
-- Script `tests/demo_machine.py` — REPL interactif (saisir des commandes G-code à la main)
-- `tests/test_machine.py` — tests unitaires avec mock série
-
-**Déroulé suggéré :**
-1. Connecter la Geeetech en USB, identifier le port (`/dev/ttyUSB0` ou `/dev/ttyACM0`)
-2. Tester la connexion avec un terminal série (`screen` ou `minicom`)
-3. Implémenter `connect()` et `send_gcode()` avec lecture de la réponse "ok"
-4. Tester `home()`, `move_to()` avec des déplacements manuels
-5. Tester `dispense()` avec une seringue vide (sans pâte)
-
-> ⚠️ **Sécurité machine** : toujours vérifier la position avant un `home()`, ne jamais envoyer de commande de déplacement sans connaître la position courante. Avoir le bouton d'arrêt d'urgence à portée.
+- `modules/machine.py` ✅ — classe `Machine`
+- `tests/demo_machine.py` ✅ — script interactif avec menus étape par étape
+- `tests/test_machine.py` ✅ — 10 tests unitaires avec mock série
 
 **Critères de validation :**
-- [ ] Connexion série établie et stable (pas de timeout sur 60 secondes)
-- [ ] `home()` ramène la machine en position zéro sur les 3 axes
-- [ ] `move_to(50, 50, 5)` déplace la buse à la position mesurée (±1 mm)
-- [ ] `dispense(5)` avance le piston de 5 mm (vérifiable à l'œil)
-- [ ] `emergency_stop()` arrête immédiatement tout mouvement
-- [ ] Tests unitaires avec un mock du port série passent sans matériel
+- [x] Connexion série établie et stable (pas de timeout sur 60 secondes) ✅ 2026-07-01
+- [x] `home()` ramène la machine en position zéro sur les 3 axes ✅ 2026-07-01
+- [x] `move_to(30, 30, 5)` déplace la buse à la position voulue ✅ 2026-07-01
+- [ ] `dispense(1)` avance le piston de 1 mm — **en attente** : moteur E à brancher
+- [x] `emergency_stop()` envoie M112 directement ✅ (testé en mock)
+- [x] 10/10 tests unitaires avec mock du port série ✅ 2026-07-01
+
+**Résultats session 1 (2026-07-01) :**
+- Port confirmé : `/dev/ttyUSB0` (puce CH340)
+- Baudrate confirmé : **250000** (configuré dans l'EEPROM de la Geeetech — différent du défaut Marlin 115200)
+- Firmware identifié : Marlin 1.1.8 (compilé 2022-09-25, `M115`)
+- Connexion, homing, déplacements XYZ : tous fonctionnels
+- Axe E (seringue) : non testé, moteur non encore branché
 
 **Attendus mesurables :** Précision de positionnement ≤ 1 mm (résolution mécanique de la Geeetech I3).
 
