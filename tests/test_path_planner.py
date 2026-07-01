@@ -156,7 +156,7 @@ def test_zone_invalide_leve_value_error():
         planner.generate_path(zone_mm=(0.0, 0.0, 30.0, -5.0))  # hauteur négative
 
 
-# ------------------------------------------------------------------ longueur totale
+# ------------------------------------------------------------------ longueur totale (fill)
 
 def test_total_dispense_length():
     """total_dispense_length_mm() doit retourner la somme des longueurs de dépose."""
@@ -165,3 +165,71 @@ def test_total_dispense_length():
     zone = (0.0, 0.0, 40.0, 20.0)
     # 5 lignes × 40 mm = 200 mm
     assert planner.total_dispense_length_mm(zone) == pytest.approx(200.0)
+
+
+# ------------------------------------------------------------------ tracé libre (polyline)
+
+def test_line_path_structure():
+    """generate_path_from_line() doit retourner la même structure que generate_path()."""
+    planner = creer_planner()
+    points = [(0.0, 0.0), (30.0, 0.0), (30.0, 20.0)]
+    steps = planner.generate_path_from_line(points)
+    assert isinstance(steps, list)
+    assert len(steps) > 0
+    for step in steps:
+        assert "type" in step and "x" in step and "y" in step and "z" in step and "amount" in step
+
+
+def test_line_path_premier_dernier_travel():
+    """Premier et dernier step doivent être des travels à z_travel."""
+    planner = creer_planner()
+    points = [(5.0, 10.0), (50.0, 10.0)]
+    steps = planner.generate_path_from_line(points)
+    assert steps[0]["type"] == "travel" and steps[0]["z"] == 5.0
+    assert steps[-1]["type"] == "travel" and steps[-1]["z"] == 5.0
+
+
+def test_line_path_n_segments_dispense():
+    """Nombre de steps dispense = nombre de segments = nombre de points - 1."""
+    planner = creer_planner()
+    points = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (20.0, 10.0)]
+    steps = planner.generate_path_from_line(points)
+    n_dispense = sum(1 for s in steps if s["type"] == "dispense")
+    assert n_dispense == 3  # 4 points → 3 segments
+
+
+def test_line_path_amount_proportionnel_longueur():
+    """La quantité E doit être proportionnelle à la longueur du segment."""
+    planner = PathPlanner(line_spacing_mm=5.0, z_dispense_mm=1.0,
+                          z_travel_mm=5.0, amount_per_mm=0.1)
+    # Segment horizontal de 40 mm → amount = 40 × 0.1 = 4.0 mm
+    steps = planner.generate_path_from_line([(0.0, 0.0), (40.0, 0.0)])
+    dispense_steps = [s for s in steps if s["type"] == "dispense"]
+    assert dispense_steps[0]["amount"] == pytest.approx(4.0, rel=1e-3)
+
+
+def test_line_path_segment_diagonal():
+    """Un segment diagonal doit utiliser la distance euclidienne, pas Manhattan."""
+    planner = PathPlanner(line_spacing_mm=5.0, z_dispense_mm=1.0,
+                          z_travel_mm=5.0, amount_per_mm=1.0)
+    # Triangle 3-4-5 : segment de (0,0) à (3,4) → longueur = 5
+    steps = planner.generate_path_from_line([(0.0, 0.0), (3.0, 4.0)])
+    dispense_steps = [s for s in steps if s["type"] == "dispense"]
+    assert dispense_steps[0]["amount"] == pytest.approx(5.0, rel=1e-3)
+
+
+def test_line_path_moins_de_2_points_leve_erreur():
+    """generate_path_from_line() doit lever ValueError si moins de 2 points."""
+    planner = creer_planner()
+    with pytest.raises(ValueError):
+        planner.generate_path_from_line([])
+    with pytest.raises(ValueError):
+        planner.generate_path_from_line([(10.0, 20.0)])
+
+
+def test_total_line_length():
+    """total_line_length_mm() doit retourner la somme des longueurs de segments."""
+    planner = creer_planner()
+    # Deux segments de 10 mm chacun (horizontal) → 20 mm au total
+    points = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)]
+    assert planner.total_line_length_mm(points) == pytest.approx(20.0)

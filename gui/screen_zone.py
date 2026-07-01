@@ -1,118 +1,124 @@
-# Écran 2 — Sélection de zone de dépose
-# L'utilisateur dessine un rectangle sur la photo ; on convertit en mm via l'homographie ArUco
+# Écran 2 — Tracé du chemin de dépose
+# L'utilisateur clique/tape des points sur la photo pour dessiner son chemin.
+# Les coordonnées sont converties en mm via l'homographie ArUco.
 
 import numpy as np
 import cv2
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QRect, QPoint
-from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint
+from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QBrush, QColor
 
 from modules.vision import VisionProcessor
 from modules.config import (
     ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM,
     WORK_AREA_WIDTH_MM, WORK_AREA_HEIGHT_MM,
-    DISPENSE_Z_HEIGHT_MM,
 )
 
 
-class ZoneSelector(QLabel):
-    """QLabel interactif — l'utilisateur dessine un rectangle à la souris/au doigt.
+class LineSelector(QLabel):
+    """QLabel interactif — chaque clic/toucher ajoute un point au tracé.
 
-    Émet rectangle_selected(QRect) quand le doigt/curseur est relâché.
-    Le QRect est exprimé en coordonnées du label (pixels affichés).
+    Les points sont reliés par des lignes dessinées en temps réel.
+    Émet point_added(QPoint) à chaque nouveau point.
     """
 
-    rectangle_selected = pyqtSignal(QRect)
+    point_added = pyqtSignal(QPoint)
 
     def __init__(self) -> None:
         super().__init__()
-        # Point de départ du rectangle (None si pas de dessin en cours)
-        self._start: QPoint | None = None
-        # Rectangle courant en cours de dessin (affiché en temps réel)
-        self._rect: QRect | None = None
-        # Dernier rectangle validé (affiché après relâchement)
-        self._confirmed_rect: QRect | None = None
+        # Liste des points du tracé en coordonnées label (pixels affichés)
+        self._points: list[QPoint] = []
 
     def mousePressEvent(self, event) -> None:
-        """Mémoriser le point de départ au clic/toucher."""
+        """Ajouter un point au clic/toucher."""
         if event.button() == Qt.LeftButton:
-            self._start = event.pos()
-            self._rect = QRect(self._start, self._start)
-            self.update()  # Forcer un repaint pour afficher le rectangle naissant
-
-    def mouseMoveEvent(self, event) -> None:
-        """Mettre à jour le rectangle pendant le déplacement."""
-        if self._start is not None:
-            # normalized() garantit que top-left < bottom-right (même si on tire vers le haut)
-            self._rect = QRect(self._start, event.pos()).normalized()
-            self.update()
-
-    def mouseReleaseEvent(self, event) -> None:
-        """Finaliser le rectangle et émettre le signal."""
-        if event.button() == Qt.LeftButton and self._start is not None:
-            self._rect = QRect(self._start, event.pos()).normalized()
-            self._confirmed_rect = self._rect
-            self._start = None
-            self.rectangle_selected.emit(self._confirmed_rect)
-            self.update()
+            self._points.append(event.pos())
+            self.point_added.emit(event.pos())
+            self.update()  # Déclencher un repaint pour afficher le nouveau point
 
     def paintEvent(self, event) -> None:
-        """Dessiner l'image puis superposer le rectangle de sélection."""
-        # Dessiner l'image de base (comportement normal du QLabel)
+        """Dessiner l'image puis superposer le tracé par-dessus."""
         super().paintEvent(event)
 
-        # Dessiner le rectangle par-dessus si un est en cours ou confirmé
-        rect_a_dessiner = self._rect or self._confirmed_rect
-        if rect_a_dessiner and not rect_a_dessiner.isEmpty():
-            painter = QPainter(self)
-            # Contour orange vif (bien visible sur toutes les images)
-            painter.setPen(QPen(QColor(255, 140, 0), 2, Qt.SolidLine))
-            # Remplissage orange semi-transparent
-            painter.setBrush(QColor(255, 140, 0, 50))
-            painter.drawRect(rect_a_dessiner)
-            painter.end()
+        if len(self._points) == 0:
+            return
 
-    def clear_selection(self) -> None:
-        """Effacer le rectangle sélectionné."""
-        self._rect = None
-        self._confirmed_rect = None
-        self._start = None
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Dessiner les segments reliant les points
+        if len(self._points) >= 2:
+            pen = QPen(QColor(255, 80, 0), 3, Qt.SolidLine)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+            for i in range(1, len(self._points)):
+                painter.drawLine(self._points[i - 1], self._points[i])
+
+        # Dessiner un cercle à chaque point (pour bien voir les waypoints)
+        for i, pt in enumerate(self._points):
+            if i == 0:
+                # Premier point : vert (départ)
+                painter.setBrush(QBrush(QColor(0, 200, 80)))
+                painter.setPen(QPen(QColor(0, 120, 40), 2))
+            elif i == len(self._points) - 1:
+                # Dernier point : rouge (arrivée)
+                painter.setBrush(QBrush(QColor(220, 50, 50)))
+                painter.setPen(QPen(QColor(140, 20, 20), 2))
+            else:
+                # Points intermédiaires : orange
+                painter.setBrush(QBrush(QColor(255, 140, 0)))
+                painter.setPen(QPen(QColor(180, 90, 0), 2))
+            painter.drawEllipse(pt, 8, 8)
+
+        painter.end()
+
+    def remove_last_point(self) -> None:
+        """Supprimer le dernier point ajouté."""
+        if self._points:
+            self._points.pop()
+            self.update()
+
+    def clear_points(self) -> None:
+        """Effacer tous les points."""
+        self._points.clear()
         self.update()
+
+    def get_points(self) -> list:
+        """Retourner la liste des points (coordonnées label)."""
+        return list(self._points)
 
 
 class ScreenZone(QWidget):
-    """Écran 2 : sélection de la zone de dépose sur la photo capturée.
+    """Écran 2 : tracé libre du chemin de dépose sur la photo.
 
-    L'utilisateur dessine un rectangle sur la photo.
-    On détecte les marqueurs ArUco pour convertir le rectangle pixels → mm.
-    On émet zone_configured(zone_mm, quantite) pour passer à l'exécution.
+    L'utilisateur tape une série de points sur la photo.
+    Les points sont convertis en mm via l'homographie ArUco et transmis
+    au PathPlanner pour générer la trajectoire G-code.
     """
 
-    # zone_mm = (x, y, largeur, hauteur) en mm dans le repère machine
-    # quantite = mm d'axe E à pousser par mm de déplacement (réglé par le slider)
+    # points_mm = liste de (x_mm, y_mm) définissant le tracé
+    # quantity = mm d'axe E par mm de déplacement (slider)
     zone_configured = pyqtSignal(object, float)
 
     def __init__(self) -> None:
         super().__init__()
-        self._image: np.ndarray | None = None          # photo brute reçue de ScreenCapture
-        self._homography: np.ndarray | None = None     # matrice H calculée depuis les ArUco
+        self._image: np.ndarray | None = None
+        self._homography: np.ndarray | None = None
         self._vision = VisionProcessor(ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM)
-        self._zone_mm: tuple | None = None              # zone sélectionnée en mm
         self._setup_ui()
 
     def set_image(self, image: np.ndarray) -> None:
         """Recevoir la photo de ScreenCapture, détecter les ArUco, afficher."""
         self._image = image
-        self._zone_mm = None
-        self._selector.clear_selection()
+        self._selector.clear_points()
         self._btn_launch.setEnabled(False)
+        self._btn_undo.setEnabled(False)
+        self._n_points_label.setText("0 point(s)")
 
-        # Tenter de détecter les 4 marqueurs et calculer l'homographie
-        self._detect_and_setup_homography(image)
-
-        # Afficher la photo dans le sélecteur
+        self._detect_homography(image)
         self._display_image(image)
 
     # ------------------------------------------------------------------ interface
@@ -123,30 +129,33 @@ class ScreenZone(QWidget):
         layout.setSpacing(6)
 
         # Titre
-        title = QLabel("Selectionner la zone de depose")
+        title = QLabel("Tracer le chemin de depose")
         title.setProperty("role", "title")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
-        # Zone de sélection interactive (image + dessin rectangle)
-        self._selector = ZoneSelector()
+        # Sélecteur de tracé interactif
+        self._selector = LineSelector()
         self._selector.setProperty("role", "camera")
         self._selector.setAlignment(Qt.AlignCenter)
-        # Activer le suivi souris même sans clic enfoncé (utile pour le tactile)
-        self._selector.setMouseTracking(True)
-        self._selector.rectangle_selected.connect(self._on_rectangle_drawn)
+        self._selector.point_added.connect(self._on_point_added)
         layout.addWidget(self._selector, stretch=1)
 
-        # Message d'état (indique si les ArUco sont détectés, la zone sélectionnée, etc.)
-        self._status_label = QLabel("Dessiner un rectangle sur la photo")
+        # Barre de statut
+        self._status_label = QLabel("Appuyer sur la photo pour ajouter des points")
         self._status_label.setProperty("role", "status")
         self._status_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self._status_label)
 
-        # Slider : quantité de pâte (mm d'axe E par mm de déplacement)
-        # Valeur × 0.01 pour avoir de 0.01 à 0.10 mm/mm (résolution 0.01)
-        qty_layout = QHBoxLayout()
-        qty_layout.addWidget(QLabel("Quantite :"))
+        # Ligne : compteur de points + slider quantité
+        info_layout = QHBoxLayout()
+
+        self._n_points_label = QLabel("0 point(s)")
+        self._n_points_label.setProperty("role", "status")
+        info_layout.addWidget(self._n_points_label)
+
+        info_layout.addStretch(1)
+        info_layout.addWidget(QLabel("Quantite :"))
 
         self._slider = QSlider(Qt.Horizontal)
         self._slider.setMinimum(1)    # 0.01 mm/mm
@@ -155,14 +164,14 @@ class ScreenZone(QWidget):
         self._slider.setTickInterval(1)
         self._slider.setTickPosition(QSlider.TicksBelow)
         self._slider.valueChanged.connect(self._on_quantity_changed)
-        qty_layout.addWidget(self._slider, stretch=1)
+        info_layout.addWidget(self._slider)
 
         self._qty_label = QLabel("0.03 mm/mm")
         self._qty_label.setMinimumWidth(80)
-        qty_layout.addWidget(self._qty_label)
-        layout.addLayout(qty_layout)
+        info_layout.addWidget(self._qty_label)
+        layout.addLayout(info_layout)
 
-        # Boutons de navigation
+        # Boutons
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
@@ -170,49 +179,47 @@ class ScreenZone(QWidget):
         btn_back.setProperty("role", "secondary")
         btn_back.clicked.connect(self._on_back)
 
-        btn_reset = QPushButton("Effacer")
-        btn_reset.setProperty("role", "secondary")
-        btn_reset.clicked.connect(self._on_reset)
+        self._btn_undo = QPushButton("Annuler dernier")
+        self._btn_undo.setProperty("role", "secondary")
+        self._btn_undo.setEnabled(False)
+        self._btn_undo.clicked.connect(self._on_undo)
 
-        self._btn_launch = QPushButton("Lancer la depose")
+        btn_clear = QPushButton("Effacer tout")
+        btn_clear.setProperty("role", "secondary")
+        btn_clear.clicked.connect(self._on_clear)
+
+        self._btn_launch = QPushButton("Lancer")
         self._btn_launch.setProperty("role", "success")
-        self._btn_launch.setEnabled(False)  # Activé seulement quand une zone est sélectionnée
+        self._btn_launch.setEnabled(False)  # Activé dès 2 points
         self._btn_launch.clicked.connect(self._on_launch)
 
         btn_layout.addWidget(btn_back)
-        btn_layout.addWidget(btn_reset)
+        btn_layout.addWidget(self._btn_undo)
+        btn_layout.addWidget(btn_clear)
         btn_layout.addWidget(self._btn_launch, stretch=2)
         layout.addLayout(btn_layout)
 
     # ------------------------------------------------------------------ détection ArUco
 
-    def _detect_and_setup_homography(self, image: np.ndarray) -> None:
-        """Détecter les 4 marqueurs ArUco et calculer l'homographie pixel→mm."""
+    def _detect_homography(self, image: np.ndarray) -> None:
+        """Détecter les marqueurs ArUco et calculer l'homographie."""
         markers = self._vision.detect_markers(image)
-
         if len(markers) == 4:
-            # Les 4 marqueurs sont détectés → on peut convertir pixels en mm
             self._homography = self._vision.compute_homography(markers)
             self._status_label.setText(
-                "4 marqueurs ArUco detectes — dessiner un rectangle sur la zone"
+                "4 marqueurs detectes — appuyer sur la photo pour tracer le chemin"
             )
         else:
-            # Pas assez de marqueurs → on ne peut pas convertir en mm
             self._homography = None
             self._status_label.setText(
                 f"Attention : {len(markers)}/4 marqueurs detectes — "
-                f"la conversion pixels→mm ne sera pas possible"
+                f"conversion pixels→mm indisponible"
             )
 
     # ------------------------------------------------------------------ conversion coordonnées
 
     def _label_to_image_coords(self, lx: int, ly: int) -> tuple:
-        """Convertir des coordonnées du label (pixels affichés) en pixels de l'image originale.
-
-        Le label affiche l'image redimensionnée avec Qt.KeepAspectRatio, ce qui crée
-        des marges noires (letterboxing). On doit corriger ces offsets pour retrouver
-        les coordonnées dans l'image originale.
-        """
+        """Convertir coordonnées label (pixels affichés) → pixels de l'image originale."""
         if self._image is None:
             return lx, ly
 
@@ -220,115 +227,106 @@ class ScreenZone(QWidget):
         lh = self._selector.height()
         ih, iw = self._image.shape[:2]
 
-        # Calculer le facteur de zoom appliqué par Qt (KeepAspectRatio)
+        # Facteur de zoom appliqué par Qt (KeepAspectRatio)
         ratio = min(lw / iw, lh / ih)
         disp_w = iw * ratio
         disp_h = ih * ratio
 
-        # Calculer l'offset dû au centrage de l'image dans le label
+        # Offset de centrage (marges noires)
         off_x = (lw - disp_w) / 2
         off_y = (lh - disp_h) / 2
 
-        # Convertir et clipper aux limites de l'image
-        ix = (lx - off_x) / ratio
-        iy = (ly - off_y) / ratio
-        ix = max(0.0, min(ix, iw - 1))
-        iy = max(0.0, min(iy, ih - 1))
-
+        ix = max(0.0, min((lx - off_x) / ratio, iw - 1))
+        iy = max(0.0, min((ly - off_y) / ratio, ih - 1))
         return int(ix), int(iy)
 
-    def _rect_to_zone_mm(self, rect: QRect) -> tuple | None:
-        """Convertir un rectangle (en coordonnées label) en zone en mm.
+    def _point_to_mm(self, pt: QPoint) -> tuple | None:
+        """Convertir un point label → (x_mm, y_mm) via l'homographie.
 
-        Retourne (x_mm, y_mm, width_mm, height_mm) ou None si impossible.
+        Retourne None si l'homographie n'est pas disponible ou si le point
+        est hors de la zone de travail.
         """
-        if self._homography is None or self._image is None:
+        if self._homography is None:
             return None
 
-        # Convertir les 4 coins du rectangle de label → pixels image
-        tl = self._label_to_image_coords(rect.left(), rect.top())
-        br = self._label_to_image_coords(rect.right(), rect.bottom())
-
-        # Convertir les pixels image → coordonnées mm via l'homographie ArUco
-        x1_mm, y1_mm = self._vision.pixel_to_mm(tl[0], tl[1], self._homography)
-        x2_mm, y2_mm = self._vision.pixel_to_mm(br[0], br[1], self._homography)
-
-        # Calculer la zone (x_min, y_min, largeur, hauteur) en mm
-        x_mm = min(x1_mm, x2_mm)
-        y_mm = min(y1_mm, y2_mm)
-        w_mm = abs(x2_mm - x1_mm)
-        h_mm = abs(y2_mm - y1_mm)
+        ix, iy = self._label_to_image_coords(pt.x(), pt.y())
+        x_mm, y_mm = self._vision.pixel_to_mm(ix, iy, self._homography)
 
         # Clipper à la zone de travail physique
         x_mm = max(0.0, min(x_mm, WORK_AREA_WIDTH_MM))
         y_mm = max(0.0, min(y_mm, WORK_AREA_HEIGHT_MM))
-        w_mm = min(w_mm, WORK_AREA_WIDTH_MM - x_mm)
-        h_mm = min(h_mm, WORK_AREA_HEIGHT_MM - y_mm)
 
-        # Rejeter les zones trop petites (rectangle accidentel = un simple clic)
-        if w_mm < 1.0 or h_mm < 1.0:
-            return None
-
-        return (round(x_mm, 1), round(y_mm, 1), round(w_mm, 1), round(h_mm, 1))
+        return (round(x_mm, 1), round(y_mm, 1))
 
     # ------------------------------------------------------------------ actions
 
-    def _on_rectangle_drawn(self, rect: QRect) -> None:
-        """Réaction quand l'utilisateur a fini de dessiner le rectangle."""
-        zone_mm = self._rect_to_zone_mm(rect)
+    def _on_point_added(self, pt: QPoint) -> None:
+        """Mettre à jour le compteur et l'état des boutons après ajout d'un point."""
+        n = len(self._selector.get_points())
+        self._n_points_label.setText(f"{n} point(s)")
+        self._btn_undo.setEnabled(True)
 
-        if zone_mm is None and self._homography is None:
-            # Pas d'ArUco — on ne peut pas convertir
+        # "Lancer" activé dès qu'on a au moins 2 points (= 1 segment)
+        self._btn_launch.setEnabled(n >= 2)
+
+        if n >= 2:
             self._status_label.setText(
-                "Impossible de convertir en mm : marqueurs ArUco non detectes.\n"
-                "Reprendre une photo avec les marqueurs visibles."
+                f"{n} points — continuer le trace ou appuyer sur Lancer"
             )
-            self._btn_launch.setEnabled(False)
-            return
 
-        if zone_mm is None:
-            # Zone trop petite (simple clic)
-            self._status_label.setText("Zone trop petite — dessiner un rectangle plus grand")
-            self._btn_launch.setEnabled(False)
-            return
+    def _on_undo(self) -> None:
+        """Supprimer le dernier point."""
+        self._selector.remove_last_point()
+        n = len(self._selector.get_points())
+        self._n_points_label.setText(f"{n} point(s)")
+        self._btn_undo.setEnabled(n > 0)
+        self._btn_launch.setEnabled(n >= 2)
+        if n == 0:
+            self._status_label.setText("Appuyer sur la photo pour ajouter des points")
 
-        self._zone_mm = zone_mm
-        x, y, w, h = zone_mm
-        self._status_label.setText(
-            f"Zone selectionnee : {w:.1f} × {h:.1f} mm  "
-            f"(origine X={x:.1f} Y={y:.1f} mm)"
-        )
-        self._btn_launch.setEnabled(True)
+    def _on_clear(self) -> None:
+        """Effacer tous les points."""
+        self._selector.clear_points()
+        self._n_points_label.setText("0 point(s)")
+        self._btn_undo.setEnabled(False)
+        self._btn_launch.setEnabled(False)
+        self._status_label.setText("Appuyer sur la photo pour ajouter des points")
 
     def _on_quantity_changed(self, value: int) -> None:
-        """Mettre à jour l'affichage de la quantité quand le slider bouge."""
-        qty = value * 0.01
-        self._qty_label.setText(f"{qty:.2f} mm/mm")
-
-    def _on_reset(self) -> None:
-        """Effacer la sélection et recommencer."""
-        self._selector.clear_selection()
-        self._zone_mm = None
-        self._btn_launch.setEnabled(False)
-        self._status_label.setText("Dessiner un rectangle sur la photo")
+        self._qty_label.setText(f"{value * 0.01:.2f} mm/mm")
 
     def _on_back(self) -> None:
-        """Retour à l'écran de capture."""
         parent = self.window()
         if hasattr(parent, '_go_to_capture'):
             parent._go_to_capture()
 
     def _on_launch(self) -> None:
-        """Émettre le signal avec la zone mm et la quantité configurée."""
-        if self._zone_mm is None:
+        """Convertir tous les points en mm et émettre le signal."""
+        label_points = self._selector.get_points()
+        if len(label_points) < 2:
             return
-        quantity = self._slider.value() * 0.01  # Convertir slider → mm/mm
-        self.zone_configured.emit(self._zone_mm, quantity)
+
+        # Convertir chaque point label → mm
+        points_mm = []
+        for pt in label_points:
+            coords = self._point_to_mm(pt)
+            if coords is not None:
+                points_mm.append(coords)
+
+        if len(points_mm) < 2:
+            self._status_label.setText(
+                "Impossible de convertir le trace en mm — "
+                "vérifier que les marqueurs ArUco sont visibles."
+            )
+            return
+
+        quantity = self._slider.value() * 0.01
+        self.zone_configured.emit(points_mm, quantity)
 
     # ------------------------------------------------------------------ affichage
 
     def _display_image(self, frame: np.ndarray) -> None:
-        """Afficher l'image dans le ZoneSelector."""
+        """Afficher l'image dans le LineSelector."""
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, channels = rgb.shape
         bytes_per_line = channels * w

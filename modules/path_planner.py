@@ -114,6 +114,60 @@ class PathPlanner:
         n_lignes = math.ceil(height / self._line_spacing) + 1
         return n_lignes * width
 
+    def generate_path_from_line(self, points_mm: list) -> list:
+        """Générer la trajectoire de dépose en suivant un tracé libre (polyline).
+
+        L'utilisateur dessine une série de points sur l'image — la machine suit
+        exactement ce tracé en déposant de la pâte en continu.
+
+        Paramètre :
+            points_mm : liste de tuples (x_mm, y_mm) définissant le tracé
+                        Au moins 2 points sont requis.
+
+        Retourne la même structure que generate_path() :
+            liste de {"type": "travel"|"dispense", "x", "y", "z", "amount"}
+        """
+        if len(points_mm) < 2:
+            raise ValueError(
+                f"Au moins 2 points sont requis pour un tracé "
+                f"(reçu : {len(points_mm)} point(s))"
+            )
+
+        steps = []
+
+        # --- Étape 1 : aller au-dessus du premier point (hauteur de transit)
+        x0, y0 = points_mm[0]
+        steps.append(_travel(x0, y0, self._z_travel))
+
+        # --- Étape 2 : descendre à la hauteur de dépose
+        steps.append(_travel(x0, y0, self._z_dispense))
+
+        # --- Étape 3 : suivre le tracé point par point en déposant de la pâte
+        for i in range(1, len(points_mm)):
+            x_prec, y_prec = points_mm[i - 1]
+            x_curr, y_curr = points_mm[i]
+
+            # Calculer la longueur réelle du segment (théorème de Pythagore)
+            longueur = math.sqrt((x_curr - x_prec) ** 2 + (y_curr - y_prec) ** 2)
+
+            # Quantité d'axe E proportionnelle à la longueur du segment
+            steps.append(_dispense(x_curr, y_curr, self._z_dispense, longueur, self._amount_per_mm))
+
+        # --- Étape 4 : remonter à la hauteur de transit en fin de tracé
+        x_fin, y_fin = points_mm[-1]
+        steps.append(_travel(x_fin, y_fin, self._z_travel))
+
+        return steps
+
+    def total_line_length_mm(self, points_mm: list) -> float:
+        """Calculer la longueur totale d'un tracé libre (en mm)."""
+        total = 0.0
+        for i in range(1, len(points_mm)):
+            x1, y1 = points_mm[i - 1]
+            x2, y2 = points_mm[i]
+            total += math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+        return total
+
 
 # ------------------------------------------------------------------ fonctions utilitaires
 
