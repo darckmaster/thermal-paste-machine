@@ -20,7 +20,8 @@ MACHINE_FEEDRATE_DISPENSE = 100    # mm/min, dépose pâte (axe E)
 # Zone de travail (à calibrer)
 WORK_AREA_WIDTH_MM = 151.0   # Mesuré le 2026-06-12 : distance centre-à-centre marqueurs 0↔1
 WORK_AREA_HEIGHT_MM = 104.0  # Mesuré le 2026-06-12 : distance centre-à-centre marqueurs 0↔3
-DISPENSE_Z_HEIGHT_MM = 1.0      # Hauteur buse au-dessus de la pièce
+DISPENSE_Z_HEIGHT_MM = 1.0      # Hauteur buse au-dessus de la pièce pendant la dépose
+MACHINE_Z_TRAVEL_MM = 5.0      # Hauteur de transit entre les points (assez haut pour ne rien toucher)
 
 # Interface
 TOUCHSCREEN_WIDTH = 800

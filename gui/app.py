@@ -5,7 +5,12 @@ import numpy as np
 from PyQt5.QtWidgets import QMainWindow, QStackedWidget
 from PyQt5.QtCore import Qt
 
-from modules.config import TOUCHSCREEN_WIDTH, TOUCHSCREEN_HEIGHT
+from modules.config import (
+    TOUCHSCREEN_WIDTH, TOUCHSCREEN_HEIGHT,
+    SERIAL_PORT, SERIAL_BAUDRATE,
+    MACHINE_FEEDRATE_XY, MACHINE_FEEDRATE_Z, MACHINE_FEEDRATE_DISPENSE,
+)
+from modules.machine import Machine
 from gui.screen_capture import ScreenCapture
 from gui.screen_zone import ScreenZone
 from gui.screen_run import ScreenRun
@@ -80,6 +85,16 @@ class MainApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("Machine de Dépose de Pâte Thermique")
 
+        # Créer l'objet Machine une seule fois — la connexion série est ouverte
+        # dans le thread d'exécution (RunWorker) pour ne pas bloquer l'interface
+        self._machine = Machine(
+            port=SERIAL_PORT,
+            baudrate=SERIAL_BAUDRATE,
+            feedrate_xy=MACHINE_FEEDRATE_XY,
+            feedrate_z=MACHINE_FEEDRATE_Z,
+            feedrate_dispense=MACHINE_FEEDRATE_DISPENSE,
+        )
+
         # Fixer la taille à la résolution de l'écran tactile — pas de barre de titre en prod
         self.setFixedSize(TOUCHSCREEN_WIDTH, TOUCHSCREEN_HEIGHT)
 
@@ -127,9 +142,9 @@ class MainApp(QMainWindow):
         self._screen_zone.set_image(image)
         self._stack.setCurrentIndex(1)
 
-    def _go_to_run(self, zone: object, quantity: float) -> None:
-        """Basculer vers l'écran d'exécution avec la zone et la quantité configurées."""
-        self._screen_run.start_run(zone, quantity)
+    def _go_to_run(self, points_mm: object, quantity: float) -> None:
+        """Basculer vers l'écran d'exécution avec le tracé et la quantité configurés."""
+        self._screen_run.start_run(self._machine, points_mm, quantity)
         self._stack.setCurrentIndex(2)
 
     def _go_to_report(self) -> None:

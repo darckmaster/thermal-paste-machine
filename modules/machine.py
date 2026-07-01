@@ -168,6 +168,32 @@ class Machine:
         # Revenir en mode absolu pour ne pas perturber les move_to() suivants
         self.send_command('G90')
 
+    def move_and_dispense(self, x: float, y: float, amount_mm: float) -> None:
+        """Déplace la tête en XY tout en déposant de la pâte simultanément.
+
+        Envoie un seul G1 avec X, Y et E — les trois axes bougent en même temps.
+        La pâte est donc déposée de façon continue le long du segment, pas en un
+        seul blob à l'arrivée. Z doit déjà être à la hauteur de dépose avant cet appel.
+
+        M83 = mode relatif pour E uniquement : E{amount} est un incrément, pas une position.
+        M82 en fin de méthode remet E en mode absolu pour cohérence avec le reste du code.
+        """
+        # Passer E en mode relatif (M83) tout en gardant XYZ en mode absolu (G90)
+        # C'est différent de G91 qui passerait TOUS les axes en relatif
+        self.send_command('M83')
+
+        # Déplacement XY absolu + extrusion E relative dans la même commande
+        # La vitesse F s'applique au déplacement XY ; E suit proportionnellement
+        self.send_command(
+            f'G1 X{x:.3f} Y{y:.3f} E{amount_mm:.4f} F{self._feedrate_xy}'
+        )
+
+        # Attendre la fin physique du mouvement avant de continuer
+        self.send_command('M400')
+
+        # Remettre E en mode absolu pour que dispense() continue de fonctionner normalement
+        self.send_command('M82')
+
     # ------------------------------------------------------------------ sécurité
 
     def emergency_stop(self) -> None:

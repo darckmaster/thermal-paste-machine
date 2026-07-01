@@ -178,6 +178,31 @@ def test_dispense_entoure_de_g91_g90(mock_serial_class, mock_sleep):
     assert commandes_envoyees[-1] == 'G90'                                   # retour absolu
 
 
+# ------------------------------------------------------------------ test move_and_dispense
+
+@patch('modules.machine.time.sleep')
+@patch('modules.machine.serial.Serial')
+def test_move_and_dispense_envoie_m83_g1_m400_m82(mock_serial_class, mock_sleep):
+    """move_and_dispense() doit envoyer M83, G1 XYE, M400, M82 dans cet ordre."""
+    # 2 ok (connect) + 4 ok (move_and_dispense : M83, G1, M400, M82)
+    mock_port = creer_port_serie_mock(['ok\n'] * 6)
+    mock_serial_class.return_value = mock_port
+
+    machine = creer_machine()
+    machine.connect()
+    machine.move_and_dispense(x=25.0, y=10.0, amount_mm=1.5)
+
+    commandes_envoyees = [
+        c.args[0].decode('utf-8').strip()
+        for c in mock_port.write.call_args_list
+    ]
+
+    assert 'M83' in commandes_envoyees                          # E relatif
+    assert 'G1 X25.000 Y10.000 E1.5000 F3000' in commandes_envoyees  # move + extrusion
+    assert 'M400' in commandes_envoyees                          # attente fin
+    assert 'M82' in commandes_envoyees                          # retour E absolu
+
+
 # ------------------------------------------------------------------ test sécurité
 
 @patch('modules.machine.time.sleep')
