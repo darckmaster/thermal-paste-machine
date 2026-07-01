@@ -279,7 +279,11 @@ Phase 7 ✅ :
 - [x] Corriger `tests/test_vision.py::test_pixel_to_mm_coins_de_la_zone` (résidu du fix de repère ArUco — marqueurs synthétiques pas mis à jour pour la convention ID0=bas-gauche) — 2026-07-01, 45/45 tests passent
 - [ ] Calibration optique (échiquier)
 - [ ] Tests tactiles : vérifier boutons ≥ 44×44 px
-- [ ] Gestion des cas d'erreur : caméra absente, machine débranchée en cours de dépose
+- [ ] **Gestion des cas d'erreur** — reportée à une session ultérieure (décidé le 2026-07-01). Audit déjà fait, à reprendre directement sans re-auditer :
+  - Déjà bien géré ✅ : caméra absente/déconnectée (`screen_capture.py`), erreurs Homing/dépose remontées via signaux Qt (`HomingWorker`, `RunWorker`), vision/ArUco insuffisants (`screen_zone.py`)
+  - Trou #1 (priorité sécurité) : `app.py::closeEvent` (ligne ~175) ne libère que la caméra — si l'app est fermée pendant une dépose, le thread `RunWorker` continue en arrière-plan et l'opérateur perd l'accès à l'arrêt d'urgence
+  - Trou #2 : un seul objet `Machine` partagé sans verrou entre l'écran Homing (`screen_capture.py`) et l'écran Run (`screen_run.py`) (`app.py` lignes 90-91/122/160) — risque d'écriture série concurrente si un thread Homing traîne encore
+  - Trou #3 (mineur) : messages d'erreur bruts (ex. `[Errno 2] could not open port /dev/ttyUSB0`) au lieu d'un message clair pour l'opérateur
 - [ ] Vérifier que `pytest` passe toujours après les modifications de cette session
 
 ---
