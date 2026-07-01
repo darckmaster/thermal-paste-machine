@@ -9,7 +9,10 @@ from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QThread, QObject
 
 from modules.machine import Machine
 from modules.path_planner import PathPlanner
-from modules.config import DISPENSE_Z_HEIGHT_MM, MACHINE_Z_TRAVEL_MM
+from modules.config import (
+    DISPENSE_Z_HEIGHT_MM, MACHINE_Z_TRAVEL_MM,
+    MACHINE_ORIGIN_X, MACHINE_ORIGIN_Y,
+)
 
 
 # ================================================================ worker thread
@@ -52,6 +55,21 @@ class RunWorker(QObject):
             self._machine.connect()
         except Exception as e:
             self.error_occurred.emit(f"Connexion impossible : {e}")
+            return
+
+        # --- Homing ---
+        # G28 ramène tous les axes à leur butée (position de référence connue).
+        # Sans homing, la position de départ est inconnue et les coordonnées seraient fausses.
+        # Peut prendre 30 à 60 secondes — l'interface reste réactive car on est dans le thread.
+        try:
+            self.progress_updated.emit(0, total, "Homing en cours (30-60 s)...")
+            self._machine.home()
+        except Exception as e:
+            self.error_occurred.emit(f"Homing impossible : {e}")
+            try:
+                self._machine.disconnect()
+            except Exception:
+                pass
             return
 
         # --- Exécution des steps ---
@@ -129,14 +147,22 @@ class ScreenRun(QWidget):
         """Démarrer l'exécution : générer la trajectoire et lancer le thread."""
         self._machine = machine
 
-        # Générer la trajectoire à partir des points tracés par l'utilisateur
+        # Convertir les coordonnées ArUco (mm depuis le marqueur 0) en coordonnées machine
+        # (mm depuis le home G28). La formule est : machine = aruco + origine_machine.
+        # L'origine machine correspond à la position du marqueur 0 mesurée avec M114.
+        points_machine = [
+            (x + MACHINE_ORIGIN_X, y + MACHINE_ORIGIN_Y)
+            for x, y in points_mm
+        ]
+
+        # Générer la trajectoire à partir des points convertis en coordonnées machine
         planner = PathPlanner(
             line_spacing_mm=3.0,         # Non utilisé pour generate_path_from_line
             z_dispense_mm=DISPENSE_Z_HEIGHT_MM,
             z_travel_mm=MACHINE_Z_TRAVEL_MM,
             amount_per_mm=quantity,       # Quantité pâte réglée par le slider
         )
-        steps = planner.generate_path_from_line(points_mm)
+        steps = planner.generate_path_from_line(points_machine)
 
         # Réinitialiser l'affichage
         self._progress_bar.setValue(0)

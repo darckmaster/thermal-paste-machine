@@ -77,10 +77,10 @@ class VisionProcessor:
         Les 4 marqueurs IDs 0, 1, 2, 3 doivent être présents.
 
         Convention de placement des marqueurs dans la zone de travail :
-            ID 0 → coin haut-gauche  (  0 mm,           0 mm )
-            ID 1 → coin haut-droit   (  WORK_AREA_WIDTH, 0 mm )
-            ID 2 → coin bas-droit    (  WORK_AREA_WIDTH, WORK_AREA_HEIGHT )
-            ID 3 → coin bas-gauche   (  0 mm,            WORK_AREA_HEIGHT )
+            ID 0 → coin bas-gauche   (  0 mm,            0 mm              )
+            ID 1 → coin haut-gauche  (  0 mm,            WORK_AREA_HEIGHT  )
+            ID 2 → coin haut-droit   (  WORK_AREA_WIDTH, WORK_AREA_HEIGHT  )
+            ID 3 → coin bas-droit    (  WORK_AREA_WIDTH, 0 mm              )
         """
         ids_requis = {0, 1, 2, 3}
         ids_manquants = ids_requis - set(detected_markers.keys())
@@ -99,11 +99,20 @@ class VisionProcessor:
         ], dtype=np.float32)
 
         # Positions réelles des 4 marqueurs dans la zone de travail (en mm)
+        # Repère ArUco : origine (0,0) au marqueur 0 (bas-gauche de l'image)
+        #   X croît vers la droite (vers ID 3, bas-droit)
+        #   Y croît vers le haut  (vers ID 1, haut-gauche)
+        # Ce repère est aligné avec le repère machine : X+ = buse à droite, Y+ = plateau arrière.
+        # Placement physique confirmé le 2026-07-01 :
+        #   ID 0 → bas-gauche  (0,       0      )
+        #   ID 1 → haut-gauche (0,       104 mm )
+        #   ID 2 → haut-droit  (151 mm,  104 mm )
+        #   ID 3 → bas-droit   (151 mm,  0      )
         dst_pts = np.array([
-            [0,                  0                   ],  # ID 0 haut-gauche
-            [WORK_AREA_WIDTH_MM, 0                   ],  # ID 1 haut-droit
-            [WORK_AREA_WIDTH_MM, WORK_AREA_HEIGHT_MM ],  # ID 2 bas-droit
-            [0,                  WORK_AREA_HEIGHT_MM ],  # ID 3 bas-gauche
+            [0,                  0                   ],  # ID 0 bas-gauche → origine
+            [0,                  WORK_AREA_HEIGHT_MM ],  # ID 1 haut-gauche → Y max
+            [WORK_AREA_WIDTH_MM, WORK_AREA_HEIGHT_MM ],  # ID 2 haut-droit  → X max, Y max
+            [WORK_AREA_WIDTH_MM, 0                   ],  # ID 3 bas-droit   → X max
         ], dtype=np.float32)
 
         # getPerspectiveTransform calcule H exactement à partir de 4 paires de points

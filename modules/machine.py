@@ -1,5 +1,5 @@
 # Communication série avec la Geeetech via le protocole G-code Marlin 1.x
-# Firmware confirmé : Marlin 1.1.8 — port /dev/ttyUSB0 — 115200 baud
+# Firmware confirmé : Marlin 1.1.8 — port /dev/ttyUSB0 — 250000 baud
 
 import serial   # Librairie pyserial pour la communication série USB
 import time     # Pour la pause après l'ouverture du port (reset Arduino)

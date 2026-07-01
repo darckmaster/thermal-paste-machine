@@ -23,6 +23,13 @@ WORK_AREA_HEIGHT_MM = 104.0  # Mesuré le 2026-06-12 : distance centre-à-centre
 DISPENSE_Z_HEIGHT_MM = 1.0      # Hauteur buse au-dessus de la pièce pendant la dépose
 MACHINE_Z_TRAVEL_MM = 5.0      # Hauteur de transit entre les points (assez haut pour ne rien toucher)
 
+# Origine du repère ArUco dans le repère machine (confirmé le 2026-07-01 via M114)
+# = position machine (mm depuis G28) du marqueur 0, coin bas-gauche de la zone de travail.
+# La formule de conversion est : machine_x = aruco_x + MACHINE_ORIGIN_X
+#                                 machine_y = aruco_y + MACHINE_ORIGIN_Y
+MACHINE_ORIGIN_X = 20.0   # X machine du marqueur 0 (bas-gauche)
+MACHINE_ORIGIN_Y = 50.0   # Y machine du marqueur 0 (bas-gauche)
+
 # Interface
 TOUCHSCREEN_WIDTH = 800
 TOUCHSCREEN_HEIGHT = 480
