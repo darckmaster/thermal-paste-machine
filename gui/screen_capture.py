@@ -68,8 +68,11 @@ class ScreenCapture(QWidget):
         self._captured_image: np.ndarray | None = None
         # Référence machine pour le homing — fournie par app.py via set_machine()
         self._machine: Machine | None = None
-        # Thread de homing — None quand aucun homing en cours
+        # Thread et worker de homing — stockés en attributs pour éviter le garbage collection
+        # Si on les laissait en variables locales, Python les détruirait dès la fin de
+        # _on_homing() et le thread s'arrêterait silencieusement avant d'avoir rien fait.
         self._homing_thread: QThread | None = None
+        self._homing_worker: HomingWorker | None = None
 
         # Timer qui déclenche une capture toutes les 100 ms (~10 fps)
         # 10 fps est suffisant pour un aperçu — moins de charge CPU sur RPi 3B+
@@ -248,20 +251,21 @@ class ScreenCapture(QWidget):
         self._btn_capture.setEnabled(False)
         self._status_label.setText("Homing en cours (30-60 s)...")
 
-        # Créer le thread et le worker — même patron que RunWorker
+        # Créer le thread et le worker — stockés en attributs (pas en variables locales)
+        # pour éviter que Python les détruise avant la fin du thread
         self._homing_thread = QThread()
-        worker = HomingWorker(self._machine)
-        worker.moveToThread(self._homing_thread)
+        self._homing_worker = HomingWorker(self._machine)
+        self._homing_worker.moveToThread(self._homing_thread)
 
-        self._homing_thread.started.connect(worker.run)
-        worker.finished.connect(self._on_homing_finished)
-        worker.error_occurred.connect(self._on_homing_error)
+        self._homing_thread.started.connect(self._homing_worker.run)
+        self._homing_worker.finished.connect(self._on_homing_finished)
+        self._homing_worker.error_occurred.connect(self._on_homing_error)
 
         # Nettoyer le thread après la fin (succès ou erreur)
-        worker.finished.connect(self._homing_thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        worker.error_occurred.connect(self._homing_thread.quit)
-        worker.error_occurred.connect(worker.deleteLater)
+        self._homing_worker.finished.connect(self._homing_thread.quit)
+        self._homing_worker.finished.connect(self._homing_worker.deleteLater)
+        self._homing_worker.error_occurred.connect(self._homing_thread.quit)
+        self._homing_worker.error_occurred.connect(self._homing_worker.deleteLater)
         self._homing_thread.finished.connect(self._homing_thread.deleteLater)
 
         self._homing_thread.start()
