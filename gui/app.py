@@ -118,6 +118,11 @@ class MainApp(QMainWindow):
         self._stack.addWidget(self._screen_run)        # index 2
         self._stack.addWidget(self._screen_report)     # index 3
 
+        # Données du cycle courant — stockées au fil de la navigation pour le rapport PDF
+        self._captured_image = None   # photo de la pièce (numpy BGR)
+        self._points_mm: list = []    # tracé de l'opérateur (coordonnées ArUco mm)
+        self._quantity: float = 0.0   # quantité de pâte configurée (mm E / mm tracé)
+
         # Connecter les signaux de chaque écran à la méthode de navigation correspondante
         # Signal émis par l'écran → slot qui bascule vers l'écran suivant
         self._screen_capture.photo_validated.connect(self._go_to_zone)
@@ -139,16 +144,27 @@ class MainApp(QMainWindow):
         """Basculer vers l'écran de sélection de zone avec la photo capturée."""
         # Arrêter la caméra avant de quitter l'écran de capture — libère la ressource USB
         self._screen_capture.stop_camera()
+        # Conserver l'image pour le rapport PDF généré à la fin du cycle
+        self._captured_image = image
         self._screen_zone.set_image(image)
         self._stack.setCurrentIndex(1)
 
     def _go_to_run(self, points_mm: object, quantity: float) -> None:
         """Basculer vers l'écran d'exécution avec le tracé et la quantité configurés."""
+        # Conserver le tracé et la quantité pour le rapport PDF
+        self._points_mm = list(points_mm)
+        self._quantity = quantity
         self._screen_run.start_run(self._machine, points_mm, quantity)
         self._stack.setCurrentIndex(2)
 
-    def _go_to_report(self) -> None:
-        """Basculer vers l'écran de rapport."""
+    def _go_to_report(self, status: str) -> None:
+        """Basculer vers l'écran de rapport en lui transmettant toutes les données du cycle."""
+        self._screen_report.set_result(
+            self._captured_image,
+            self._points_mm,
+            self._quantity,
+            status,
+        )
         self._stack.setCurrentIndex(3)
 
     # ------------------------------------------------------------------ cycle de vie

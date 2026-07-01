@@ -134,13 +134,17 @@ class ScreenRun(QWidget):
     Le bouton d'arrêt d'urgence appelle machine.emergency_stop() immédiatement (hors thread).
     """
 
-    run_finished = pyqtSignal()
+    # Transporte le statut final ("Succes", "Arret d'urgence", ou message d'erreur)
+    # pour que screen_report puisse l'afficher dans le résumé et le PDF
+    run_finished = pyqtSignal(str)
 
     def __init__(self) -> None:
         super().__init__()
         self._machine: Machine | None = None
         self._thread: QThread | None = None
         self._worker: RunWorker | None = None
+        # Statut de la dernière exécution — mis à jour avant d'afficher le rapport
+        self._status: str = "En attente"
         self._setup_ui()
 
     def start_run(self, machine: Machine, points_mm: list, quantity: float) -> None:
@@ -263,6 +267,7 @@ class ScreenRun(QWidget):
     @pyqtSlot()
     def _on_finished(self) -> None:
         """La dépose s'est terminée normalement."""
+        self._status = "Succes"
         self._status_label.setText("Depose terminee avec succes !")
         self._btn_stop.setEnabled(False)
         self._btn_done.setEnabled(True)
@@ -270,6 +275,7 @@ class ScreenRun(QWidget):
     @pyqtSlot(str)
     def _on_error(self, message: str) -> None:
         """Une erreur s'est produite pendant l'exécution."""
+        self._status = f"Erreur : {message}"
         self._status_label.setText(f"Erreur : {message}")
         self._btn_stop.setEnabled(False)
         self._btn_done.setEnabled(True)
@@ -287,6 +293,7 @@ class ScreenRun(QWidget):
         if self._worker:
             self._worker.stop()
 
+        self._status = "Arret d'urgence"
         self._status_label.setText(
             "ARRET D'URGENCE declenche !\n"
             "Redemarrer la machine avant le prochain cycle."
@@ -295,5 +302,5 @@ class ScreenRun(QWidget):
         self._btn_done.setEnabled(True)
 
     def _on_done(self) -> None:
-        """Naviguer vers l'écran de rapport."""
-        self.run_finished.emit()
+        """Naviguer vers l'écran de rapport en transmettant le statut final."""
+        self.run_finished.emit(self._status)
