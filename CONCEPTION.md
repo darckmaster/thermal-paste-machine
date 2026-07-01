@@ -567,7 +567,7 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 - [x] Connexion série établie et stable (pas de timeout sur 60 secondes) ✅ 2026-07-01
 - [x] `home()` ramène la machine en position zéro sur les 3 axes ✅ 2026-07-01
 - [x] `move_to(30, 30, 5)` déplace la buse à la position voulue ✅ 2026-07-01
-- [ ] `dispense(1)` avance le piston de 1 mm — **en attente** : moteur E à brancher
+- [x] `dispense(10)` avance le piston de 10 mm, `dispense(-10)` rétracte ✅ 2026-07-01
 - [x] `emergency_stop()` envoie M112 directement ✅ (testé en mock)
 - [x] 10/10 tests unitaires avec mock du port série ✅ 2026-07-01
 

@@ -76,15 +76,15 @@ def main():
 
     # ------------------------------------------------------------------ dépose test
     if demander_confirmation(
-        "[4/5] Test de dépose ? (E avance de 1 mm — SANS seringue si possible)"
+        "[4/5] Test de dépose ? (E avance de 10 mm — SANS seringue si possible)"
     ):
         print("      Dépose en cours...")
         try:
-            machine.dispense(amount_mm=1.0)
-            print("      ✓ Axe E avancé de 1 mm")
-            # Rétraction pour éviter le suintement
-            if demander_confirmation("      Rétracter de 1 mm pour couper le filet ?"):
-                machine.dispense(amount_mm=-1.0)
+            machine.dispense(amount_mm=10.0)
+            print("      ✓ Axe E avancé de 10 mm")
+            # Rétraction pour revenir à la position initiale
+            if demander_confirmation("      Rétracter de 10 mm pour revenir à la position initiale ?"):
+                machine.dispense(amount_mm=-10.0)
                 print("      ✓ Rétraction faite")
         except Exception as e:
             print(f"      ✗ Erreur pendant la dépose : {e}")

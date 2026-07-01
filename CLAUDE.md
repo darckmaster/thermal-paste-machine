@@ -257,13 +257,9 @@ Phase 3 — Session 1 ✅ (2026-07-01, au boulot) :
 - [x] `tests/test_machine.py` : 10/10 tests unitaires (mock série)
 - [x] `tests/demo_machine.py` créé (script interactif)
 - [x] Connexion, homing, déplacements XYZ validés sur machine réelle
-- [ ] Axe E (seringue) : non testé — moteur non branché
-
-Phase 3 — Session 2 — à faire **au boulot** (avec moteur E branché) :
-- [ ] Brancher le moteur Nema 17 sur le connecteur E de la carte
-- [ ] Lancer `python tests/demo_machine.py` → tester `dispense(1.0)` et `dispense(-1.0)`
-- [ ] Vérifier visuellement que le piston avance/recule de 1 mm
-- [ ] Phase 3 → ✅ Validé
+- [x] Axe E (seringue) : `dispense(10.0)` et `dispense(-10.0)` validés ✅ 2026-07-01
+- [x] Fix protection extrusion à froid : `M302 S0` ajouté dans `connect()`
+- [x] **Phase 3 → ✅ Entièrement validée**
 
 Phase 4 — Session 1 ✅ (2026-07-01, au boulot) :
 - [x] `gui/app.py` : fenêtre 800×480, `QStackedWidget`, navigation par signaux
@@ -291,7 +287,7 @@ Sessions 2 & 3 — à planifier :
 | 0 | Identification matériel (caméra, port série, firmware) | ⬜ À faire | 0 / 1 |
 | 1 | `modules/camera.py` — caméra de base | ✅ Validé | 1 / 1 |
 | 2 | `modules/vision.py` — ArUco & calibrage | 🔄 En cours | 3 / 4 |
-| 3 | `modules/machine.py` — G-code Marlin | 🔄 En cours | 1 / 2 |
+| 3 | `modules/machine.py` — G-code Marlin | ✅ Validé | 1 / 2 |
 | 4 | `gui/` — interface graphique squelette | 🔄 En cours | 1 / 3 |
 | 5 | `modules/path_planner.py` + zone | ⬜ À faire | 0 / 3 |
 | 6 | `main.py` — intégration workflow complet | ⬜ À faire | 0 / 3 |
@@ -498,7 +494,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-06-11 | **Phase 2 Session 1** — Création de `modules/vision.py` (classe `VisionProcessor`, `detect_markers()`), `tests/test_vision.py` (5 tests), `tests/demo_vision.py` (détection ArUco temps réel PyQt5). Fix affichage : `cv2.imshow` cassé sous Wayland → migration vers PyQt5 pour les démos. Q6 et Q7 résolus : caméra à 100–110 mm, marqueurs 28×28 mm. | 9/9 tests passés. Détection 4 marqueurs simultanée confirmée. |
 | 2026-06-11 | **Phase 2 Session 2** — Ajout `compute_homography()`, `warp_image()`, `pixel_to_mm()` dans `vision.py`. Démo côte à côte (original + redressé). Q5 résolu : zone de travail 152×106 mm (mesuré). | 14/14 tests passés. Image redressée validée visuellement. |
 | 2026-06-12 | **Phase 2 Session 3** — Validation métrologique sur machine réelle à 200 mm de hauteur. Diagnostic : barrel distortion ~10 % d'erreur. Re-mesure physique : 151×104 mm. Implémentation `modules/calibration.py` + `tests/demo_calibration.py` + `tests/demo_validation.py`. Échiquier 9×6 généré pour calibration. | Code calibration implémenté. Calibration elle-même à effectuer chez soi (impression échiquier requise). |
-| 2026-07-01 | **Phase 3 Session 1** — Identification firmware Marlin 1.1.8 (M115), port `/dev/ttyUSB0`, baudrate 250000. Création `modules/machine.py` (classe `Machine`), `tests/test_machine.py` (10 tests mock), `tests/demo_machine.py`. Validation sur machine réelle : connexion, homing, déplacements XYZ. Axe E non testé (moteur non branché). | 10/10 tests passés. Connexion + homing + XYZ validés sur Geeetech réelle. Phase 3 à 1/2 session. |
+| 2026-07-01 | **Phase 3 — Complète** — Firmware Marlin 1.1.8, port ttyUSB0, baudrate 250000. `modules/machine.py` (connexion, G90, M302 S0, home, move_to, dispense, emergency_stop). Fix protection extrusion à froid (M302 S0). Validation complète sur machine réelle : XYZ + axe E (dispense ±10 mm). | 10/10 tests passés. Tous les axes validés. Phase 3 ✅. |
 | 2026-07-01 | **Phase 4 Session 1** — Création GUI PyQt5 complète : `gui/app.py` (MainWindow + QStackedWidget + navigation signaux), `gui/screen_capture.py` (flux caméra live 10fps, capture, validation), `gui/screen_zone.py` / `screen_run.py` / `screen_report.py` (placeholders navigables), `main.py`. | Navigation 4 écrans validée sur RPi + écran tactile. Écran 1 caméra fonctionnel. Placeholders 2-4 opérationnels. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.
