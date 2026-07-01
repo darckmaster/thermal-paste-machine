@@ -170,14 +170,14 @@ thermal_paste_dispenser/
 │   ├── camera.py            # ✅ Phase 1 — capture image via USB (classe Camera)
 │   ├── vision.py            # 🔄 Phase 2 — détection ArUco, homographie, pixel→mm
 │   ├── calibration.py       # 🔄 Phase 2 — calibration objectif, correction distorsion
-│   ├── machine.py           # ⬜ Phase 3 — communication série G-code avec Marlin
+│   ├── machine.py           # 🔄 Phase 3 — communication série G-code avec Marlin (axe E à tester)
 │   ├── path_planner.py      # ⬜ Phase 5 — calcul des trajectoires de dépose
 │   ├── reporter.py          # ⬜ Phase 7 — génération de rapport PDF
 │   └── config.py            # ✅ Paramètres globaux et constantes
 │
 ├── gui/
-│   ├── app.py               # Fenêtre principale PyQt5, gestionnaire d'écrans
-│   ├── screen_capture.py    # Écran 1 : prise de photo et validation
+│   ├── app.py               # 🔄 Phase 4 — fenêtre principale PyQt5, gestionnaire d'écrans
+│   ├── screen_capture.py    # 🔄 Phase 4 — Écran 1 : flux caméra + capture + validation
 │   ├── screen_zone.py       # Écran 2 : sélection zone + quantité pâte
 │   ├── screen_run.py        # Écran 3 : exécution et monitoring
 │   └── screen_report.py     # Écran 4 : visualisation rapport

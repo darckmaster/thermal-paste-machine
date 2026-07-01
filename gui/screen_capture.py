@@ -1,0 +1,201 @@
+# Écran 1 — Capture photo
+# Affiche le flux caméra en temps réel, permet de capturer et valider une photo
+
+import numpy as np
+import cv2
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+)
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QImage, QPixmap
+
+from modules.camera import Camera
+from modules.config import CAMERA_INDEX
+
+
+class ScreenCapture(QWidget):
+    """Écran 1 : flux vidéo en direct + capture + validation.
+
+    Cycle :
+        1. Flux vidéo en direct (QTimer → capture() toutes les 100 ms)
+        2. Clic "Capturer" → flux figé, image sauvegardée
+        3. Clic "Valider" → signal photo_validated émis → navigation vers ScreenZone
+        4. Clic "Reprendre" → flux relancé, retour à l'étape 1
+    """
+
+    # Signal émis quand l'utilisateur valide la photo
+    # Le paramètre est l'image numpy BGR — 'object' car PyQt5 ne connaît pas numpy
+    photo_validated = pyqtSignal(object)
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Objet caméra — créé au premier start_camera(), détruit à stop_camera()
+        self._camera: Camera | None = None
+        # Image figée au moment du clic "Capturer" — None si flux en direct
+        self._captured_image: np.ndarray | None = None
+
+        # Timer qui déclenche une capture toutes les 100 ms (~10 fps)
+        # 10 fps est suffisant pour un aperçu — moins de charge CPU sur RPi 3B+
+        self._timer = QTimer()
+        self._timer.timeout.connect(self._update_frame)
+
+        self._setup_ui()
+
+    # ------------------------------------------------------------------ interface
+
+    def _setup_ui(self) -> None:
+        """Construire la mise en page : zone image (haut) + boutons (bas)."""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+
+        # Titre de l'écran
+        title = QLabel("Capture de la piece")
+        title.setProperty("role", "title")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        # Zone d'affichage de l'image — occupe tout l'espace disponible
+        self._image_label = QLabel("Demarrage camera...")
+        self._image_label.setProperty("role", "camera")
+        self._image_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._image_label, stretch=1)
+
+        # Ligne de statut (nombre de pixels, résolution, messages d'erreur)
+        self._status_label = QLabel("")
+        self._status_label.setProperty("role", "status")
+        self._status_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._status_label)
+
+        # Barre de boutons en bas — 3 boutons côte à côte
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(8)
+
+        self._btn_capture = QPushButton("Capturer")
+        self._btn_capture.setEnabled(False)  # Activé seulement quand la caméra est prête
+        self._btn_capture.clicked.connect(self._on_capture)
+
+        self._btn_validate = QPushButton("Valider")
+        self._btn_validate.setProperty("role", "success")
+        self._btn_validate.setEnabled(False)  # Activé après une capture
+        self._btn_validate.clicked.connect(self._on_validate)
+
+        self._btn_retake = QPushButton("Reprendre")
+        self._btn_retake.setProperty("role", "secondary")
+        self._btn_retake.setEnabled(False)  # Activé après une capture
+        self._btn_retake.clicked.connect(self._on_retake)
+
+        btn_layout.addWidget(self._btn_capture)
+        btn_layout.addWidget(self._btn_validate)
+        btn_layout.addWidget(self._btn_retake)
+        layout.addLayout(btn_layout)
+
+    # ------------------------------------------------------------------ caméra
+
+    def start_camera(self) -> None:
+        """Ouvrir la caméra et démarrer le flux d'aperçu."""
+        self._captured_image = None
+        self._btn_validate.setEnabled(False)
+        self._btn_retake.setEnabled(False)
+
+        try:
+            # Créer la caméra si elle n'existe pas encore (ou a été libérée)
+            if self._camera is None:
+                self._status_label.setText("Initialisation camera...")
+                self._camera = Camera(CAMERA_INDEX)
+
+            self._btn_capture.setEnabled(True)
+            self._status_label.setText(
+                f"Camera prete — {self._camera.width}x{self._camera.height} px"
+            )
+            # Démarrer le timer → _update_frame() appelé toutes les 100 ms
+            self._timer.start(100)
+
+        except RuntimeError as e:
+            # La caméra n'est pas disponible — on affiche un message sans planter
+            self._image_label.setText(
+                "Camera non disponible\n\n"
+                "Verifier le branchement USB\n"
+                f"({e})"
+            )
+            self._status_label.setText("Erreur camera")
+            self._btn_capture.setEnabled(False)
+
+    def stop_camera(self) -> None:
+        """Arrêter le timer et libérer la caméra (ressource USB)."""
+        self._timer.stop()
+        if self._camera is not None:
+            self._camera.release()
+            self._camera = None
+
+    def _update_frame(self) -> None:
+        """Appelé toutes les 100 ms par le timer — capture et affiche une image."""
+        if self._camera is None:
+            return
+        try:
+            frame = self._camera.capture()
+            self._display_image(frame)
+        except RuntimeError:
+            # La caméra a été débranchée en cours de route
+            self._timer.stop()
+            self._image_label.setText("Camera deconnectee — rebrancher et relancer")
+            self._btn_capture.setEnabled(False)
+
+    # ------------------------------------------------------------------ actions boutons
+
+    def _on_capture(self) -> None:
+        """Figer l'image et passer en mode validation."""
+        if self._camera is None:
+            return
+
+        # Arrêter le flux pour figer l'image
+        self._timer.stop()
+
+        # Capturer l'image définitive et l'afficher
+        self._captured_image = self._camera.capture()
+        self._display_image(self._captured_image)
+
+        # Basculer les boutons : on est maintenant en mode "photo figée"
+        self._btn_capture.setEnabled(False)
+        self._btn_validate.setEnabled(True)
+        self._btn_retake.setEnabled(True)
+        self._status_label.setText("Photo prise — valider ou reprendre")
+
+    def _on_validate(self) -> None:
+        """Émettre le signal avec l'image capturée → navigation vers ScreenZone."""
+        if self._captured_image is not None:
+            # photo_validated déclenche MainApp._go_to_zone() qui appelle stop_camera()
+            self.photo_validated.emit(self._captured_image)
+
+    def _on_retake(self) -> None:
+        """Reprendre le flux vidéo — annuler la photo figée."""
+        self._captured_image = None
+        self._btn_capture.setEnabled(True)
+        self._btn_validate.setEnabled(False)
+        self._btn_retake.setEnabled(False)
+        self._status_label.setText(
+            f"Camera prete — {self._camera.width}x{self._camera.height} px"
+        )
+        # Relancer le flux
+        self._timer.start(100)
+
+    # ------------------------------------------------------------------ affichage
+
+    def _display_image(self, frame: np.ndarray) -> None:
+        """Convertir une image OpenCV (BGR numpy) en QPixmap et l'afficher."""
+        # OpenCV utilise l'ordre BGR ; Qt attend RGB → inversion des canaux
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, channels = rgb.shape
+
+        # Créer un QImage à partir des données numpy (sans copie mémoire inutile)
+        # Le stride (bytes_per_line) évite les artefacts si la largeur n'est pas alignée
+        bytes_per_line = channels * w
+        qimage = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+
+        # Redimensionner pour tenir dans le label tout en gardant le ratio d'aspect
+        pixmap = QPixmap.fromImage(qimage).scaled(
+            self._image_label.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self._image_label.setPixmap(pixmap)

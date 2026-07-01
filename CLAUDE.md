@@ -265,9 +265,20 @@ Phase 3 — Session 2 — à faire **au boulot** (avec moteur E branché) :
 - [ ] Vérifier visuellement que le piston avance/recule de 1 mm
 - [ ] Phase 3 → ✅ Validé
 
-Prochaine phase possible **chez soi** (Phase 4 — GUI PyQt5) :
-- Pas besoin du matériel pour la structure de navigation
-- Démarrer avec la fenêtre principale 800×480 et le `QStackedWidget`
+Phase 4 — Session 1 ✅ (2026-07-01, au boulot) :
+- [x] `gui/app.py` : fenêtre 800×480, `QStackedWidget`, navigation par signaux
+- [x] `gui/screen_capture.py` : flux caméra live (10 fps), Capturer/Valider/Reprendre
+- [x] `gui/screen_zone.py` : affiche photo + slider quantité (placeholder)
+- [x] `gui/screen_run.py` : barre de progression simulée + arrêt d'urgence (placeholder)
+- [x] `gui/screen_report.py` : résumé + bouton nouvelle pièce (placeholder)
+- [x] `main.py` : point d'entrée
+- [x] Navigation complète validée sur RPi avec écran tactile
+
+Sessions 2 & 3 — à planifier :
+- [ ] Phase 5 (sélection zone) avant d'enrichir screen_zone.py
+- [ ] Phase 6 (intégration machine) pour screen_run.py
+- [ ] Phase 7 (PDF) pour screen_report.py
+- [ ] Test tactile complet : boutons ≥ 44×44 px, navigation 10 cycles
 
 ---
 
@@ -281,7 +292,7 @@ Prochaine phase possible **chez soi** (Phase 4 — GUI PyQt5) :
 | 1 | `modules/camera.py` — caméra de base | ✅ Validé | 1 / 1 |
 | 2 | `modules/vision.py` — ArUco & calibrage | 🔄 En cours | 3 / 4 |
 | 3 | `modules/machine.py` — G-code Marlin | 🔄 En cours | 1 / 2 |
-| 4 | `gui/` — interface graphique squelette | ⬜ À faire | 0 / 3 |
+| 4 | `gui/` — interface graphique squelette | 🔄 En cours | 1 / 3 |
 | 5 | `modules/path_planner.py` + zone | ⬜ À faire | 0 / 3 |
 | 6 | `main.py` — intégration workflow complet | ⬜ À faire | 0 / 3 |
 | 7 | `modules/reporter.py` — rapport PDF | ⬜ À faire | 0 / 2 |
@@ -488,5 +499,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-06-11 | **Phase 2 Session 2** — Ajout `compute_homography()`, `warp_image()`, `pixel_to_mm()` dans `vision.py`. Démo côte à côte (original + redressé). Q5 résolu : zone de travail 152×106 mm (mesuré). | 14/14 tests passés. Image redressée validée visuellement. |
 | 2026-06-12 | **Phase 2 Session 3** — Validation métrologique sur machine réelle à 200 mm de hauteur. Diagnostic : barrel distortion ~10 % d'erreur. Re-mesure physique : 151×104 mm. Implémentation `modules/calibration.py` + `tests/demo_calibration.py` + `tests/demo_validation.py`. Échiquier 9×6 généré pour calibration. | Code calibration implémenté. Calibration elle-même à effectuer chez soi (impression échiquier requise). |
 | 2026-07-01 | **Phase 3 Session 1** — Identification firmware Marlin 1.1.8 (M115), port `/dev/ttyUSB0`, baudrate 250000. Création `modules/machine.py` (classe `Machine`), `tests/test_machine.py` (10 tests mock), `tests/demo_machine.py`. Validation sur machine réelle : connexion, homing, déplacements XYZ. Axe E non testé (moteur non branché). | 10/10 tests passés. Connexion + homing + XYZ validés sur Geeetech réelle. Phase 3 à 1/2 session. |
+| 2026-07-01 | **Phase 4 Session 1** — Création GUI PyQt5 complète : `gui/app.py` (MainWindow + QStackedWidget + navigation signaux), `gui/screen_capture.py` (flux caméra live 10fps, capture, validation), `gui/screen_zone.py` / `screen_run.py` / `screen_report.py` (placeholders navigables), `main.py`. | Navigation 4 écrans validée sur RPi + écran tactile. Écran 1 caméra fonctionnel. Placeholders 2-4 opérationnels. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.
