@@ -95,11 +95,13 @@ def test_init_dictionnaire_inconnu() -> None:
 def _marqueurs_synthetiques() -> dict:
     """Crée un dict de marqueurs synthétiques à des positions pixel connues.
 
-    Les centres sont placés aux 4 coins d'un rectangle dans une image 600×400 px :
-        ID 0 → centre (100, 50)   → coin haut-gauche
-        ID 1 → centre (500, 50)   → coin haut-droit
-        ID 2 → centre (500, 350)  → coin bas-droit
-        ID 3 → centre (100, 350)  → coin bas-gauche
+    Les centres sont placés aux 4 coins d'un rectangle dans une image 600×400 px,
+    en respectant la convention réelle validée sur machine le 2026-07-01
+    (voir modules/vision.py::compute_homography) :
+        ID 0 → centre (100, 350)  → coin bas-gauche
+        ID 1 → centre (100, 50)   → coin haut-gauche
+        ID 2 → centre (500, 50)   → coin haut-droit
+        ID 3 → centre (500, 350)  → coin bas-droit
 
     Chaque marqueur est représenté par 4 coins autour de son centre (±10 px).
     """
@@ -113,10 +115,10 @@ def _marqueurs_synthetiques() -> dict:
         ], dtype=np.float32)
 
     return {
-        0: coins_autour(100, 50),
-        1: coins_autour(500, 50),
-        2: coins_autour(500, 350),
-        3: coins_autour(100, 350),
+        0: coins_autour(100, 350),
+        1: coins_autour(100, 50),
+        2: coins_autour(500, 50),
+        3: coins_autour(500, 350),
     }
 
 
@@ -145,13 +147,13 @@ def test_pixel_to_mm_coins_de_la_zone(vision: VisionProcessor) -> None:
     # Tolérance : 1 mm (les centres synthétiques sont exacts, l'erreur vient des flottants)
     tolerance = 1.0
 
-    x, y = vision.pixel_to_mm(100, 50, H)
+    x, y = vision.pixel_to_mm(100, 350, H)
     assert abs(x - 0) < tolerance and abs(y - 0) < tolerance, \
-        f"ID 0 attendu (0, 0), obtenu ({x:.1f}, {y:.1f})"
+        f"ID 0 (bas-gauche) attendu (0, 0), obtenu ({x:.1f}, {y:.1f})"
 
-    x, y = vision.pixel_to_mm(500, 50, H)
+    x, y = vision.pixel_to_mm(500, 350, H)
     assert abs(x - WORK_AREA_WIDTH_MM) < tolerance and abs(y - 0) < tolerance, \
-        f"ID 1 attendu ({WORK_AREA_WIDTH_MM}, 0), obtenu ({x:.1f}, {y:.1f})"
+        f"ID 3 (bas-droit) attendu ({WORK_AREA_WIDTH_MM}, 0), obtenu ({x:.1f}, {y:.1f})"
 
     x, y = vision.pixel_to_mm(300, 200, H)
     assert abs(x - WORK_AREA_WIDTH_MM / 2) < tolerance and abs(y - WORK_AREA_HEIGHT_MM / 2) < tolerance, \

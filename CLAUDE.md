@@ -276,7 +276,7 @@ Phase 7 ✅ :
 - [x] **Test PDF cycle complet** validé sur machine réelle (homing → capture → tracé → dépose → rapport) — 2026-07-01
 
 **Prochaine session : Phase 8 — Tests, robustesse, finitions**
-- [ ] Corriger `tests/test_vision.py::test_pixel_to_mm_coins_de_la_zone` (résidu du fix de repère ArUco — marqueurs synthétiques pas mis à jour pour la convention ID0=bas-gauche)
+- [x] Corriger `tests/test_vision.py::test_pixel_to_mm_coins_de_la_zone` (résidu du fix de repère ArUco — marqueurs synthétiques pas mis à jour pour la convention ID0=bas-gauche) — 2026-07-01, 45/45 tests passent
 - [ ] Calibration optique (échiquier)
 - [ ] Tests tactiles : vérifier boutons ≥ 44×44 px
 - [ ] Gestion des cas d'erreur : caméra absente, machine débranchée en cours de dépose
@@ -510,5 +510,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-07-01 | **Phase 7** — `modules/reporter.py` (fpdf2 : photo + résumé statut/longueur/volume estimé). `screen_report.py` mis à jour avec données réelles + export PDF fonctionnel. `screen_run.py` : signal `run_finished(str)` avec statut. `app.py` : stockage image/points/quantité pour le rapport. | Phase 7 ✅. Test PDF cycle complet à finaliser lors de la prochaine session. |
 | 2026-07-01 | **Bouton Homing** — `screen_capture.py` : bouton "Homing (G28)" avec `HomingWorker` (QThread). Fix GC : worker stocké en attribut d'instance (`self._homing_worker`) pour éviter la destruction prématurée par Python. Homing validé sur machine réelle. | Bouton Homing fonctionnel ✅. |
 | 2026-07-01 | **Phase 8 (début) — Test PDF cycle complet** — Validation de `reporter.py` en deux temps : (1) `tests/demo_reporter.py` créé (image + tracé synthétiques, sans matériel) — PDF vérifié via `pdftotext`/`pdfimages` (calculs longueur/volume exacts, image JPEG bien intégrée, statut succès/urgence correct) ; (2) cycle complet réel sur la Geeetech au boulot (homing → capture → tracé → dépose → export PDF) — fonctionnel de bout en bout. Écart de distance résiduel (~10 %) toujours présent, cause connue (distorsion objectif), en attente de la calibration échiquier. Résidu identifié à corriger : `test_pixel_to_mm_coins_de_la_zone` échoue (marqueurs synthétiques du test pas mis à jour après le fix de repère ID0=bas-gauche). | Test PDF cycle complet ✅. Phase 8 démarrée (1/3). |
+| 2026-07-01 | **Fix test ArUco résiduel** — Confirmé au préalable que l'échec de `test_pixel_to_mm_coins_de_la_zone` était déterministe (2 essais identiques) et sans lien avec la caméra (test 100% synthétique, aucun `cv2.VideoCapture`). `tests/test_vision.py::_marqueurs_synthetiques()` remis dans l'ordre ID0=bas-gauche/ID1=haut-gauche/ID2=haut-droit/ID3=bas-droit (aligné sur la convention réelle de `vision.py`), assertions de coins ajustées en conséquence. | 45/45 tests passent ✅. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.
