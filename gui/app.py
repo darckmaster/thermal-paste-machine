@@ -118,6 +118,9 @@ class MainApp(QMainWindow):
         self._stack.addWidget(self._screen_run)        # index 2
         self._stack.addWidget(self._screen_report)     # index 3
 
+        # Fournir la machine à screen_capture pour le bouton Homing
+        self._screen_capture.set_machine(self._machine)
+
         # Données du cycle courant — stockées au fil de la navigation pour le rapport PDF
         self._captured_image = None   # photo de la pièce (numpy BGR)
         self._points_mm: list = []    # tracé de l'opérateur (coordonnées ArUco mm)

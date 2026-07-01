@@ -6,11 +6,44 @@ import cv2
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QThread, QObject, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QImage, QPixmap
 
 from modules.camera import Camera
+from modules.machine import Machine
 from modules.config import CAMERA_INDEX
+
+
+# ================================================================ worker homing
+
+class HomingWorker(QObject):
+    """Exécute le homing (G28) dans un thread séparé pour ne pas bloquer l'interface.
+
+    Même principe que RunWorker : les commandes G-code bloquent jusqu'à la réponse
+    de Marlin (G28 peut prendre 30-60 s). Sans thread, l'interface serait gelée.
+    """
+
+    finished = pyqtSignal()        # Homing terminé avec succès
+    error_occurred = pyqtSignal(str)  # Erreur machine
+
+    def __init__(self, machine: Machine) -> None:
+        super().__init__()
+        self._machine = machine
+
+    @pyqtSlot()
+    def run(self) -> None:
+        """Connexion → G28 → déconnexion."""
+        try:
+            self._machine.connect()
+            self._machine.home()
+            self._machine.disconnect()
+            self.finished.emit()
+        except Exception as e:
+            try:
+                self._machine.disconnect()
+            except Exception:
+                pass
+            self.error_occurred.emit(str(e))
 
 
 class ScreenCapture(QWidget):
@@ -33,6 +66,10 @@ class ScreenCapture(QWidget):
         self._camera: Camera | None = None
         # Image figée au moment du clic "Capturer" — None si flux en direct
         self._captured_image: np.ndarray | None = None
+        # Référence machine pour le homing — fournie par app.py via set_machine()
+        self._machine: Machine | None = None
+        # Thread de homing — None quand aucun homing en cours
+        self._homing_thread: QThread | None = None
 
         # Timer qui déclenche une capture toutes les 100 ms (~10 fps)
         # 10 fps est suffisant pour un aperçu — moins de charge CPU sur RPi 3B+
@@ -40,6 +77,15 @@ class ScreenCapture(QWidget):
         self._timer.timeout.connect(self._update_frame)
 
         self._setup_ui()
+
+    def set_machine(self, machine: Machine) -> None:
+        """Fournit la référence machine pour le bouton Homing.
+
+        Appelé par app.py après la création de l'écran.
+        Sans machine, le bouton Homing reste désactivé.
+        """
+        self._machine = machine
+        self._btn_homing.setEnabled(True)
 
     # ------------------------------------------------------------------ interface
 
@@ -67,7 +113,18 @@ class ScreenCapture(QWidget):
         self._status_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self._status_label)
 
-        # Barre de boutons en bas — 3 boutons côte à côte
+        # Bouton Homing — ligne séparée au-dessus des boutons de capture
+        homing_layout = QHBoxLayout()
+        homing_layout.setSpacing(8)
+
+        self._btn_homing = QPushButton("Homing (G28)")
+        self._btn_homing.setProperty("role", "secondary")
+        self._btn_homing.setEnabled(False)  # Activé par set_machine() quand la machine est connue
+        self._btn_homing.clicked.connect(self._on_homing)
+        homing_layout.addWidget(self._btn_homing)
+        layout.addLayout(homing_layout)
+
+        # Barre de boutons capture — 3 boutons côte à côte
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
@@ -178,6 +235,50 @@ class ScreenCapture(QWidget):
         )
         # Relancer le flux
         self._timer.start(100)
+
+    # ------------------------------------------------------------------ homing
+
+    def _on_homing(self) -> None:
+        """Lancer le homing G28 dans un thread séparé."""
+        if self._machine is None:
+            return
+
+        # Désactiver tous les boutons pendant le homing pour éviter les actions parallèles
+        self._btn_homing.setEnabled(False)
+        self._btn_capture.setEnabled(False)
+        self._status_label.setText("Homing en cours (30-60 s)...")
+
+        # Créer le thread et le worker — même patron que RunWorker
+        self._homing_thread = QThread()
+        worker = HomingWorker(self._machine)
+        worker.moveToThread(self._homing_thread)
+
+        self._homing_thread.started.connect(worker.run)
+        worker.finished.connect(self._on_homing_finished)
+        worker.error_occurred.connect(self._on_homing_error)
+
+        # Nettoyer le thread après la fin (succès ou erreur)
+        worker.finished.connect(self._homing_thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.error_occurred.connect(self._homing_thread.quit)
+        worker.error_occurred.connect(worker.deleteLater)
+        self._homing_thread.finished.connect(self._homing_thread.deleteLater)
+
+        self._homing_thread.start()
+
+    @pyqtSlot()
+    def _on_homing_finished(self) -> None:
+        """Homing terminé avec succès — réactiver les boutons."""
+        self._btn_homing.setEnabled(True)
+        self._btn_capture.setEnabled(self._camera is not None)
+        self._status_label.setText("Homing termine — machine prete")
+
+    @pyqtSlot(str)
+    def _on_homing_error(self, message: str) -> None:
+        """Erreur pendant le homing — afficher le message et réactiver le bouton."""
+        self._btn_homing.setEnabled(True)
+        self._btn_capture.setEnabled(self._camera is not None)
+        self._status_label.setText(f"Erreur homing : {message}")
 
     # ------------------------------------------------------------------ affichage
 
