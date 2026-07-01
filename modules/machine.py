@@ -61,6 +61,12 @@ class Machine:
         # G90 = les coordonnées envoyées sont relatives à l'origine machine (0,0,0)
         self.send_command('G90')
 
+        # Autoriser l'extrusion à froid — Marlin bloque l'axe E par défaut si la
+        # buse n'est pas chauffée (~170°C). On utilise l'axe E pour pousser une
+        # seringue, pas pour fondre du plastique → on supprime cette protection.
+        # M302 S0 = température minimale d'extrusion = 0°C (aucune restriction)
+        self.send_command('M302 S0')
+
     def disconnect(self) -> None:
         """Ferme proprement le port série."""
         if self._serial and self._serial.is_open:

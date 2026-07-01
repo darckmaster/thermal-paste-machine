@@ -41,8 +41,8 @@ def creer_port_serie_mock(reponses: list) -> MagicMock:
 @patch('modules.machine.serial.Serial')        # on remplace le vrai port série
 def test_connect_ouvre_port_et_vide_buffer(mock_serial_class, mock_sleep):
     """connect() doit ouvrir le port avec les bons paramètres et vider le buffer."""
-    # Simuler un port série ouvert qui répond 'ok' au G90 initial
-    mock_port = creer_port_serie_mock(['ok\n'])
+    # connect() envoie 2 commandes : G90 puis M302 S0 → 2 réponses 'ok' attendues
+    mock_port = creer_port_serie_mock(['ok\n', 'ok\n'])
     mock_serial_class.return_value = mock_port
 
     machine = creer_machine()
@@ -62,7 +62,8 @@ def test_connect_ouvre_port_et_vide_buffer(mock_serial_class, mock_sleep):
 @patch('modules.machine.serial.Serial')
 def test_disconnect_ferme_port(mock_serial_class, mock_sleep):
     """disconnect() doit fermer le port et passer is_connected() à False."""
-    mock_port = creer_port_serie_mock(['ok\n'])
+    # connect() envoie G90 + M302 S0 → 2 réponses 'ok' attendues
+    mock_port = creer_port_serie_mock(['ok\n', 'ok\n'])
     mock_serial_class.return_value = mock_port
 
     machine = creer_machine()
@@ -88,8 +89,9 @@ def test_send_command_attend_ok(mock_serial_class, mock_sleep):
     # Simuler une réponse multi-ligne (comme Marlin peut en envoyer)
     mock_port = creer_port_serie_mock([
         'ok\n',             # réponse au G90 dans connect()
+        'ok\n',             # réponse au M302 S0 dans connect()
         'echo:busy\n',      # Marlin peut envoyer des lignes avant 'ok'
-        'ok\n',             # confirmation finale
+        'ok\n',             # confirmation finale de la commande G28
     ])
     mock_serial_class.return_value = mock_port
 
@@ -108,6 +110,7 @@ def test_send_command_timeout_leve_exception(mock_serial_class, mock_sleep):
     """send_command() doit lever TimeoutError si readline() retourne vide (timeout série)."""
     mock_port = creer_port_serie_mock([
         'ok\n',   # réponse au G90 dans connect()
+        'ok\n',   # réponse au M302 S0 dans connect()
         '',       # ligne vide = timeout série simulé
     ])
     mock_serial_class.return_value = mock_port
@@ -132,8 +135,8 @@ def test_send_command_sans_connect_leve_runtime_error():
 @patch('modules.machine.serial.Serial')
 def test_move_to_envoie_g1_xy_z_et_m400(mock_serial_class, mock_sleep):
     """move_to() doit envoyer G1 XY, G1 Z et M400 dans cet ordre."""
-    # Préparer assez de 'ok' : 1 pour G90 (connect) + 3 pour move_to (XY, Z, M400)
-    mock_port = creer_port_serie_mock(['ok\n'] * 4)
+    # Préparer assez de 'ok' : 2 pour connect (G90 + M302) + 3 pour move_to (XY, Z, M400)
+    mock_port = creer_port_serie_mock(['ok\n'] * 5)
     mock_serial_class.return_value = mock_port
 
     machine = creer_machine()
@@ -156,8 +159,8 @@ def test_move_to_envoie_g1_xy_z_et_m400(mock_serial_class, mock_sleep):
 @patch('modules.machine.serial.Serial')
 def test_dispense_entoure_de_g91_g90(mock_serial_class, mock_sleep):
     """dispense() doit utiliser le mode relatif G91 et revenir en G90 après."""
-    # 1 ok (connect G90) + 4 ok (dispense : G91, G1 E, M400, G90)
-    mock_port = creer_port_serie_mock(['ok\n'] * 5)
+    # 2 ok (connect : G90 + M302) + 4 ok (dispense : G91, G1 E, M400, G90)
+    mock_port = creer_port_serie_mock(['ok\n'] * 6)
     mock_serial_class.return_value = mock_port
 
     machine = creer_machine()
@@ -181,7 +184,7 @@ def test_dispense_entoure_de_g91_g90(mock_serial_class, mock_sleep):
 @patch('modules.machine.serial.Serial')
 def test_emergency_stop_ecrit_m112_directement(mock_serial_class, mock_sleep):
     """emergency_stop() doit écrire M112 directement sans attendre 'ok'."""
-    mock_port = creer_port_serie_mock(['ok\n'])  # juste pour G90 initial
+    mock_port = creer_port_serie_mock(['ok\n', 'ok\n'])  # G90 + M302 dans connect()
     mock_serial_class.return_value = mock_port
 
     machine = creer_machine()
