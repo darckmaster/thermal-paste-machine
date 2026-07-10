@@ -2,7 +2,7 @@
 
 **Projet** : Automatisation de la dépose de pâte thermique sur coques de calculateur automobile  
 **Contexte** : Projet d'études — apprentissage progressif  
-**Dernière mise à jour** : 2026-07-01  
+**Dernière mise à jour** : 2026-07-11  
 
 ---
 
@@ -15,7 +15,7 @@ Le projet utilise **deux machines successives** avec le même firmware Marlin, c
 | Machine | Rôle | Calendrier |
 |---|---|---|
 | **Geeetech I3 (imprimante modifiée)** | Proof of concept — développement et validation logicielle | Maintenant → fin juin 2026 |
-| **CNC cible** (carte Marlin) | Machine de production finale | Assemblage juillet 2026 |
+| **CNC cible** (carte Marlin) | Machine de production finale | 🔄 Quasi assemblée (méca + carte + Marlin flashés, 2026-07-11) |
 
 > **Portabilité** : les deux machines parlent le même G-code Marlin. Le passage de l'une à l'autre se limite à la mise à jour des paramètres de `config.py` (port série, dimensions de la zone de travail, limites d'axes).
 
@@ -41,12 +41,13 @@ Le projet utilise **deux machines successives** avec le même firmware Marlin, c
 
 | Composant | Référence / Modèle | Statut |
 |---|---|---|
-| Base mécanique | CNC (à confirmer) | ⬜ À assembler |
-| Contrôleur machine | Carte CNC avec firmware Marlin | ⬜ À identifier |
+| Base mécanique | CNC — châssis + axes | ✅ Montée (2026-07-11) |
+| Contrôleur machine | Carte CNC — firmware **Marlin dernière version** | ✅ Intégrée, câblée, sous tension, flashée (2026-07-11) |
+| Câblage capteurs + moteurs | Fins de course, caméra, moteurs Nema 17 | 🔄 En cours |
 | Ordinateur de contrôle | Même Raspberry Pi 3B+ | ✅ Réutilisé depuis Geeetech |
 | Caméra + écran | Même Philips SPC 1330NC USB + écran 7" | ✅ Réutilisés depuis Geeetech |
 
-> L'assemblage mécanique de la CNC (fixation des axes, câblage moteurs, configuration Marlin) est une étape hardware distincte du développement logiciel. Elle est planifiée en juillet 2026 après validation du logiciel sur la Geeetech.
+> **Avancement (2026-07-11)** : mécanique montée, carte de commande intégrée et câblée, mise sous tension et **flash Marlin dernière version** effectués. Reste le câblage des capteurs (fins de course, caméra) et des moteurs. Firmware Marlin confirmé → portage transparent (même dialecte G-code que la Geeetech, seul `config.py` change).
 
 ---
 
@@ -151,8 +152,12 @@ Les commandes G-code utilisées dans ce projet sont standard Marlin depuis la ve
 ### 1.5 Flux de travail physique
 
 ```
-[Plateau reculé] → [Photo de la pièce] → [Choix zone/quantité]
-    → [Dépose automatique] → [Photo résultat] → [Rapport PDF]
+[Calibration ChArUco — une seule fois] ─┐
+                                        ▼
+[Boîtiers + 4 ArUco sur plateau] → [Photo redressée] → [Tracé de cordons + quantité par cordon]
+   → [Sauvegarde préparation JSON] → [Dépose automatique] → [Rapport PDF : temps + quantité totale]
+
+Réutilisation (plateau inchangé) : [Charger préparation JSON] → [Éditer si besoin] → [Dépose]
 ```
 
 ---
@@ -295,21 +300,25 @@ class VisionProcessor:
 
 **Problème** : Les objectifs de webcam bon marché introduisent une **barrel distortion** — les objets au centre de l'image paraissent plus grands qu'ils ne le sont. L'homographie corrige la perspective mais pas cette distorsion, ce qui cause une erreur de mesure d'environ **10 %** sur les distances intérieures à la zone de travail (mesuré le 2026-06-12 avec la Philips SPC 1330NC à 200 mm de hauteur).
 
-**Solution** : Calibration one-shot avec un échiquier imprimé. Les coefficients de distorsion sont calculés avec `cv2.calibrateCamera`, sauvegardés dans `assets/camera_calibration.npz`, et appliqués via `cv2.undistort` avant tout traitement.
+**Solution** : Calibration one-shot avec une **mire ChArUco** imprimée (damier fusionné avec des marqueurs ArUco). Les coefficients de distorsion sont calculés avec `cv2.aruco.calibrateCameraCharuco`, sauvegardés dans `assets/camera_calibration.npz`, et appliqués via `cv2.undistort` avant tout traitement.
+
+> **Choix ChArUco (décidé 2026-07-11)** : préféré à l'échiquier classique car chaque coin est identifié individuellement par son marqueur ArUco. La calibration reste donc valide même si la mire est partiellement hors champ ou occultée — plus robuste et plus rapide à capturer. Cohérent avec le reste du projet qui utilise déjà ArUco (opencv-contrib).
 
 **Procédure de calibration (une seule fois) :**
-1. Imprimer `assets/chessboard_calibration.png` sur A4 paysage (25 mm/carré)
-2. Lancer `tests/demo_calibration.py` et capturer 15+ frames sous différents angles
+1. Générer et imprimer la planche ChArUco sur A4 paysage
+2. Lancer `tests/demo_calibration.py` et capturer 15+ vues sous différents angles
 3. Les coefficients sont sauvegardés automatiquement dans `assets/camera_calibration.npz`
 
 **Interface publique :**
 ```python
-generate_chessboard_image(output_path)                       # génère le PNG à imprimer
-calibrate(images, chessboard_size, square_size_mm)           # → (camera_matrix, dist_coeffs, error)
+generate_charuco_board(output_path, squares_x, squares_y, square_mm, marker_mm)  # génère la mire
+calibrate(images, board)                                     # → (camera_matrix, dist_coeffs, error)
 undistort(image, camera_matrix, dist_coeffs)                 # → image corrigée (mêmes dimensions)
 save_calibration(path, camera_matrix, dist_coeffs)           # sauvegarde .npz
 load_calibration(path)                                       # → (camera_matrix, dist_coeffs) ou (None, None)
 ```
+
+> ⚠️ **À faire (Semaine 1)** : `modules/calibration.py` utilise encore l'échiquier — à réécrire en ChArUco (cf. CLAUDE.md §9).
 
 **Critère de qualité :** erreur de reprojection < 1.0 px (acceptable), < 0.5 px (excellent).
 
@@ -371,24 +380,39 @@ class Machine:
 
 ### Problème à résoudre
 
-L'utilisateur dessine une zone sur l'image calibrée (en pixels). Il faut :
-1. Convertir les coordonnées pixel → coordonnées réelles (mm)
-2. Calculer une trajectoire de remplissage (pattern de hachures ou spirale)
+L'utilisateur trace un ou plusieurs **cordons** (polylines) sur l'image calibrée (en pixels). Pour chaque cordon il faut :
+1. Convertir les coordonnées pixel → coordonnées réelles (mm) via l'homographie
+2. Générer la trajectoire du cordon (suite de segments) + la dépose de la quantité associée
 3. Traduire en liste de commandes G-code
 
-### Patterns de dépose supportés (à implémenter progressivement)
+### Approche retenue (décidée 2026-07-11) : dépose en cordon
 
-- **Point unique** : dépôt en un seul point (le plus simple)
-- **Ligne** : dépôt linéaire
-- **Hachures parallèles** : remplissage d'une zone rectangulaire
-- **Spirale** (avancé)
+La pâte thermique est déposée en **boudin le long d'un chemin** (pas de remplissage de surface). Chaque **préparation** contient **plusieurs cordons**, chacun avec sa **quantité de pâte**. C'est plus simple et plus fiable qu'un remplissage de zone, et correspond à l'usage réel.
+
+- `generate_path_from_line()` (déjà implémenté) génère la trajectoire d'un cordon.
+- À faire : gérer **plusieurs cordons** avec une quantité par cordon (extension Phase 5).
 
 **Interface publique :**
 ```python
 class PathPlanner:
     def __init__(self, mm_per_pixel: float, z_height: float)
-    def generate_path(self, zone_polygon_px, pattern: str, paste_volume_mm3) -> list[dict]
+    def generate_path_from_line(self, line_px, paste_amount_mm) -> list[dict]
     # Retourne : [{"type": "move", "x": x, "y": y}, {"type": "dispense", "amount": v}, ...]
+```
+
+### Fichier de préparation (JSON) — décidé 2026-07-11
+
+Une **préparation** (liste de cordons + quantités) est sérialisée en **JSON** dans `preparations/`. Elle peut être **rechargée et éditée** avant relance, à condition que le plateau soit inchangé (responsabilité de l'opérateur). Format indicatif :
+
+```json
+{
+  "created": "2026-07-11T14:30:00",
+  "work_area_mm": [151, 104],
+  "cordons": [
+    {"points_px": [[x1, y1], [x2, y2]], "paste_mm": 5.0},
+    {"points_px": [[x3, y3], [x4, y4]], "paste_mm": 3.0}
+  ]
+}
 ```
 
 ---
@@ -398,10 +422,11 @@ class PathPlanner:
 ### Contenu du rapport PDF
 
 1. **En-tête** : date, heure, numéro de session
-2. **Photo avant** : image calibrée avec zone sélectionnée annotée
-3. **Paramètres** : pattern choisi, volume de pâte, vitesse
-4. **Photo après** : image post-dépose
-5. **Résumé** : temps d'exécution, quantité déposée
+2. **Photo** : image calibrée avec les cordons tracés annotés
+3. **Détail par cordon** : longueur, quantité de pâte associée
+4. **Résumé** : statut, **temps de dépose**, **quantité totale déposée**
+
+> Décidé 2026-07-11 : le rapport inclut le **temps de dépose** (mesuré début/fin dans `RunWorker`) et la **quantité totale** (somme des quantités par cordon).
 
 ---
 
@@ -411,9 +436,9 @@ class PathPlanner:
 
 | Partie | Objectif | Deadline | Jalon |
 |---|---|---|---|
-| **A — Logiciel sur Geeetech** | Développer et valider tout le logiciel sur le PoC | Fin juin 2026 | Logiciel fonctionnel sur Geeetech |
-| **B — Intégration CNC** | Assembler la CNC cible et porter le logiciel | Fin juillet 2026 | **Soutenance blanche** |
-| **C — Finalisation** | Corrections, rapport, préparation soutenance | Fin août 2026 | **Soutenance finale** |
+| **A — Logiciel sur Geeetech** | Développer et valider tout le logiciel sur le PoC | 17 juillet 2026 | Logiciel fonctionnel sur Geeetech |
+| **B — Intégration CNC** | Assembler la CNC cible et porter le logiciel | 07/08 (avant 3e blanche) | **2 machines fonctionnelles** |
+| **C — Finalisation** | Corrections, rapport, préparation soutenance | Rapport 17/08 · soutenance 31/08 | **Soutenance finale IUT** |
 
 ---
 
@@ -447,7 +472,7 @@ class PathPlanner:
 
 | Phase | Description | Type | Durée estimée |
 |---|---|---|---|
-| 9 | Assemblage mécanique de la CNC cible | **Hardware** | ~2 semaines (juillet) |
+| 9 | Assemblage mécanique de la CNC cible | **Hardware** | 🔄 Quasi terminé (2026-07-11) — reste câblage capteurs/moteurs (~2-3 j) |
 | 9a | — Montage châssis, axes, motorisation | Hardware | ~3–4 jours |
 | 9b | — Câblage électrique (moteurs, fin de course, alimentation) | Hardware | ~2–3 jours |
 | 9c | — Configuration firmware Marlin (paramètres CNC) | Firmware | ~2 jours |
@@ -456,7 +481,7 @@ class PathPlanner:
 | 11 | Validation complète du système sur CNC (cycles réels) | Validation | 3 sessions × ~2h |
 | **Total B** | | **5 sessions + ~2 sem. hardware** | **~10h + hardware** |
 
-**Jalon B ≈ fin juillet 2026 → SOUTENANCE BLANCHE**
+**Jalon B ≈ 07/08 2026 → 2 machines fonctionnelles avant la 3e soutenance blanche (12/08)**
 
 ---
 
@@ -868,9 +893,13 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 - [x] **Zone de travail** : ✅ **151 mm × 104 mm** (re-mesuré centre-à-centre marqueurs ArUco, 2026-06-12 — correction de la mesure initiale de 152×106)
 - [x] **Hauteur caméra** : ✅ **200 mm** au-dessus de la zone de travail (mesuré 2026-06-12)
 - [x] **Distorsion objectif** : ✅ Barrel distortion ~10 % identifiée et traitée via `cv2.calibrateCamera` (2026-06-12). Calibration à exécuter avec l'échiquier imprimé.
-- [ ] **Volume de pâte par mm²** : Paramètre de calibrage à déterminer expérimentalement (Phase 3/5)
-- [ ] **Port série** : `/dev/ttyUSB0` ou `/dev/ttyACM0` selon le branchement (Phase 3)
-- [ ] **Version firmware Marlin** : À confirmer avec `M115` (Phase 3)
+- [ ] **Volume de pâte par mm²** : Paramètre de calibrage à déterminer expérimentalement (Q8, tests de dépose)
+- [x] **Port série Geeetech** : ✅ `/dev/ttyUSB0` (CH340), 250000 baud (2026-07-01)
+- [x] **Firmware Marlin Geeetech** : ✅ Marlin 1.1.8 (`M115`, 2026-07-01)
+- [x] **Firmware CNC cible** : ✅ Marlin dernière version (2026-07-11) → portage transparent
+- [x] **Calibration objectif** : ✅ Mire **ChArUco** retenue (2026-07-11, remplace l'échiquier)
+- [x] **Zones de dépôt** : ✅ **Cordons multiples**, une quantité par cordon (2026-07-11)
+- [x] **Persistance des préparations** : ✅ Fichier **JSON** rechargeable/éditable (2026-07-11)
 
 ---
 
@@ -885,6 +914,7 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 | 2026-06-11 | Phase 2 S1 | Création `vision.py` (VisionProcessor, detect_markers). Fix affichage Wayland → PyQt5. 9/9 tests passés. Détection 4 marqueurs confirmée. |
 | 2026-06-11 | Phase 2 S2 | Ajout compute_homography, warp_image, pixel_to_mm. Démo côte à côte validée visuellement. 14/14 tests passés. |
 | 2026-06-12 | Phase 2 S3 | Validation métrologique : barrel distortion ~10 % identifiée. Re-mesure zone 151×104 mm, hauteur caméra 200 mm. Création `calibration.py`, `demo_calibration.py`, `demo_validation.py`, `chessboard_calibration.png`. Calibration à exécuter chez soi. |
+| 2026-07-11 | — | Révision planning (soutenances blanches 22/07·05/08·12/08, rapport IUT 17/08, soutenance 31/08). CNC quasi assemblée + Marlin confirmé. Cadrage du process de dépose + 4 décisions : calibration **ChArUco**, **cordons multiples** avec quantité/cordon, **fichier de préparation JSON**, **temps de dépose** au rapport. |
 
 ---
 

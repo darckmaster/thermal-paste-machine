@@ -14,9 +14,11 @@
 | Projet | Automatisation de la dépose de pâte thermique sur coques de calculateur automobile |
 | Cadre | Projet de stage — BUT Informatique 3ème année (anciennement DUT) |
 | Développeur | Étudiant en BUT3, niveau débutant–intermédiaire en Python |
-| Deadline logiciel (Geeetech) | Fin juin 2026 |
-| Deadline intégration CNC | Fin juillet 2026 (soutenance blanche) |
-| Deadline finale | Fin août 2026 (soutenance) |
+| Deadline logiciel (Geeetech) | 17 juillet 2026 — clôture logiciel + MàJ rapport entreprise |
+| Soutenances blanches (entreprise) | 22/07, 05/08, 12/08 — partiellement en anglais |
+| Machines fonctionnelles (Geeetech + CNC) | avant le 12/08 (3e soutenance blanche) |
+| Rapport final (IUT) | 17 août 2026 |
+| Soutenance finale (IUT) | 31 août 2026 — démonstration sur Geeetech acceptée |
 | Dépôt GitHub | `https://github.com/darckmaster/thermal-paste-machine` |
 | Branche principale | `master` |
 
@@ -37,6 +39,20 @@
 - Toutes les librairies utilisées doivent être **open source** et utilisables en entreprise sans licence tierce payante
 
 **Document de référence complet :** `CONCEPTION.md` — architecture détaillée, synoptique matériel, interfaces des classes, plan de développement avec estimations et critères de validation par phase.
+
+### Le processus de dépose — workflow opérateur (cible)
+
+Le logiciel suit ce déroulé, du point de vue de l'opérateur. **C'est la référence du comportement attendu du produit fini.**
+
+1. **Calibration caméra (une seule fois)** — À l'installation, calibrer la caméra avec une **mire ChArUco** (damier + marqueurs ArUco). Les coefficients de correction de distorsion sont enregistrés dans les paramètres du logiciel (`assets/camera_calibration.npz`) et rechargés à chaque démarrage. À refaire uniquement si la caméra ou l'objectif change.
+2. **Mise en place** — L'opérateur pose les boîtiers (coques de calculateur) sur le plateau de la machine. Le plateau porte **4 marqueurs ArUco**, un à chaque coin, qui servent de référentiel géométrique (repère image ↔ repère machine).
+3. **Préparation des dépôts** — Sur l'image affichée par la caméra (photo redressée et calibrée), l'opérateur **trace un ou plusieurs cordons de dépôt** (tracés polyline, clic par clic). À **chaque cordon** il associe une **quantité de pâte thermique**. L'ensemble (cordons + quantités) constitue une **préparation**.
+4. **Sauvegarde de la préparation** — La préparation est enregistrée dans un **fichier JSON** (cordons, quantités, horodatage). Elle peut être rechargée et modifiée plus tard.
+5. **Lancement de la dépose** — L'opérateur lance l'exécution : la machine fait un homing, puis parcourt chaque cordon en déposant la quantité de pâte associée.
+6. **Réutilisation** — Si le plateau n'a pas changé, l'opérateur peut **recharger un fichier de préparation existant** (et éventuellement le modifier) avant de relancer la dépose, sans tout retracer.
+7. **Rapport** — À la fin de chaque dépose, un **rapport PDF** est généré automatiquement : photo, statut, **temps de dépose**, **quantité totale déposée**, détail par cordon.
+
+> **Note « plateau inchangé »** : le logiciel ne peut pas garantir seul que le plateau est identique. Le rechargement d'une préparation est donc sous la responsabilité de l'opérateur (évolution possible : comparer la position des ArUco pour alerter en cas d'écart).
 
 ---
 
@@ -202,8 +218,9 @@ Le soir à la maison : `git pull` sur le PC, on continue sur grand écran.
 
 | Composant | Modèle / Référence | Statut |
 |---|---|---|
-| Base mécanique | CNC (à confirmer) | ⬜ À assembler |
-| Contrôleur machine | Carte CNC — firmware **Marlin** (même protocole G-code) | ⬜ À identifier |
+| Base mécanique | CNC — châssis + axes | ✅ Montée (2026-07-11) |
+| Contrôleur machine | Carte CNC — firmware **Marlin dernière version** (même protocole G-code) | ✅ Intégrée, câblée, sous tension, flashée (2026-07-11) |
+| Câblage capteurs + moteurs | Fins de course, caméra, moteurs Nema 17 | 🔄 En cours — reste à câbler |
 | Ordinateur de contrôle | Même Raspberry Pi 3B+ | ✅ Réutilisé |
 | Caméra + écran | Même Philips SPC 1330NC USB + écran 7" | ✅ Réutilisés |
 
@@ -238,6 +255,7 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 | ~~Q6~~ | ~~Distance caméra → pièce (hauteur en mm)~~ | ✅ **Résolu** — 200 mm (20 cm, re-mesuré 2026-06-12) |
 | ~~Q7~~ | ~~Taille des marqueurs ArUco à imprimer (en mm)~~ | ✅ **Résolu** — 28 mm × 28 mm (marqueurs imprimés, détection confirmée) |
 | Q8 | Volume de pâte par mm² (quantité de référence) | Calibrage expérimental lors des tests de dépose |
+| ~~Q9~~ | ~~Firmware CNC : Marlin ou GRBL ?~~ | ✅ **Résolu (2026-07-11)** — Marlin dernière version → portage transparent, seul `config.py` change |
 
 **Écart de distance résiduel (~10 %)** : confirmé encore présent lors du test PDF cycle complet du 2026-07-01. Cause connue = distorsion de l'objectif (barrel distortion), sera corrigé par la calibration échiquier (Q8 / section 8 agenda).
 
@@ -245,7 +263,21 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ## 8. Prochaine session — agenda
 
-**Phases 4–7 ✅ validées — Phase 8 à démarrer**
+**Phases 4–7 ✅ validées — CNC quasi assemblée (Marlin confirmé) — Phase 8 en cours + nouvelles fonctionnalités décidées le 2026-07-11.**
+
+> 📅 **Le planning détaillé jour par jour (11/07 → 31/08) est en section 9.** Cette section 8 conserve le détail technique de l'agenda Phase 8.
+>
+> **Nouvelles fonctionnalités actées le 2026-07-11** (voir le process complet en section 1) :
+> - Calibration caméra sur mire **ChArUco** (remplace l'échiquier)
+> - **Zones = cordons multiples**, une quantité de pâte par cordon (aujourd'hui : un seul tracé global)
+> - **Fichier de préparation JSON** : sauvegarde / rechargement / édition
+> - **Temps de dépose** ajouté au rapport PDF
+>
+> **Semaine 1 (11→17/07) — priorité : MàJ rapport entreprise le 17/07 + finir câblage CNC :**
+> - 🏠 Phase 8 gestion d'erreur (3 trous : `closeEvent`, verrou `Machine`, messages opérateur)
+> - 🏠 Tests tactiles (boutons ≥ 44 px) + non-régression `pytest`
+> - 🏠 Réécrire `calibration.py` en **ChArUco** ; ajouter le temps de dépose au rapport
+> - 🏭 Finir câblage CNC (fins de course, moteurs, caméra) + 1er power-on ; capturer les poses ChArUco (Geeetech) ; Q8 volume pâte
 
 Phase 2 — Vision ✅ (3 sessions) + calibration optique en attente :
 - [x] ArUco, homographie, pixel→mm validés
@@ -290,6 +322,96 @@ Phase 7 ✅ :
 
 ## 9. Plan de développement — avancement
 
+### 📅 Calendrier des échéances 2026 (mis à jour 2026-07-11)
+
+| Échéance | Date | Type |
+|---|---|---|
+| MàJ rapport entreprise | **17/07** (ven) | Rapport |
+| Soutenance blanche #1 (partie en anglais) | **22/07** (mer) | Entreprise |
+| Soutenance blanche #2 | **05/08** (mer) | Entreprise |
+| **2 machines fonctionnelles (Geeetech + CNC)** | **avant le 12/08** | Contrainte |
+| Soutenance blanche #3 | **12/08** (mer) | Entreprise |
+| Rapport final | **17/08** (lun) | IUT |
+| Soutenance finale (démo Geeetech acceptée) | **31/08** (lun) | IUT |
+
+> Les autres échéances de rapport (entreprise) seront communiquées **après le 17/07** — à insérer ici dès réception.
+
+### 🗓️ Planning détaillé jour par jour (11/07 → 31/08)
+
+**Légende** : 🏠 maison (soir/week-end — logique, GUI, rapport, G-code à vide) · 🏭 boulot (journée — caméra, ArUco, dépose seringue, CNC) · 📄 rapport · 🎤 soutenance
+
+**Semaine 1 — 11→17/07 · Clôture logiciel Geeetech + features de base + MàJ rapport (17/07)**
+
+| Jour | Lieu | Tâche |
+|---|---|---|
+| Sam 11 | 🏠 | Phase 8 — gestion d'erreur (3 trous : `closeEvent`, verrou `Machine`, messages opérateur) |
+| Dim 12 | 🏠📄 | Tests tactiles (≥44 px) + non-régression `pytest` ; démarrer MàJ rapport |
+| Lun 13 | 🏭 · 🏠 | 🏭 Finir câblage CNC (fins de course, moteurs, caméra) + 1er power-on ; 🏠 soir réécrire `calibration.py` en ChArUco |
+| Mar 14 | 🏠📄 | *Férié* — rédaction rapport ; ajouter le temps de dépose au rapport (`reporter.py`) |
+| Mer 15 | 🏭 | Calibration optique ChArUco : capturer 15 poses (Geeetech), valider erreur < 2 mm ; Q8 volume pâte |
+| Jeu 16 | 🏭📄 | Validation Phase 8 Geeetech end-to-end ; finaliser MàJ rapport |
+| Ven 17 | 📄 | **Remise MàJ rapport entreprise** ✅ |
+
+**Semaine 2 — 18→24/07 · Cordons multiples + Soutenance blanche #1 (22/07) + commissioning CNC**
+
+| Jour | Lieu | Tâche |
+|---|---|---|
+| Sam 18 | 🏠 | Feature cordons multiples (1/2) : modèle de données + tracé de plusieurs cordons (`screen_zone`) |
+| Dim 19 | 🏠🎤 | Cordons multiples (2/2) : `path_planner` + `screen_run` par cordon ; slides soutenance #1 |
+| Lun 20 | 🏭🎤 | Répétition démo Geeetech ; commissioning CNC (sens moteurs, Vref, steps/mm `M92`) |
+| Mar 21 | 🏠🎤 | Filage anglais + répétition |
+| **Mer 22** | 🎤 | **Soutenance blanche #1** (démo Geeetech, partie en anglais) |
+| Jeu 23 | 🏭 | Commissioning CNC : homing propre + déplacements sans collision |
+| Ven 24 | 🏭 · 🏠 | 🏭 Q8 dépose Geeetech (calibrage volume) ; 🏠 soir fichier prépa JSON (1/2) |
+
+**Semaine 3 — 25→31/07 · Fichier JSON + Portage CNC (Phase 10)**
+
+| Jour | Lieu | Tâche |
+|---|---|---|
+| Sam 25 | 🏠 | Fichier de préparation JSON (2/2) : sauvegarde + chargeur/éditeur GUI |
+| Dim 26 | 🏠📄 | Intégration + tests des nouvelles features ; `pytest` ; rapport |
+| Lun 27 | 🏭 | Phase 10 : `config.py` CNC (port, zone, offsets) + tests à vide (homing, XYZ) |
+| Mar 28 | 🏭 | Phase 10 : recalibration ArUco sur le plateau CNC |
+| Mer 29 | 🏭 | Phase 10 : tests dépose seringue sur CNC |
+| Jeu 30 | 🏭 | Tampon Phase 10 |
+| Ven 31 | 🏭 | Phase 11 : premier cycle complet CNC sans pâte |
+
+**Semaine 4 — 01→07/08 · Validation CNC (Phase 11) + Soutenance blanche #2 (05/08)**
+
+| Jour | Lieu | Tâche |
+|---|---|---|
+| Sam 01–Dim 02 | 🏠🎤📄 | Prépa soutenance #2 ; `pytest` régression ; rapport |
+| Lun 03 | 🏭 | Phase 11 : cycle complet CNC avec pâte |
+| Mar 04 | 🏭🎤 | Réglages + répétition démo #2 |
+| **Mer 05** | 🎤 | **Soutenance blanche #2** (Geeetech + CNC en cours) |
+| Jeu 06 | 🏭 | Phase 11 : réglages quantité, 3 cycles consécutifs |
+| Ven 07 | 🏭 | **Validation CNC finale → les 2 machines fonctionnelles** ✅ |
+
+**Semaine 5 — 08→12/08 · Tampon + Soutenance blanche #3 (12/08, 2 machines)**
+
+| Jour | Lieu | Tâche |
+|---|---|---|
+| Sam 08–Dim 09 | 🏠🎤📄 | Prépa soutenance #3 ; rapport |
+| Lun 10 | 🏭 | Tampon / robustesse / corrections |
+| Mar 11 | 🏭🎤 | Répétition démo des 2 machines |
+| **Mer 12** | 🎤 | **Soutenance blanche #3** — 2 machines fonctionnelles ✅ |
+
+**Semaine 6 — 13→17/08 · Rapport final IUT (17/08)**
+
+| Jour | Lieu | Tâche |
+|---|---|---|
+| Jeu 13–Dim 16 | 🏠📄 | Finalisation rapport intensif : résultats CNC, figures, relecture, retours des 3 blanches |
+| **Lun 17** | 📄 | **Remise rapport final IUT** ✅ |
+
+**Semaines 7-8 — 18→31/08 · Corrections (Phase 12) + prépa soutenance finale**
+
+| Jour | Lieu | Tâche |
+|---|---|---|
+| 18→28 | 🏠🏭 | Phase 12 : corrections de bugs (retours blanches) ; prépa démo Geeetech (acceptée IUT) ; slides finaux ; répétitions |
+| **Lun 31** | 🎤 | **Soutenance finale IUT** ✅ |
+
+> **Marge** : la CNC étant déjà quasi assemblée, la contrainte « 2 machines avant le 12/08 » vise une CNC fonctionnelle **dès le 07/08** — les 10-12/08 servent de tampon de sécurité.
+
 ### Partie A — Logiciel sur Geeetech (PoC) · deadline fin juin 2026
 
 | Phase | Module principal | Statut | Sessions |
@@ -304,8 +426,8 @@ Phase 7 ✅ :
 | 7 | `modules/reporter.py` — rapport PDF | ✅ Validé | 1 / 2 |
 | 8 | Tests, robustesse, finitions (Geeetech) | 🔄 En cours | 1 / 3 |
 
-**Sous-total Partie A : 21 sessions × ~2h = ~42h**  
-**Jalon A : Logiciel validé sur Geeetech ≈ début juillet 2026**
+**Sous-total Partie A : 21 sessions × ~2h = ~42h** (+ ~5,5 sessions pour les fonctionnalités actées le 2026-07-11 : ChArUco, cordons multiples, JSON, temps rapport)  
+**Jalon A : Logiciel validé sur Geeetech ≈ 17 juillet 2026** (clôture Phase 8 + nouvelles fonctionnalités)
 
 > **En parallèle de toute la Partie A** : rédaction du rapport (~1h/soir en semaine, chez soi)  
 > **Jalon intermédiaire : premier draft rapport → 15 juin 2026** (à remettre avant les vacances)
@@ -314,11 +436,11 @@ Phase 7 ✅ :
 
 | Phase | Description | Statut | Durée estimée |
 |---|---|---|---|
-| 9 | Assemblage de la CNC cible (mécanique + câblage) | ⬜ À faire | ~2 semaines (hardware) |
+| 9 | Assemblage de la CNC cible (mécanique + câblage) | 🔄 Quasi terminé (méca + carte + Marlin flashé) — reste câblage capteurs/moteurs | ~2-3 jours |
 | 10 | Portage logiciel : adaptation `config.py` + tests sur CNC | ⬜ À faire | 0 / 2 sessions |
 | 11 | Validation complète du système sur CNC cible | ⬜ À faire | 0 / 3 sessions |
 
-**Jalon B : Système validé sur CNC ≈ fin juillet → SOUTENANCE BLANCHE**
+**Jalon B : Système validé sur CNC ≈ 07/08 (avant la 3e soutenance blanche du 12/08)**
 
 ### Partie C — Finalisation · deadline fin août 2026
 
@@ -327,7 +449,7 @@ Phase 7 ✅ :
 | 12 | Corrections de bugs (retours soutenance blanche) | ⬜ À faire | ~1 semaine |
 | 13 | Finalisation et relecture rapport | ⬜ À faire | ~3 semaines |
 
-**Jalon C : Rapport remis → SOUTENANCE FINALE fin août 2026**
+**Jalon C : Rapport final remis le 17/08 → SOUTENANCE FINALE le 31/08 (démo Geeetech)**
 
 ### Rédaction rapport — activité en parallèle (fil conducteur du projet)
 
@@ -335,7 +457,8 @@ Phase 7 ✅ :
 |---|---|---|---|
 | 27 mai → 14 juin | ~1h/soir en semaine | ~3h/semaine | **Draft complet → 15 juin** (avant vacances) |
 | 22 juin → 31 juillet | ~1h/soir + week-ends | ~3–5h/semaine | Rapport à jour après chaque phase validée |
-| 1 août → 24 août | Mode intensif | Priorité principale | Finalisation, relecture, figures, remise |
+| 1 août → 17 août | Mode intensif | Priorité principale | Finalisation, relecture, figures → **remise IUT le 17/08** |
+| 18 août → 31 août | Prépa soutenance | Répétitions + corrections | Slides, démo Geeetech, filage → **soutenance 31/08** |
 
 > **Jalon intermédiaire critique : premier draft du rapport remis le 15 juin 2026** (jour du départ en vacances).  
 > Le `CONCEPTION.md` est le brouillon permanent — le maintenir à jour après chaque session réduit fortement le travail de rédaction finale.
@@ -358,7 +481,10 @@ Ces choix sont actés — ne pas les remettre en question sans raison documenté
 | Interface PyQt5 | Fenêtre 800×480 plein écran | Correspond à la résolution de l'écran tactile 7" |
 | Langue du code | Identifiants en anglais, commentaires en français | Convention Python + lisibilité pour le rapport |
 | Caméra | **Philips SPC 1330NC USB** — `cv2.VideoCapture(0)` | Connecteur CSI du RPi défaillant ; webcam USB fonctionnelle, pilote UVC standard, aucune config supplémentaire |
-| Correction distorsion objectif | `cv2.calibrateCamera` + `cv2.undistort` (échiquier 9×6, 25 mm/carré) | Barrel distortion mesurée à ~10 % d'erreur sans correction ; calibration one-shot sauvegardée dans `assets/camera_calibration.npz` |
+| Correction distorsion objectif | `cv2.calibrateCamera` + `cv2.undistort` — mire **ChArUco** (damier + ArUco) | Barrel distortion ~10 % sans correction. ChArUco choisi (plus robuste aux vues partielles que l'échiquier). Calibration one-shot dans `assets/camera_calibration.npz` |
+| Zones de dépôt | **Cordons** (tracés polyline), plusieurs par préparation, une quantité de pâte par cordon | Adapté à la pâte thermique (boudin le long d'un chemin) ; plus simple et fiable qu'un remplissage de surface |
+| Fichier de préparation | **JSON** (cordons + quantités + horodatage) dans `preparations/`, rechargeable et éditable | Permet de rejouer une préparation sans retracer si le plateau est inchangé |
+| Firmware CNC cible | **Marlin dernière version** (confirmé 2026-07-11) | Même dialecte G-code que la Geeetech → portage transparent (seul `config.py` change) |
 
 **Résolution confirmée :** Philips SPC 1330NC supporte 1280×960 sur RPi 3B+ (confirmé le 2026-06-11). Hauteur caméra : 200 mm. Zone de travail : 151×104 mm (re-mesuré 2026-06-12).
 
@@ -395,6 +521,7 @@ thermal-paste-machine/
 │   └── screen_report.py     # ✅ Phase 4/7 — écran 4 : rapport + export PDF
 │
 ├── assets/                  # Ressources statiques (synoptique Draw.io, icônes...)
+├── preparations/            # Fichiers de préparation JSON (cordons + quantités)
 ├── reports/                 # PDFs générés à l'exécution (gitignorés)
 ├── tests/                   # Tests unitaires et scripts de démonstration
 └── main.py                  # ⬜ Phase 6 — point d'entrée, machine à états
@@ -515,5 +642,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-07-01 | **Bouton Homing** — `screen_capture.py` : bouton "Homing (G28)" avec `HomingWorker` (QThread). Fix GC : worker stocké en attribut d'instance (`self._homing_worker`) pour éviter la destruction prématurée par Python. Homing validé sur machine réelle. | Bouton Homing fonctionnel ✅. |
 | 2026-07-01 | **Phase 8 (début) — Test PDF cycle complet** — Validation de `reporter.py` en deux temps : (1) `tests/demo_reporter.py` créé (image + tracé synthétiques, sans matériel) — PDF vérifié via `pdftotext`/`pdfimages` (calculs longueur/volume exacts, image JPEG bien intégrée, statut succès/urgence correct) ; (2) cycle complet réel sur la Geeetech au boulot (homing → capture → tracé → dépose → export PDF) — fonctionnel de bout en bout. Écart de distance résiduel (~10 %) toujours présent, cause connue (distorsion objectif), en attente de la calibration échiquier. Résidu identifié à corriger : `test_pixel_to_mm_coins_de_la_zone` échoue (marqueurs synthétiques du test pas mis à jour après le fix de repère ID0=bas-gauche). | Test PDF cycle complet ✅. Phase 8 démarrée (1/3). |
 | 2026-07-01 | **Fix test ArUco résiduel** — Confirmé au préalable que l'échec de `test_pixel_to_mm_coins_de_la_zone` était déterministe (2 essais identiques) et sans lien avec la caméra (test 100% synthétique, aucun `cv2.VideoCapture`). `tests/test_vision.py::_marqueurs_synthetiques()` remis dans l'ordre ID0=bas-gauche/ID1=haut-gauche/ID2=haut-droit/ID3=bas-droit (aligné sur la convention réelle de `vision.py`), assertions de coins ajustées en conséquence. | 45/45 tests passent ✅. |
+| 2026-07-11 | **Révision planning + cadrage fonctionnel** — Nouvelles contraintes calendaires : 3 soutenances blanches entreprise (22/07, 05/08, 12/08, partie en anglais), rapport final IUT le 17/08, soutenance finale IUT le 31/08 (démo Geeetech acceptée), MàJ rapport entreprise le 17/07. CNC déjà quasi assemblée (mécanique + carte + firmware Marlin dernière version flashés ; reste câblage capteurs/moteurs) → Q9 résolue, chemin critique dé-risqué. Cadrage du process de dépose complet et actage de 4 fonctionnalités : calibration **ChArUco**, **cordons multiples** avec quantité par cordon, **fichier de préparation JSON**, **temps de dépose** au rapport. Planning détaillé jour par jour (11/07→31/08) ajouté en section 9. | CLAUDE.md + CONCEPTION.md mis à jour. Planning validé. Aucune ligne de code produite ce jour. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.
