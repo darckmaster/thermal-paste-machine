@@ -9,12 +9,15 @@ from modules.config import (
     TOUCHSCREEN_WIDTH, TOUCHSCREEN_HEIGHT,
     SERIAL_PORT, SERIAL_BAUDRATE,
     MACHINE_FEEDRATE_XY, MACHINE_FEEDRATE_Z, MACHINE_FEEDRATE_DISPENSE,
+    CAMERA_INDEX,
 )
+from modules.camera import Camera
 from modules.machine import Machine
 from gui.screen_capture import ScreenCapture
 from gui.screen_zone import ScreenZone
 from gui.screen_run import ScreenRun
 from gui.screen_report import ScreenReport
+from gui.screen_calibration import ScreenCalibration
 
 
 # Feuille de style globale appliquée à toute l'application
@@ -95,8 +98,8 @@ class MainApp(QMainWindow):
             feedrate_dispense=MACHINE_FEEDRATE_DISPENSE,
         )
 
-        # Fixer la taille à la résolution de l'écran tactile — pas de barre de titre en prod
-        self.setFixedSize(TOUCHSCREEN_WIDTH, TOUCHSCREEN_HEIGHT)
+        # Sur le RPi avec l'écran tactile, décommenter pour fixer la taille en production :
+        # self.setFixedSize(TOUCHSCREEN_WIDTH, TOUCHSCREEN_HEIGHT)
 
         # Appliquer le thème sombre global
         self.setStyleSheet(STYLESHEET)
@@ -106,20 +109,34 @@ class MainApp(QMainWindow):
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
-        # Créer les 4 écrans dans l'ordre de navigation
+        # Créer les 5 écrans dans l'ordre de navigation
         self._screen_capture = ScreenCapture()
         self._screen_zone = ScreenZone()
         self._screen_run = ScreenRun()
         self._screen_report = ScreenReport()
+        self._screen_calibration = ScreenCalibration()
 
         # Ajouter les écrans à la pile — l'index correspond à l'ordre d'ajout
-        self._stack.addWidget(self._screen_capture)   # index 0
-        self._stack.addWidget(self._screen_zone)       # index 1
-        self._stack.addWidget(self._screen_run)        # index 2
-        self._stack.addWidget(self._screen_report)     # index 3
+        self._stack.addWidget(self._screen_capture)     # index 0
+        self._stack.addWidget(self._screen_zone)        # index 1
+        self._stack.addWidget(self._screen_run)         # index 2
+        self._stack.addWidget(self._screen_report)      # index 3
+        self._stack.addWidget(self._screen_calibration) # index 4
 
         # Fournir la machine à screen_capture pour le bouton Homing
         self._screen_capture.set_machine(self._machine)
+
+        # Caméra unique partagée entre screen_capture et screen_calibration
+        # → évite un release+open de 1-2 s à chaque changement d'écran
+        try:
+            self._camera = Camera(CAMERA_INDEX)
+        except RuntimeError as e:
+            print(f"[MainApp] Camera non disponible : {e}")
+            self._camera = None
+
+        # Fournir la même référence caméra aux deux écrans qui en ont besoin
+        self._screen_capture.set_camera(self._camera)
+        self._screen_calibration.set_camera(self._camera)
 
         # Données du cycle courant — stockées au fil de la navigation pour le rapport PDF
         self._captured_image = None   # photo de la pièce (numpy BGR)
@@ -132,6 +149,8 @@ class MainApp(QMainWindow):
         self._screen_zone.zone_configured.connect(self._go_to_run)
         self._screen_run.run_finished.connect(self._go_to_report)
         self._screen_report.new_piece_requested.connect(self._go_to_capture)
+        self._screen_capture.calibration_requested.connect(self._go_to_calibration)
+        self._screen_calibration.back_requested.connect(self._go_from_calibration_to_capture)
 
         # Démarrer sur l'écran de capture
         self._go_to_capture()
@@ -170,10 +189,29 @@ class MainApp(QMainWindow):
         )
         self._stack.setCurrentIndex(3)
 
+    def _go_to_calibration(self) -> None:
+        """Basculer vers l'écran de calibration caméra ChArUco."""
+        # Arrêter la caméra de capture avant d'ouvrir celle de calibration
+        # (une seule caméra physique — ne peut pas être ouverte deux fois simultanément)
+        self._screen_capture.stop_camera()
+        self._screen_calibration.start_camera()
+        self._stack.setCurrentIndex(4)
+
+    def _go_from_calibration_to_capture(self) -> None:
+        """Retourner vers l'écran de capture depuis la calibration."""
+        # Arrêter la caméra de calibration avant de relancer celle de capture
+        self._screen_calibration.stop_camera()
+        self._go_to_capture()
+
     # ------------------------------------------------------------------ cycle de vie
 
     def closeEvent(self, event) -> None:
         """Nettoyer les ressources avant de fermer la fenêtre."""
-        # Toujours libérer la caméra proprement — sinon le flux reste bloqué
+        # Arrêter les timers d'aperçu des deux écrans
         self._screen_capture.stop_camera()
+        self._screen_calibration.stop_camera()
+        # Libérer la caméra partagée (une seule fois, pas dans les écrans)
+        if self._camera is not None:
+            self._camera.release()
+            self._camera = None
         event.accept()

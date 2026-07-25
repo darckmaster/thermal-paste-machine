@@ -5,7 +5,7 @@
 import numpy as np
 import cv2
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QSizePolicy
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QPoint
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QBrush, QColor
@@ -138,6 +138,8 @@ class ScreenZone(QWidget):
         self._selector = LineSelector()
         self._selector.setProperty("role", "camera")
         self._selector.setAlignment(Qt.AlignCenter)
+        # Ignored = le widget prend l'espace alloué par le layout sans grandir selon son contenu
+        self._selector.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self._selector.point_added.connect(self._on_point_added)
         layout.addWidget(self._selector, stretch=1)
 

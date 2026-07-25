@@ -4,7 +4,7 @@
 import numpy as np
 import cv2
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QTimer, QThread, QObject, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QImage, QPixmap
@@ -60,6 +60,9 @@ class ScreenCapture(QWidget):
     # Le paramètre est l'image numpy BGR — 'object' car PyQt5 ne connaît pas numpy
     photo_validated = pyqtSignal(object)
 
+    # Signal émis quand l'opérateur veut accéder à l'écran de calibration caméra
+    calibration_requested = pyqtSignal()
+
     def __init__(self) -> None:
         super().__init__()
         # Objet caméra — créé au premier start_camera(), détruit à stop_camera()
@@ -90,6 +93,15 @@ class ScreenCapture(QWidget):
         self._machine = machine
         self._btn_homing.setEnabled(True)
 
+    def set_camera(self, camera) -> None:
+        """Reçoit la référence caméra partagée (créée et possédée par MainApp).
+
+        L'écran n'ouvre plus la caméra lui-même — la même instance est partagée
+        avec screen_calibration pour éviter les fermetures/réouvertures lentes
+        (1-2s à chaque changement d'écran).
+        """
+        self._camera = camera
+
     # ------------------------------------------------------------------ interface
 
     def _setup_ui(self) -> None:
@@ -108,6 +120,9 @@ class ScreenCapture(QWidget):
         self._image_label = QLabel("Demarrage camera...")
         self._image_label.setProperty("role", "camera")
         self._image_label.setAlignment(Qt.AlignCenter)
+        # Ignored = le label prend l'espace alloué par le layout sans grandir selon son contenu
+        # Sans ça, chaque nouveau pixmap agrandit le label → boucle infinie d'agrandissement
+        self._image_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         layout.addWidget(self._image_label, stretch=1)
 
         # Ligne de statut (nombre de pixels, résolution, messages d'erreur)
@@ -125,6 +140,13 @@ class ScreenCapture(QWidget):
         self._btn_homing.setEnabled(False)  # Activé par set_machine() quand la machine est connue
         self._btn_homing.clicked.connect(self._on_homing)
         homing_layout.addWidget(self._btn_homing)
+
+        # Bouton d'accès à l'écran de calibration caméra (ChArUco)
+        self._btn_calibration = QPushButton("Calibration caméra")
+        self._btn_calibration.setProperty("role", "secondary")
+        self._btn_calibration.clicked.connect(self.calibration_requested)
+        homing_layout.addWidget(self._btn_calibration)
+
         layout.addLayout(homing_layout)
 
         # Barre de boutons capture — 3 boutons côte à côte
@@ -153,40 +175,29 @@ class ScreenCapture(QWidget):
     # ------------------------------------------------------------------ caméra
 
     def start_camera(self) -> None:
-        """Ouvrir la caméra et démarrer le flux d'aperçu."""
+        """Démarrer l'aperçu vidéo — la caméra est déjà ouverte par MainApp via set_camera()."""
         self._captured_image = None
         self._btn_validate.setEnabled(False)
         self._btn_retake.setEnabled(False)
 
-        try:
-            # Créer la caméra si elle n'existe pas encore (ou a été libérée)
-            if self._camera is None:
-                self._status_label.setText("Initialisation camera...")
-                self._camera = Camera(CAMERA_INDEX)
-
-            self._btn_capture.setEnabled(True)
-            self._status_label.setText(
-                f"Camera prete — {self._camera.width}x{self._camera.height} px"
-            )
-            # Démarrer le timer → _update_frame() appelé toutes les 100 ms
-            self._timer.start(100)
-
-        except RuntimeError as e:
-            # La caméra n'est pas disponible — on affiche un message sans planter
+        if self._camera is None:
             self._image_label.setText(
-                "Camera non disponible\n\n"
-                "Verifier le branchement USB\n"
-                f"({e})"
+                "Camera non disponible\n\nVerifier le branchement USB"
             )
             self._status_label.setText("Erreur camera")
             self._btn_capture.setEnabled(False)
+            return
+
+        self._btn_capture.setEnabled(True)
+        self._status_label.setText(
+            f"Camera prete — {self._camera.width}x{self._camera.height} px"
+        )
+        # Démarrer le timer → _update_frame() appelé toutes les 100 ms
+        self._timer.start(100)
 
     def stop_camera(self) -> None:
-        """Arrêter le timer et libérer la caméra (ressource USB)."""
+        """Arrêter le timer d'aperçu — ne pas libérer la caméra (partagée avec calibration)."""
         self._timer.stop()
-        if self._camera is not None:
-            self._camera.release()
-            self._camera = None
 
     def _update_frame(self) -> None:
         """Appelé toutes les 100 ms par le timer — capture et affiche une image."""

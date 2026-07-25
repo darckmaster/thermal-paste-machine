@@ -1,0 +1,16 @@
+{
+    "_comment": "Copier ce fichier en local_config.json et ajuster les valeurs pour votre machine. Ce fichier est gitignore.",
+
+    "camera_index": 1,
+
+    "calibration_min_images": 15,
+
+    "charuco_cols": 4,
+    "charuco_rows": 4,
+    "charuco_square_mm": 15.0,
+    "charuco_marker_mm": 12.0,
+    "charuco_dict": "DICT_4X4_50",
+
+    "_comment_legacy": "charuco_legacy_pattern = true pour les mires générées par calib.io, kalibr, ou l'application (compatible OpenCV < 4.6). Passer à false uniquement pour une mire générée par OpenCV >= 4.6.",
+    "charuco_legacy_pattern": true
+}

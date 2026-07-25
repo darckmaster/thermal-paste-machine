@@ -19,10 +19,9 @@ def main() -> None:
 
     window = MainApp()
 
-    # En développement (chez soi, sur grand écran) : fenêtre normale 800×480
-    # En production (sur le RPi avec écran tactile) : décommenter la ligne suivante
-    # window.showFullScreen()
-    window.show()
+    # Démarrer en fenêtre maximisée — la barre des tâches reste accessible
+    # Sur le RPi avec l'écran tactile, remplacer par window.showFullScreen()
+    window.showMaximized()
 
     # Démarrer la boucle d'événements Qt — bloque jusqu'à fermeture de la fenêtre
     sys.exit(app.exec_())

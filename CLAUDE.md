@@ -309,7 +309,17 @@ Phase 7 ✅ :
 
 **Prochaine session : Phase 8 — Tests, robustesse, finitions**
 - [x] Corriger `tests/test_vision.py::test_pixel_to_mm_coins_de_la_zone` (résidu du fix de repère ArUco — marqueurs synthétiques pas mis à jour pour la convention ID0=bas-gauche) — 2026-07-01, 45/45 tests passent
-- [ ] Calibration optique (échiquier)
+- [x] **Écran calibration ChArUco créé** (2026-07-25) — `gui/screen_calibration.py` complet : flux caméra, détection ChArUco en thread séparé (`DetectionThread`), capture de poses, bouton "Générer la mire", calcul de calibration en thread, sauvegarde
+- [x] **Système local_config.json** (2026-07-25) — paramètres par machine hors git : `camera_index`, `calibration_min_images`, `charuco_cols/rows/square_mm/marker_mm/dict`, `charuco_legacy_pattern`. Ne pas oublier de créer ce fichier sur le RPi (index caméra = 0)
+- [x] **Optimisations perfs** (2026-07-25) — caméra unique partagée entre `screen_capture` et `screen_calibration` (fin des release/reopen) ; backend `CAP_DSHOW` sur Windows avec fallback vérifié
+- [ ] **⚠️ EN COURS — Débloquer la détection ChArUco** (2026-07-25) :
+  - Symptôme : `detectMarkers` (basic ArUco) trouve bien les marqueurs de la mire externe, mais `CharucoDetector.detectBoard` échoue → aucun coin ChArUco détecté → calibration bloquée
+  - Cause probable : la mire externe utilise un ordre d'IDs / une orientation différente de ce qu'OpenCV attend
+  - **Étape 1 à faire demain** : cliquer sur "Générer la mire" dans l'écran de calibration → imprimer `assets/charuco_calibration.png` à taille réelle → tester la détection avec CETTE mire. Si ça marche, on sait que le code est bon et le problème vient du format de la mire externe.
+  - **Étape 2 (si nécessaire)** : essayer `"charuco_legacy_pattern": false` dans `local_config.json`
+  - **Étape 3 (si nécessaire)** : soit adapter les paramètres au format exact de la mire externe, soit se rabattre sur celle générée par l'appli
+- [ ] **⚠️ À vérifier demain** — L'aperçu caméra affiche-t-il bien l'image après tous les changements ? Dernière piste testée : validation stricte de `CAP_DSHOW` (5 lectures test avant validation) + retry × 3 dans `capture()` + warmup 10 frames. Si toujours pas d'image, penser à afficher exactement quoi est visible (message d'erreur, écran noir, "Demarrage camera...") et vérifier la console pour un `[MainApp] Camera non disponible`
+- [ ] Calibration optique — attendre que la détection ChArUco soit débloquée avant de capturer les 15 poses
 - [ ] Tests tactiles : vérifier boutons ≥ 44×44 px
 - [ ] **Gestion des cas d'erreur** — reportée à une session ultérieure (décidé le 2026-07-01). Audit déjà fait, à reprendre directement sans re-auditer :
   - Déjà bien géré ✅ : caméra absente/déconnectée (`screen_capture.py`), erreurs Homing/dépose remontées via signaux Qt (`HomingWorker`, `RunWorker`), vision/ArUco insuffisants (`screen_zone.py`)
@@ -317,6 +327,7 @@ Phase 7 ✅ :
   - Trou #2 : un seul objet `Machine` partagé sans verrou entre l'écran Homing (`screen_capture.py`) et l'écran Run (`screen_run.py`) (`app.py` lignes 90-91/122/160) — risque d'écriture série concurrente si un thread Homing traîne encore
   - Trou #3 (mineur) : messages d'erreur bruts (ex. `[Errno 2] could not open port /dev/ttyUSB0`) au lieu d'un message clair pour l'opérateur
 - [ ] Vérifier que `pytest` passe toujours après les modifications de cette session
+- [ ] Ajouter `openpyxl` et `python-pptx` à `requirements.txt` (utilisés par `assets/generate_planning.py` et `assets/generate_presentation.py`)
 
 ---
 
@@ -490,6 +501,11 @@ Ces choix sont actés — ne pas les remettre en question sans raison documenté
 
 | Repère ArUco ↔ machine | Marqueur 0 = **bas-gauche** de l'image. X+ machine = droite image. Y+ machine = haut image. Offset mesuré : X=20 mm, Y=50 mm (M114, 2026-07-01) | Nécessaire pour convertir coordonnées ArUco → G-code machine |
 | Terminal série RPi | `picocom -b 250000 --imap lfcrlf --echo /dev/ttyUSB0` | `screen` non installé ; `minicom` ne supporte pas 250000 baud |
+| Configuration par machine | Fichier `local_config.json` à la racine (gitignoré). Modèle : `local_config.json.example` (tracké). Chargé au démarrage par `modules/config.py` — surcharge les défauts | Le PC et le RPi ont des paramètres différents (index caméra, port série) qui ne doivent pas transiter par git |
+| Caméra partagée | Une seule instance `Camera` créée dans `MainApp.__init__` et passée aux écrans via `set_camera()`. Les écrans arrêtent/redémarrent leur QTimer mais ne libèrent jamais la caméra | Le release+reopen prenait 1-2 s à chaque changement d'écran ; désormais instantané. Libération unique dans `closeEvent` |
+| Backend caméra Windows | `CAP_DSHOW` (DirectShow) avec **validation stricte** (5 lectures test avant validation, sinon fallback `CAP_ANY`) | `isOpened()` peut retourner `True` sans que le backend délivre de frames — d'où la vérification par lecture réelle |
+| Détection ChArUco temps-réel | `DetectionThread` (sous-classe `QThread`) avec son propre `CharucoDetector` créé dans `run()`. Le thread principal soumet les frames via `submit()` et reçoit les résultats via signal `result_ready` | `cv2.aruco.CharucoDetector` n'est pas thread-safe si partagé. Le pattern `worker + moveToThread` posait aussi des soucis — ce QThread subclass est plus simple et robuste |
+| Mire ChArUco (défauts) | 4×4 cases, 15 mm/case, 12 mm/marqueur, DICT_4X4_50, `setLegacyPattern(True)` | Legacy = compatible calib.io, kalibr et l'app elle-même. Tous ces paramètres surchargeables dans `local_config.json` (`charuco_cols/rows/square_mm/marker_mm/dict/legacy_pattern`) |
 
 ---
 
@@ -504,21 +520,25 @@ thermal-paste-machine/
 ├── .gitignore
 ├── .gitattributes           # Force LF sur toutes les machines
 │
+├── local_config.json        # 🔒 gitignoré — paramètres propres à chaque machine
+├── local_config.json.example # ✅ modèle à copier
+│
 ├── modules/
-│   ├── config.py            # ✅ Créé — paramètres globaux (caméra, machine, ArUco)
-│   ├── camera.py            # ✅ Phase 1 — capture image via USB
+│   ├── config.py            # ✅ Créé — paramètres globaux + chargement local_config.json
+│   ├── camera.py            # ✅ Phase 1 — capture image via USB (CAP_DSHOW+fallback sur Win)
 │   ├── vision.py            # 🔄 Phase 2 — détection ArUco, homographie
-│   ├── calibration.py       # 🔄 Phase 2 — calibration objectif, undistortion
+│   ├── calibration.py       # ✅ Phase 2 + ChArUco (2026-07-25) — undistortion + calibration mire
 │   ├── machine.py           # ✅ Phase 3 — communication G-code Marlin
 │   ├── path_planner.py      # ✅ Phase 5 — calcul des trajectoires (polyline)
 │   └── reporter.py          # ✅ Phase 7 — génération PDF
 │
 ├── gui/
-│   ├── app.py               # ✅ Phase 4 — fenêtre principale PyQt5
-│   ├── screen_capture.py    # ✅ Phase 4 — écran 1 : prise de photo + bouton Homing
+│   ├── app.py               # ✅ Phase 4 — fenêtre principale + caméra partagée
+│   ├── screen_capture.py    # ✅ Phase 4 — écran 1 : photo + Homing + accès calibration
 │   ├── screen_zone.py       # ✅ Phase 4/5 — écran 2 : tracé polyline + ArUco
 │   ├── screen_run.py        # ✅ Phase 4/6 — écran 3 : exécution (QThread + offset machine)
-│   └── screen_report.py     # ✅ Phase 4/7 — écran 4 : rapport + export PDF
+│   ├── screen_report.py     # ✅ Phase 4/7 — écran 4 : rapport + export PDF
+│   └── screen_calibration.py # ✅ 2026-07-25 — écran 5 : calibration ChArUco (DetectionThread)
 │
 ├── assets/                  # Ressources statiques (synoptique Draw.io, icônes...)
 ├── preparations/            # Fichiers de préparation JSON (cordons + quantités)
@@ -643,5 +663,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-07-01 | **Phase 8 (début) — Test PDF cycle complet** — Validation de `reporter.py` en deux temps : (1) `tests/demo_reporter.py` créé (image + tracé synthétiques, sans matériel) — PDF vérifié via `pdftotext`/`pdfimages` (calculs longueur/volume exacts, image JPEG bien intégrée, statut succès/urgence correct) ; (2) cycle complet réel sur la Geeetech au boulot (homing → capture → tracé → dépose → export PDF) — fonctionnel de bout en bout. Écart de distance résiduel (~10 %) toujours présent, cause connue (distorsion objectif), en attente de la calibration échiquier. Résidu identifié à corriger : `test_pixel_to_mm_coins_de_la_zone` échoue (marqueurs synthétiques du test pas mis à jour après le fix de repère ID0=bas-gauche). | Test PDF cycle complet ✅. Phase 8 démarrée (1/3). |
 | 2026-07-01 | **Fix test ArUco résiduel** — Confirmé au préalable que l'échec de `test_pixel_to_mm_coins_de_la_zone` était déterministe (2 essais identiques) et sans lien avec la caméra (test 100% synthétique, aucun `cv2.VideoCapture`). `tests/test_vision.py::_marqueurs_synthetiques()` remis dans l'ordre ID0=bas-gauche/ID1=haut-gauche/ID2=haut-droit/ID3=bas-droit (aligné sur la convention réelle de `vision.py`), assertions de coins ajustées en conséquence. | 45/45 tests passent ✅. |
 | 2026-07-11 | **Révision planning + cadrage fonctionnel** — Nouvelles contraintes calendaires : 3 soutenances blanches entreprise (22/07, 05/08, 12/08, partie en anglais), rapport final IUT le 17/08, soutenance finale IUT le 31/08 (démo Geeetech acceptée), MàJ rapport entreprise le 17/07. CNC déjà quasi assemblée (mécanique + carte + firmware Marlin dernière version flashés ; reste câblage capteurs/moteurs) → Q9 résolue, chemin critique dé-risqué. Cadrage du process de dépose complet et actage de 4 fonctionnalités : calibration **ChArUco**, **cordons multiples** avec quantité par cordon, **fichier de préparation JSON**, **temps de dépose** au rapport. Planning détaillé jour par jour (11/07→31/08) ajouté en section 9. | CLAUDE.md + CONCEPTION.md mis à jour. Planning validé. Aucune ligne de code produite ce jour. |
+| 2026-07-25 | **Session 🏠 — Écran calibration ChArUco + refonte config locale + optimisations caméra.** Création complète de `gui/screen_calibration.py` : flux caméra live, détection ChArUco en overlay (marqueurs ArUco + coins), capture guidée de N poses, calcul de calibration en QThread, sauvegarde `assets/camera_calibration.npz`, bouton "Générer la mire". Ajout des fonctions ChArUco dans `modules/calibration.py` (`create_charuco_board`, `generate_charuco_image`, `detect_charuco`, `calibrate_charuco`) — utilise `cv2.aruco.CharucoBoard` avec `setLegacyPattern(True)` pour compatibilité générateurs externes (calib.io, kalibr). Mise en place du système **`local_config.json`** (gitignoré) chargé par `config.py` : `camera_index`, `calibration_min_images`, `charuco_cols/rows/square_mm/marker_mm/dict/legacy_pattern`. Optimisations perfs : (1) **caméra unique partagée** entre `screen_capture` et `screen_calibration` (créée dans `MainApp.__init__`, passée via `set_camera()`) — plus de release+reopen à chaque changement d'écran ; (2) backend **CAP_DSHOW** sur Windows avec validation stricte (5 lectures test, fallback CAP_ANY si échec) ; (3) fenêtre en `showMaximized()` au lieu de `setFixedSize`. Correctifs : (a) `QSizePolicy.Ignored` sur les labels caméra pour éviter la croissance infinie du layout ; (b) `DetectionThread` (sous-classe `QThread`) crée son propre `CharucoDetector` dans `run()` pour éviter les problèmes de thread-safety ; (c) `drawDetectedMarkers/CornersCharuco` enrobés dans try/except (formats variables selon versions OpenCV). | Screen calibration navigable, thread OK. **Non validé** : détection ChArUco d'une mire externe échoue (basic `detectMarkers` OK, `detectBoard` KO) — piste privilégiée : tester avec la mire générée par l'app (bouton "Générer la mire" + impression). **À vérifier demain** aussi : présence de l'aperçu caméra après les changements du backend. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.

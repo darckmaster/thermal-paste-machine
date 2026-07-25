@@ -27,6 +27,11 @@ import os
 import cv2
 import numpy as np
 
+from modules.config import (
+    CHARUCO_COLS, CHARUCO_ROWS, CHARUCO_SQUARE_MM, CHARUCO_MARKER_MM, CHARUCO_DICT_NAME,
+    CHARUCO_LEGACY_PATTERN,
+)
+
 
 # Dimensions de l'échiquier de calibration : nombre de COINS INTERNES (pas de carrés)
 # Un échiquier 10×7 carrés a 9×6 coins internes
@@ -176,3 +181,156 @@ def load_calibration(path: str) -> tuple:
 
     data = np.load(path)
     return data['camera_matrix'], data['dist_coeffs']
+
+
+# ============================================================ ChArUco calibration
+
+# Correspondance entre les noms de dictionnaires (utilisés dans local_config.json)
+# et les constantes entières qu'OpenCV attend dans getPredefinedDictionary().
+_ARUCO_DICT_MAP = {
+    "DICT_4X4_50":         cv2.aruco.DICT_4X4_50,
+    "DICT_4X4_100":        cv2.aruco.DICT_4X4_100,
+    "DICT_4X4_250":        cv2.aruco.DICT_4X4_250,
+    "DICT_4X4_1000":       cv2.aruco.DICT_4X4_1000,
+    "DICT_5X5_50":         cv2.aruco.DICT_5X5_50,
+    "DICT_5X5_100":        cv2.aruco.DICT_5X5_100,
+    "DICT_5X5_250":        cv2.aruco.DICT_5X5_250,
+    "DICT_6X6_50":         cv2.aruco.DICT_6X6_50,
+    "DICT_6X6_100":        cv2.aruco.DICT_6X6_100,
+    "DICT_7X7_50":         cv2.aruco.DICT_7X7_50,
+    "DICT_ARUCO_ORIGINAL": cv2.aruco.DICT_ARUCO_ORIGINAL,
+}
+
+if CHARUCO_DICT_NAME not in _ARUCO_DICT_MAP:
+    raise ValueError(
+        f"Dictionnaire ChArUco inconnu dans local_config.json : '{CHARUCO_DICT_NAME}'. "
+        f"Valeurs acceptees : {list(_ARUCO_DICT_MAP.keys())}"
+    )
+
+# Constante entiere OpenCV correspondant au dictionnaire configure
+CHARUCO_DICT_ID = _ARUCO_DICT_MAP[CHARUCO_DICT_NAME]
+
+
+def create_charuco_board():
+    """Crée l'objet CharucoBoard et le détecteur associé pour la calibration.
+
+    Le ChArUco (Chessboard + ArUco) combine :
+    - L'échiquier : fournit des coins sub-pixel très précis pour la calibration
+    - Les marqueurs ArUco : permettent d'identifier les coins même si la mire est partiellement visible
+
+    IMPORTANT — legacy pattern : OpenCV a modifié la disposition des marqueurs en 4.6.
+    Les générateurs externes (calib.io, kalibr...) utilisent l'ancien format. Activer
+    setLegacyPattern(True) rend la détection compatible avec ces mires externes.
+
+    Retourne : (board, detector)
+    """
+    dictionary = cv2.aruco.getPredefinedDictionary(CHARUCO_DICT_ID)
+    board = cv2.aruco.CharucoBoard(
+        (CHARUCO_COLS, CHARUCO_ROWS),
+        CHARUCO_SQUARE_MM,
+        CHARUCO_MARKER_MM,
+        dictionary,
+    )
+    # Basculer sur l'ancien format de disposition des marqueurs si demandé (défaut = true)
+    # Nécessaire pour détecter les mires générées par des outils externes.
+    if CHARUCO_LEGACY_PATTERN:
+        try:
+            board.setLegacyPattern(True)
+        except AttributeError:
+            # setLegacyPattern n'existe pas dans OpenCV < 4.6 — pas de problème,
+            # le format était nativement l'ancien à cette époque
+            pass
+
+    detector = cv2.aruco.CharucoDetector(board)
+    return board, detector
+
+
+def generate_charuco_image(output_path: str, px_per_mm: float = 8.0) -> None:
+    """Génère et sauvegarde l'image de la mire ChArUco à imprimer.
+
+    px_per_mm = 8.0 → résolution suffisante pour l'impression laser.
+    Imprimer à taille réelle (sans zoom ni ajustement d'imprimante).
+    La mire fait 4×4 carrés de 15 mm → 60×60 mm une fois imprimée.
+    """
+    board, _ = create_charuco_board()
+    w = int(CHARUCO_COLS * CHARUCO_SQUARE_MM * px_per_mm)
+    h = int(CHARUCO_ROWS * CHARUCO_SQUARE_MM * px_per_mm)
+    # generateImage produit le PNG de la mire avec une bordure blanche de 10 px
+    img = board.generateImage((w, h), marginSize=10)
+    parent = os.path.dirname(os.path.abspath(output_path))
+    os.makedirs(parent, exist_ok=True)
+    cv2.imwrite(output_path, img)
+
+
+def detect_charuco(image: np.ndarray, board, detector) -> tuple:
+    """Détecte les coins ChArUco dans une image et retourne le résultat annoté.
+
+    Paramètres :
+        image    : image BGR (numpy array)
+        board    : objet CharucoBoard (créé par create_charuco_board)
+        detector : objet CharucoDetector (réutilisé à chaque frame pour éviter de le recréer)
+
+    Retourne :
+        (corners, ids, preview)
+        corners, ids : None si moins de 4 coins détectés (insuffisant pour calibrer)
+        preview      : copie de l'image avec les coins détectés dessinés en surimpression
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    preview = image.copy()
+
+    # detectBoard retourne les coins ChArUco (intersections des cases), leurs IDs,
+    # les coins bruts des marqueurs ArUco et leurs IDs
+    charuco_corners, charuco_ids, marker_corners, marker_ids = detector.detectBoard(gray)
+
+    # Dessiner les marqueurs ArUco bruts (carrés colorés avec leur ID)
+    # Enrobé dans un try/except : le format retourné par detectBoard varie selon la version OpenCV
+    if marker_ids is not None and marker_corners is not None and len(marker_ids) > 0:
+        try:
+            cv2.aruco.drawDetectedMarkers(preview, marker_corners, marker_ids)
+        except Exception:
+            pass
+
+    # 4 coins ChArUco minimum : en dessous la contribution à la calibration est trop faible
+    if charuco_ids is not None and charuco_corners is not None and len(charuco_ids) >= 4:
+        try:
+            cv2.aruco.drawDetectedCornersCharuco(preview, charuco_corners, charuco_ids)
+        except Exception:
+            pass
+        return charuco_corners, charuco_ids, preview
+
+    return None, None, preview
+
+
+def calibrate_charuco(
+    all_corners: list,
+    all_ids: list,
+    board,
+    image_size: tuple,
+) -> tuple:
+    """Calcule les paramètres de distorsion de la caméra depuis les captures ChArUco.
+
+    Paramètres :
+        all_corners : liste de tableaux de coins ChArUco (un tableau par image valide)
+        all_ids     : liste de tableaux d'IDs correspondants
+        board       : objet CharucoBoard
+        image_size  : (largeur, hauteur) de l'image en pixels
+
+    Retourne :
+        (camera_matrix, dist_coeffs, reprojection_error)
+        reprojection_error en pixels — < 1.0 = bonne calibration, < 0.5 = excellente
+
+    Lève ValueError si moins de 10 images valides.
+    """
+    if len(all_corners) < 10:
+        raise ValueError(
+            f"Calibration impossible : seulement {len(all_corners)} images valides "
+            f"(minimum requis : 10)"
+        )
+
+    # calibrateCameraCharuco utilise les positions 3D connues des coins ChArUco
+    # et les positions 2D détectées dans chaque image pour estimer la distorsion de l'objectif
+    ret, camera_matrix, dist_coeffs, _rvecs, _tvecs = cv2.aruco.calibrateCameraCharuco(
+        all_corners, all_ids, board, image_size, None, None
+    )
+
+    return camera_matrix, dist_coeffs, ret

@@ -22,3 +22,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Configuration locale (propre à chaque machine — ne pas committer)
+local_config.json
