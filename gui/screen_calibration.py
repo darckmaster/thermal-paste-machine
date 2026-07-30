@@ -17,7 +17,10 @@ from modules.calibration import (
     detect_charuco,
     calibrate_charuco,
     save_calibration,
+    load_calibration,
     generate_charuco_image,
+    estimate_board_pose,
+    distance_to_board_normal_mm,
 )
 
 CALIBRATION_PATH = os.path.normpath(
@@ -45,7 +48,7 @@ class DetectionThread(QThread):
         (on préfère la fraîcheur à l'exhaustivité pour un aperçu temps-réel)
     """
 
-    result_ready = pyqtSignal(object, object, object)  # corners, ids, preview
+    result_ready = pyqtSignal(object, object, object, object)  # corners, ids, preview, marker_count
 
     def __init__(self, board) -> None:
         super().__init__()
@@ -74,8 +77,8 @@ class DetectionThread(QThread):
             if frame is not None:
                 self._pending_frame = None
                 try:
-                    corners, ids, preview = detect_charuco(frame, self._board, detector)
-                    self.result_ready.emit(corners, ids, preview)
+                    corners, ids, preview, marker_count = detect_charuco(frame, self._board, detector)
+                    self.result_ready.emit(corners, ids, preview, marker_count)
                 except Exception:
                     # Ne jamais laisser une exception OpenCV tuer le thread silencieusement
                     pass
@@ -130,8 +133,11 @@ class ScreenCalibration(QWidget):
         self._all_ids: list = []
         self._image_size: tuple = (0, 0)
 
-        self._camera_matrix = None
-        self._dist_coeffs = None
+        # Charger une calibration déjà sauvegardée si elle existe — sert de base pour
+        # l'estimation de distance caméra↔mire affichée en direct (voir _on_detection_result),
+        # même avant d'avoir terminé une nouvelle calibration dans cet écran. Écrasée dès
+        # qu'une nouvelle calibration aboutit (_on_calibration_done).
+        self._camera_matrix, self._dist_coeffs = load_calibration(CALIBRATION_PATH)
 
         # Thread de détection — créé dans start_camera(), arrêté dans stop_camera()
         self._detection_thread: DetectionThread | None = None
@@ -190,6 +196,11 @@ class ScreenCalibration(QWidget):
         self._lbl_error.setAlignment(Qt.AlignCenter)
         self._lbl_error.setStyleSheet("font-size: 13px; color: #888;")
         right_layout.addWidget(self._lbl_error)
+
+        self._lbl_distance = QLabel("Distance\n—")
+        self._lbl_distance.setAlignment(Qt.AlignCenter)
+        self._lbl_distance.setStyleSheet("font-size: 13px; color: #888;")
+        right_layout.addWidget(self._lbl_distance)
 
         right_layout.addStretch()
 
@@ -289,8 +300,8 @@ class ScreenCalibration(QWidget):
 
     # ------------------------------------------------------------------ résultat détection
 
-    @pyqtSlot(object, object, object)
-    def _on_detection_result(self, corners, ids, preview: np.ndarray) -> None:
+    @pyqtSlot(object, object, object, object)
+    def _on_detection_result(self, corners, ids, preview: np.ndarray, marker_count: int) -> None:
         """Reçu depuis DetectionThread quand la détection d'un frame est terminée.
 
         Qt route automatiquement ce signal dans le thread principal (connexion queued)
@@ -299,15 +310,56 @@ class ScreenCalibration(QWidget):
         self._detection_busy = False
         self._charuco_detected = corners is not None
 
+        # Toujours afficher le preview annoté (même si le board ChArUco échoue) : il contient
+        # déjà les marqueurs ArUco bruts détectés, ce qui permet de voir si le problème vient
+        # de la détection de base (aucun tag visible) ou de la reconstruction de la mire
+        # (tags visibles mais pas assez de coins ChArUco).
+        self._display_image(preview)
+
         if self._charuco_detected:
-            self._lbl_detection.setText(f"Détection\n✓ {len(ids)} coins")
+            self._lbl_detection.setText(f"Détection\n✓ {len(ids)} coins ({marker_count} tags)")
             self._lbl_detection.setStyleSheet("font-size: 13px; color: #4CAF50;")
             self._btn_capture.setEnabled(True)
-            self._display_image(preview)
+        elif marker_count > 0:
+            # Cas du bug en cours : les tags ArUco sont vus individuellement mais le board
+            # ne se reconstruit pas (mauvais ordre d'IDs / mauvaise disposition de la mire)
+            self._lbl_detection.setText(f"Détection\n△ {marker_count} tags, 0 coin mire")
+            self._lbl_detection.setStyleSheet("font-size: 13px; color: #FF9800;")
+            self._btn_capture.setEnabled(False)
         else:
-            self._lbl_detection.setText("Détection\n✗ —")
+            self._lbl_detection.setText("Détection\n✗ aucun tag")
             self._lbl_detection.setStyleSheet("font-size: 13px; color: #f44336;")
             self._btn_capture.setEnabled(False)
+
+        self._update_distance_label(corners, ids)
+
+    def _update_distance_label(self, corners, ids) -> None:
+        """Calcule et affiche la distance caméra↔plan de la mire (le long de sa normale).
+
+        Nécessite une calibration (camera_matrix/dist_coeffs) pour résoudre la pose par
+        solvePnP — sans ça (première utilisation, avant toute calibration sauvegardée),
+        la distance ne peut pas être estimée avec confiance : on l'indique clairement
+        plutôt que d'afficher un chiffre basé sur une caméra non calibrée.
+        """
+        if self._camera_matrix is None:
+            self._lbl_distance.setText("Distance\n(calibrer d'abord)")
+            self._lbl_distance.setStyleSheet("font-size: 13px; color: #888;")
+            return
+
+        if not self._charuco_detected:
+            self._lbl_distance.setText("Distance\n—")
+            self._lbl_distance.setStyleSheet("font-size: 13px; color: #888;")
+            return
+
+        rvec, tvec = estimate_board_pose(corners, ids, self._board, self._camera_matrix, self._dist_coeffs)
+        if rvec is None:
+            self._lbl_distance.setText("Distance\n—")
+            self._lbl_distance.setStyleSheet("font-size: 13px; color: #888;")
+            return
+
+        distance_mm = distance_to_board_normal_mm(rvec, tvec)
+        self._lbl_distance.setText(f"Distance\n{distance_mm:.0f} mm")
+        self._lbl_distance.setStyleSheet("font-size: 13px; color: #4CAF50;")
 
     # ------------------------------------------------------------------ actions
 
@@ -324,7 +376,7 @@ class ScreenCalibration(QWidget):
         # Créer un détecteur local pour cette capture synchrone
         # (ne pas réutiliser celui du DetectionThread qui tourne en parallèle)
         detector = cv2.aruco.CharucoDetector(self._board)
-        corners, ids, _ = detect_charuco(frame, self._board, detector)
+        corners, ids, _, _ = detect_charuco(frame, self._board, detector)
 
         if corners is None:
             self._status_label.setText("Détection perdue au moment de la capture — réessayer")

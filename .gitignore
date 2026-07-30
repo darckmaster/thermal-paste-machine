@@ -25,3 +25,7 @@ Thumbs.db
 
 # Configuration locale (propre à chaque machine — ne pas committer)
 local_config.json
+
+# Calibration caméra — dépend du capteur/objectif physique de chaque machine,
+# ne doit pas être partagée entre machines différentes (voir local_config.json)
+assets/camera_calibration.npz

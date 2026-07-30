@@ -11,7 +11,8 @@ from PyQt5.QtGui import QImage, QPixmap
 
 from modules.camera import Camera
 from modules.machine import Machine
-from modules.config import CAMERA_INDEX
+from modules.vision import VisionProcessor
+from modules.config import CAMERA_INDEX, ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM
 
 
 # ================================================================ worker homing
@@ -67,6 +68,12 @@ class ScreenCapture(QWidget):
         super().__init__()
         # Objet caméra — créé au premier start_camera(), détruit à stop_camera()
         self._camera: Camera | None = None
+        # Détecteur ArUco réutilisé à chaque frame — sert uniquement à l'aperçu (debug visuel
+        # des 4 marqueurs du plateau) ; la détection "officielle" pour le tracé se fait dans
+        # screen_zone.py sur la photo validée
+        self._vision = VisionProcessor(
+            aruco_dict_id=ARUCO_DICT_ID, marker_real_size_mm=ARUCO_MARKER_SIZE_MM
+        )
         # Image figée au moment du clic "Capturer" — None si flux en direct
         self._captured_image: np.ndarray | None = None
         # Référence machine pour le homing — fournie par app.py via set_machine()
@@ -200,17 +207,39 @@ class ScreenCapture(QWidget):
         self._timer.stop()
 
     def _update_frame(self) -> None:
-        """Appelé toutes les 100 ms par le timer — capture et affiche une image."""
+        """Appelé toutes les 100 ms par le timer — capture, détecte les ArUco et affiche."""
         if self._camera is None:
             return
         try:
             frame = self._camera.capture()
-            self._display_image(frame)
+            self._display_image_with_markers(frame)
         except RuntimeError:
             # La caméra a été débranchée en cours de route
             self._timer.stop()
             self._image_label.setText("Camera deconnectee — rebrancher et relancer")
             self._btn_capture.setEnabled(False)
+
+    def _display_image_with_markers(self, frame: np.ndarray) -> None:
+        """Détecte les marqueurs ArUco du plateau et les affiche en surimpression.
+
+        Aide au positionnement de la pièce/du plateau : l'opérateur voit tout de suite
+        quels marqueurs (parmi les IDs 0-3 attendus) sont vus par la caméra, sans avoir
+        à capturer une photo pour le savoir.
+        """
+        detected = self._vision.detect_markers(frame)
+
+        if detected:
+            # Dessiner sur une copie — ne jamais modifier "frame" (utilisé tel quel par
+            # _on_capture pour la photo réellement transmise à l'écran suivant)
+            preview = frame.copy()
+            coins = [c.reshape(1, 4, 2).astype(np.float32) for c in detected.values()]
+            ids = np.array([[mid] for mid in detected.keys()])
+            cv2.aruco.drawDetectedMarkers(preview, coins, ids)
+            self._status_label.setText(f"Marqueurs détectés : {sorted(detected.keys())}")
+            self._display_image(preview)
+        else:
+            self._status_label.setText("Aucun marqueur ArUco détecté")
+            self._display_image(frame)
 
     # ------------------------------------------------------------------ actions boutons
 

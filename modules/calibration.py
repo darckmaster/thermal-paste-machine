@@ -271,9 +271,11 @@ def detect_charuco(image: np.ndarray, board, detector) -> tuple:
         detector : objet CharucoDetector (réutilisé à chaque frame pour éviter de le recréer)
 
     Retourne :
-        (corners, ids, preview)
-        corners, ids : None si moins de 4 coins détectés (insuffisant pour calibrer)
-        preview      : copie de l'image avec les coins détectés dessinés en surimpression
+        (corners, ids, preview, marker_count)
+        corners, ids : None si moins de 4 coins ChArUco détectés (insuffisant pour calibrer)
+        preview      : copie de l'image avec marqueurs ArUco bruts + coins ChArUco (si trouvés)
+        marker_count : nombre de marqueurs ArUco bruts vus, même quand le board échoue —
+                       permet de distinguer "aucun tag vu" de "tags vus mais mire non reconstruite"
     """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     preview = image.copy()
@@ -283,8 +285,12 @@ def detect_charuco(image: np.ndarray, board, detector) -> tuple:
     charuco_corners, charuco_ids, marker_corners, marker_ids = detector.detectBoard(gray)
 
     # Dessiner les marqueurs ArUco bruts (carrés colorés avec leur ID)
-    # Enrobé dans un try/except : le format retourné par detectBoard varie selon la version OpenCV
+    # Fait AVANT de savoir si le board se reconstruit — utile pour diagnostiquer :
+    # si ça ne s'affiche jamais, le problème est dans la détection de base, pas dans le board
+    marker_count = 0
     if marker_ids is not None and marker_corners is not None and len(marker_ids) > 0:
+        marker_count = len(marker_ids)
+        # Enrobé dans un try/except : le format retourné par detectBoard varie selon la version OpenCV
         try:
             cv2.aruco.drawDetectedMarkers(preview, marker_corners, marker_ids)
         except Exception:
@@ -296,9 +302,9 @@ def detect_charuco(image: np.ndarray, board, detector) -> tuple:
             cv2.aruco.drawDetectedCornersCharuco(preview, charuco_corners, charuco_ids)
         except Exception:
             pass
-        return charuco_corners, charuco_ids, preview
+        return charuco_corners, charuco_ids, preview, marker_count
 
-    return None, None, preview
+    return None, None, preview, marker_count
 
 
 def calibrate_charuco(
@@ -327,10 +333,66 @@ def calibrate_charuco(
             f"(minimum requis : 10)"
         )
 
-    # calibrateCameraCharuco utilise les positions 3D connues des coins ChArUco
-    # et les positions 2D détectées dans chaque image pour estimer la distorsion de l'objectif
-    ret, camera_matrix, dist_coeffs, _rvecs, _tvecs = cv2.aruco.calibrateCameraCharuco(
-        all_corners, all_ids, board, image_size, None, None
+    # cv2.aruco.calibrateCameraCharuco() a été supprimée dans OpenCV 5.0 (API ChArUco "legacy").
+    # Remplacement recommandé par OpenCV : board.matchImagePoints() convertit chaque pose
+    # (coins ChArUco 2D + IDs détectés) en paires points-objet 3D / points-image 2D, à partir
+    # des positions 3D connues des coins de la mire — puis on calibre avec la fonction
+    # générique cv2.calibrateCamera() (la même que pour l'échiquier simple plus haut).
+    objpoints = []
+    imgpoints = []
+    for corners, ids in zip(all_corners, all_ids):
+        obj_pts, img_pts = board.matchImagePoints(corners, ids)
+        objpoints.append(obj_pts)
+        imgpoints.append(img_pts)
+
+    ret, camera_matrix, dist_coeffs, _rvecs, _tvecs = cv2.calibrateCamera(
+        objpoints, imgpoints, image_size, None, None
     )
 
     return camera_matrix, dist_coeffs, ret
+
+
+# ============================================================ pose de la mire (distance)
+
+def estimate_board_pose(
+    corners: np.ndarray, ids: np.ndarray, board, camera_matrix: np.ndarray, dist_coeffs: np.ndarray
+) -> tuple:
+    """Estime la pose (rotation, translation) de la mire par rapport à la caméra.
+
+    Réutilise board.matchImagePoints() (même mécanisme que calibrate_charuco) pour
+    associer les coins ChArUco détectés à leurs positions 3D connues dans le repère de
+    la mire, puis résout la pose caméra↔mire par solvePnP à partir de ces correspondances.
+
+    Retourne (rvec, tvec), ou (None, None) si la pose n'a pas pu être résolue
+    (moins de 4 coins détectés, ou configuration géométrique dégénérée).
+    """
+    if corners is None or ids is None or len(ids) < 4:
+        return None, None
+
+    obj_pts, img_pts = board.matchImagePoints(corners, ids)
+    if obj_pts is None or len(obj_pts) < 4:
+        return None, None
+
+    ok, rvec, tvec = cv2.solvePnP(obj_pts, img_pts, camera_matrix, dist_coeffs)
+    if not ok:
+        return None, None
+    return rvec, tvec
+
+
+def distance_to_board_normal_mm(rvec: np.ndarray, tvec: np.ndarray) -> float:
+    """Distance (mm) entre le centre optique de la caméra et le PLAN de la mire, mesurée
+    perpendiculairement à ce plan (le long de sa normale) — pas la distance "à vol d'oiseau"
+    jusqu'à l'origine de la mire, qui varierait selon l'inclinaison de la mire.
+
+    Dans le repère de la mire, tous les coins ont Z=0 : sa normale est donc l'axe +Z de ce
+    repère. rvec/tvec (issus de solvePnP) transforment le repère mire vers le repère caméra :
+    R = Rodrigues(rvec) donne l'orientation de la mire dans le repère caméra, donc
+    normal_cam = R @ [0, 0, 1] est la normale de la mire exprimée dans le repère caméra
+    (vecteur unitaire, car R est une rotation). Le plan de la mire passe par le point tvec
+    (son origine, dans le repère caméra) — la distance du centre caméra (origine du repère
+    caméra) à ce plan est alors simplement normal_cam · tvec (produit scalaire, simplifié
+    car normal_cam est unitaire).
+    """
+    rotation_matrix, _ = cv2.Rodrigues(rvec)
+    normal_cam = rotation_matrix @ np.array([0.0, 0.0, 1.0])
+    return abs(float(np.dot(normal_cam, tvec.flatten())))

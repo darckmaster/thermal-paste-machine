@@ -65,6 +65,11 @@ class Camera:
         if not self._cap.isOpened():
             raise RuntimeError(f"Impossible d'ouvrir la caméra à l'index {device_index}")
 
+        # Résolution native (avant toute demande de changement) — sert de repli si la
+        # résolution demandée ci-dessous s'avère non utilisable (voir vérification plus bas)
+        native_width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        native_height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
         # Demander la résolution souhaitée à la caméra (OpenCV tente de l'appliquer, sans garantie)
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
@@ -78,6 +83,19 @@ class Camera:
         # se stabiliser. Ret=False à ce stade est normal — on ignore et on continue.
         for _ in range(10):
             self._cap.read()
+
+        # Piège observé sur Windows/DSHOW : cap.get() peut confirmer la résolution demandée
+        # (ex. 1280x960) alors que le pilote ne délivre en réalité que des frames noires
+        # (mean ET std ~ 0 — pas juste une scène sombre, un vrai buffer vide) à cette résolution.
+        # Si c'est le cas, revenir à la résolution native où la caméra fonctionne vraiment.
+        ret, frame = self._cap.read()
+        if ret and frame.mean() < 1.0 and frame.std() < 1.0:
+            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, native_width)
+            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, native_height)
+            self.width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            self.height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            for _ in range(10):
+                self._cap.read()
 
     def capture(self) -> np.ndarray:
         """Capture une image et la retourne sous forme de tableau numpy BGR.
