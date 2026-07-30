@@ -62,7 +62,7 @@ Le logiciel suit ce déroulé, du point de vue de l'opérateur. **C'est la réf�
 - **Travailler phase par phase.** Ne pas anticiper les phases suivantes ni créer du code pour des phases non encore démarrées.
 - **Expliquer chaque choix.** Pour toute solution proposée, expliquer le *pourquoi*, pas seulement le *comment*.
 - **Enrichir `CONCEPTION.md`** à chaque décision technique, découverte ou résultat de test — ce document nourrit le rapport de stage.
-- **Mettre à jour ce fichier** (`CLAUDE.md`) à chaque fin de session : questions ouvertes, décisions prises, agenda de la prochaine session.
+- **Mettre à jour ce fichier** (`CLAUDE.md`) à chaque fin de session : questions ouvertes, décisions prises, agenda de la prochaine session. Le rituel formel de fin de session (tests, manuels, doc, branche/push/merge) est détaillé en **section 15** — déclenché uniquement sur demande explicite de l'étudiant.
 
 ---
 
@@ -312,14 +312,16 @@ Phase 7 ✅ :
 - [x] **Écran calibration ChArUco créé** (2026-07-25) — `gui/screen_calibration.py` complet : flux caméra, détection ChArUco en thread séparé (`DetectionThread`), capture de poses, bouton "Générer la mire", calcul de calibration en thread, sauvegarde
 - [x] **Système local_config.json** (2026-07-25) — paramètres par machine hors git : `camera_index`, `calibration_min_images`, `charuco_cols/rows/square_mm/marker_mm/dict`, `charuco_legacy_pattern`. Ne pas oublier de créer ce fichier sur le RPi (index caméra = 0)
 - [x] **Optimisations perfs** (2026-07-25) — caméra unique partagée entre `screen_capture` et `screen_calibration` (fin des release/reopen) ; backend `CAP_DSHOW` sur Windows avec fallback vérifié
-- [ ] **⚠️ EN COURS — Débloquer la détection ChArUco** (2026-07-25) :
-  - Symptôme : `detectMarkers` (basic ArUco) trouve bien les marqueurs de la mire externe, mais `CharucoDetector.detectBoard` échoue → aucun coin ChArUco détecté → calibration bloquée
-  - Cause probable : la mire externe utilise un ordre d'IDs / une orientation différente de ce qu'OpenCV attend
-  - **Étape 1 à faire demain** : cliquer sur "Générer la mire" dans l'écran de calibration → imprimer `assets/charuco_calibration.png` à taille réelle → tester la détection avec CETTE mire. Si ça marche, on sait que le code est bon et le problème vient du format de la mire externe.
-  - **Étape 2 (si nécessaire)** : essayer `"charuco_legacy_pattern": false` dans `local_config.json`
-  - **Étape 3 (si nécessaire)** : soit adapter les paramètres au format exact de la mire externe, soit se rabattre sur celle générée par l'appli
-- [ ] **⚠️ À vérifier demain** — L'aperçu caméra affiche-t-il bien l'image après tous les changements ? Dernière piste testée : validation stricte de `CAP_DSHOW` (5 lectures test avant validation) + retry × 3 dans `capture()` + warmup 10 frames. Si toujours pas d'image, penser à afficher exactement quoi est visible (message d'erreur, écran noir, "Demarrage camera...") et vérifier la console pour un `[MainApp] Camera non disponible`
-- [ ] Calibration optique — attendre que la détection ChArUco soit débloquée avant de capturer les 15 poses
+- [x] **Détection ChArUco débloquée** (2026-07-29, session v0.1) — deux causes distinctes trouvées et corrigées :
+  1. `camera_index` dans `local_config.json` pointait sur la webcam intégrée du PC (pas l'USB) — corrigé (voir aussi section 10)
+  2. `charuco_legacy_pattern: true` incompatible avec les mires générées par l'appli (`board.generateImage()` ignore ce réglage et produit toujours le format "nouveau", alors que `detectBoard()` le respecte côté détection) — corrigé à `false`. Détail complet en `MANUEL_MAINTENANCE.md` section 4.2
+  - **Overlay de debug ajouté** : `screen_capture.py` (écran 1) et `screen_calibration.py` affichent maintenant les marqueurs ArUco/ChArUco détectés en surimpression en direct — c'est cet overlay qui a permis d'isoler les deux causes ci-dessus
+- [x] **Bug OpenCV 5.0 corrigé** (2026-07-29) — `cv2.aruco.calibrateCameraCharuco()` n'existe plus en OpenCV 5.0 ; remplacé par `board.matchImagePoints()` + `cv2.calibrateCamera()` dans `modules/calibration.py::calibrate_charuco`. Détail en `MANUEL_MAINTENANCE.md` section 4.3
+- [x] **Distance caméra↔mire** (2026-07-29) — `modules/calibration.py::estimate_board_pose()` + `distance_to_board_normal_mm()` (solvePnP + distance perpendiculaire au plan de la mire), affichée en direct dans l'écran calibration
+- [ ] **⚠️ NOUVEAU — Collision d'IDs ArUco plateau/mire, non corrigée** (2026-07-29) : le plateau et la mire ChArUco partagent le même dictionnaire `DICT_4X4_50` sans plage d'IDs séparée → confusion du détecteur quand les deux sont visibles ensemble (cas normal en calibration). Contournement actuel : masquer le plateau avec du papier pendant la calibration. Détail en `MANUEL_MAINTENANCE.md` section 4.4b
+- [ ] **⚠️ À vérifier — IDs réels des marqueurs du plateau** (2026-07-29) : un test suggère que ce sont `{0,3,4,5}` et non `{0,1,2,3}` comme documenté (section 6) — à confirmer par une photo du plateau seul, sans mire. Si confirmé, casse potentiellement `compute_homography()`. Détail en `MANUEL_MAINTENANCE.md` section 4.5
+- [x] **Manuels créés** (2026-07-29) — `MANUEL_UTILISATEUR.md` et `MANUEL_MAINTENANCE.md` à la racine, mis à jour à chaque rituel de fin de session (section 15)
+- [ ] Calibration optique — capturer les 15 poses en conditions réelles machine (fait sur PC de dev cette session pour valider le pipeline, à refaire sur le Raspberry Pi/Philips SPC1330NC réel)
 - [ ] Tests tactiles : vérifier boutons ≥ 44×44 px
 - [ ] **Gestion des cas d'erreur** — reportée à une session ultérieure (décidé le 2026-07-01). Audit déjà fait, à reprendre directement sans re-auditer :
   - Déjà bien géré ✅ : caméra absente/déconnectée (`screen_capture.py`), erreurs Homing/dépose remontées via signaux Qt (`HomingWorker`, `RunWorker`), vision/ArUco insuffisants (`screen_zone.py`)
@@ -615,22 +617,25 @@ if not self._cap.isOpened():               # vérification
 
 ### Commits — règle d'autoportance (CRITIQUE)
 
-Le message de commit doit contenir 4 éléments, dans cet ordre :
+Le message de commit doit contenir **au minimum 3 parties**, dans cet ordre :
 
 ```
 <Titre court et explicite>
 
-Contexte : <phase concernée, objectif, contrainte ayant motivé le changement>
+Résumé fonctionnel :
+<1 à 3 phrases — ce qui change du point de vue de l'utilisateur / du fonctionnement de
+la machine. Pas de jargon technique : ce que ça change concrètement pour l'opérateur
+ou pour le comportement du produit fini.>
 
-Ajouts fonctionnels :
-- <ce que le code fait maintenant — comportement, pas syntaxe>
-- ...
+Résumé technique :
+<comment c'est implémenté — mécanismes, choix techniques, pourquoi ce choix plutôt
+qu'un autre. C'est ici que va le "comment" et le "pourquoi" détaillé.>
 
 Fichiers modifiés :
-- <fichier.py> (nouveau / modifié / supprimé)
+- <fichier> (nouveau / modifié / supprimé) : <brève description du changement dans ce fichier>
 - ...
 
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 ```
 
 ### Style général
@@ -663,6 +668,49 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 | 2026-07-01 | **Phase 8 (début) — Test PDF cycle complet** — Validation de `reporter.py` en deux temps : (1) `tests/demo_reporter.py` créé (image + tracé synthétiques, sans matériel) — PDF vérifié via `pdftotext`/`pdfimages` (calculs longueur/volume exacts, image JPEG bien intégrée, statut succès/urgence correct) ; (2) cycle complet réel sur la Geeetech au boulot (homing → capture → tracé → dépose → export PDF) — fonctionnel de bout en bout. Écart de distance résiduel (~10 %) toujours présent, cause connue (distorsion objectif), en attente de la calibration échiquier. Résidu identifié à corriger : `test_pixel_to_mm_coins_de_la_zone` échoue (marqueurs synthétiques du test pas mis à jour après le fix de repère ID0=bas-gauche). | Test PDF cycle complet ✅. Phase 8 démarrée (1/3). |
 | 2026-07-01 | **Fix test ArUco résiduel** — Confirmé au préalable que l'échec de `test_pixel_to_mm_coins_de_la_zone` était déterministe (2 essais identiques) et sans lien avec la caméra (test 100% synthétique, aucun `cv2.VideoCapture`). `tests/test_vision.py::_marqueurs_synthetiques()` remis dans l'ordre ID0=bas-gauche/ID1=haut-gauche/ID2=haut-droit/ID3=bas-droit (aligné sur la convention réelle de `vision.py`), assertions de coins ajustées en conséquence. | 45/45 tests passent ✅. |
 | 2026-07-11 | **Révision planning + cadrage fonctionnel** — Nouvelles contraintes calendaires : 3 soutenances blanches entreprise (22/07, 05/08, 12/08, partie en anglais), rapport final IUT le 17/08, soutenance finale IUT le 31/08 (démo Geeetech acceptée), MàJ rapport entreprise le 17/07. CNC déjà quasi assemblée (mécanique + carte + firmware Marlin dernière version flashés ; reste câblage capteurs/moteurs) → Q9 résolue, chemin critique dé-risqué. Cadrage du process de dépose complet et actage de 4 fonctionnalités : calibration **ChArUco**, **cordons multiples** avec quantité par cordon, **fichier de préparation JSON**, **temps de dépose** au rapport. Planning détaillé jour par jour (11/07→31/08) ajouté en section 9. | CLAUDE.md + CONCEPTION.md mis à jour. Planning validé. Aucune ligne de code produite ce jour. |
+| 2026-07-29 | **Session 🏠 — Détection ChArUco débloquée + fix OpenCV 5.0 + distance mire + manuels.** Deux causes cumulées trouvées et corrigées pour le blocage de `CharucoDetector.detectBoard()` constaté le 2026-07-25 : (1) `camera_index` de `local_config.json` pointait sur la webcam intégrée du PC, pas l'USB ; (2) `charuco_legacy_pattern: true` incompatible avec les mires générées par l'appli (`board.generateImage()` ignore ce réglage, `detectBoard()` non — corrigé à `false`). `cv2.aruco.calibrateCameraCharuco()` (supprimée en OpenCV 5.0) remplacée par `board.matchImagePoints()` + `cv2.calibrateCamera()` dans `modules/calibration.py::calibrate_charuco`. Ajout de `estimate_board_pose()` et `distance_to_board_normal_mm()` (solvePnP) affichant la distance caméra↔mire en direct dans l'écran calibration. Overlay de debug ArUco/ChArUco ajouté sur `screen_capture.py` et `screen_calibration.py` (`detect_charuco` retourne désormais aussi `marker_count`) — c'est cet overlay qui a permis d'isoler les deux causes ci-dessus. `assets/camera_calibration.npz` ajouté au `.gitignore` (spécifique à chaque caméra/objectif, ne doit pas être partagé entre machines). `MANUEL_UTILISATEUR.md` et `MANUEL_MAINTENANCE.md` créés (guide opérateur 5 écrans + guide technique installation/config/dépannage). Rituel de fin de session formalisé en section 15 de ce fichier. | 45/45 tests passés. Points ouverts identifiés cette session : collision d'IDs ArUco plateau/mire (même dictionnaire `DICT_4X4_50` sans plage séparée — contournement : masquer le plateau pendant la calibration), et IDs réels du plateau à confirmer (`{0,3,4,5}` suspecté au lieu de `{0,1,2,3}`). Calibration optique à refaire sur le Raspberry Pi/caméra réels (pipeline validé sur PC de dev cette session). |
 | 2026-07-25 | **Session 🏠 — Écran calibration ChArUco + refonte config locale + optimisations caméra.** Création complète de `gui/screen_calibration.py` : flux caméra live, détection ChArUco en overlay (marqueurs ArUco + coins), capture guidée de N poses, calcul de calibration en QThread, sauvegarde `assets/camera_calibration.npz`, bouton "Générer la mire". Ajout des fonctions ChArUco dans `modules/calibration.py` (`create_charuco_board`, `generate_charuco_image`, `detect_charuco`, `calibrate_charuco`) — utilise `cv2.aruco.CharucoBoard` avec `setLegacyPattern(True)` pour compatibilité générateurs externes (calib.io, kalibr). Mise en place du système **`local_config.json`** (gitignoré) chargé par `config.py` : `camera_index`, `calibration_min_images`, `charuco_cols/rows/square_mm/marker_mm/dict/legacy_pattern`. Optimisations perfs : (1) **caméra unique partagée** entre `screen_capture` et `screen_calibration` (créée dans `MainApp.__init__`, passée via `set_camera()`) — plus de release+reopen à chaque changement d'écran ; (2) backend **CAP_DSHOW** sur Windows avec validation stricte (5 lectures test, fallback CAP_ANY si échec) ; (3) fenêtre en `showMaximized()` au lieu de `setFixedSize`. Correctifs : (a) `QSizePolicy.Ignored` sur les labels caméra pour éviter la croissance infinie du layout ; (b) `DetectionThread` (sous-classe `QThread`) crée son propre `CharucoDetector` dans `run()` pour éviter les problèmes de thread-safety ; (c) `drawDetectedMarkers/CornersCharuco` enrobés dans try/except (formats variables selon versions OpenCV). | Screen calibration navigable, thread OK. **Non validé** : détection ChArUco d'une mire externe échoue (basic `detectMarkers` OK, `detectBoard` KO) — piste privilégiée : tester avec la mire générée par l'app (bouton "Générer la mire" + impression). **À vérifier demain** aussi : présence de l'aperçu caméra après les changements du backend. |
 
 > L'historique détaillé (par phase) est dans `CONCEPTION.md` section 10.
+
+---
+
+## 15. Rituel de fin de session
+
+> **Déclenché uniquement sur demande explicite** de l'étudiant (ex. "lance le rituel de fin de
+> session", "on clôture", "fin de session"). Jamais automatique, jamais en fin de session par
+> défaut — Claude ne doit pas l'exécuter sans que l'étudiant l'ait demandé. Cette demande vaut
+> autorisation explicite pour les étapes de push/merge décrites ci-dessous : pas besoin de
+> reconfirmer chaque commande git une par une pendant le déroulé du rituel.
+
+**Avant de commencer** : l'étudiant indique le numéro de version de la session (convention
+`vX.Y`, ex. `v0.3` ; une session de correctifs mineurs incrémente le dernier chiffre, ex.
+`v0.2.1`). Si aucun numéro n'a été donné avant le déclenchement du rituel, le demander avant
+de continuer — ne pas en inventer un.
+
+**Déroulé, dans cet ordre** :
+
+1. **Tests de non-régression** — lancer `pytest`. Si un test échoue, **arrêter le rituel ici**
+   et signaler l'échec à l'étudiant en détail. Ne jamais commit ni push du code qui casse des
+   tests existants — corriger (ou faire corriger) avant de reprendre le rituel depuis le début.
+2. **Manuels** — mettre à jour `MANUEL_UTILISATEUR.md` et `MANUEL_MAINTENANCE.md` (racine du
+   projet ; les créer s'ils n'existent pas encore) avec les changements de la session :
+   nouvelles fonctionnalités côté opérateur, procédures modifiées, points de dépannage
+   découverts. Commit dédié (format section 13).
+3. **Documentation d'avancement** — mettre à jour `CLAUDE.md` (agenda "Prochaine session"
+   section 8, tableau d'avancement section 9, historique section 14) et `CONCEPTION.md`
+   (décisions techniques, résultats de tests, découvertes). Commit dédié (format section 13).
+4. **Branche, push, merge** :
+   - Créer (ou continuer, si déjà créée en cours de session) la branche de travail nommée
+     `vX.Y` (ou `vX.Y.Z`) donnée par l'étudiant à l'étape précédente.
+   - Committer les changements de code restants sur cette branche, s'il y en a (format
+     section 13).
+   - `git push -u origin <branche>` — publier la branche sur le dépôt distant.
+   - `git checkout master && git pull origin master` — remettre master à jour avant de merger.
+   - `git merge <branche>` — merge direct (pas de Pull Request GitHub), fast-forward si
+     possible.
+   - `git push origin master` — publier master à jour.
+
+Tous les commits produits pendant ce rituel (manuels, documentation, code restant) suivent le
+gabarit à 3 parties minimum décrit en section 13 (résumé fonctionnel, résumé technique, liste
+des fichiers modifiés).

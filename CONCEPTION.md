@@ -296,33 +296,41 @@ class VisionProcessor:
 
 **Résultats sessions 1 & 2 (2026-06-11) :** 14/14 tests passés. Détection 4 marqueurs simultanée confirmée. Image redressée validée visuellement.
 
-### 4.3 Calibration objectif (`modules/calibration.py`) 🔄 Phase 2 en cours
+### 4.3 Calibration objectif (`modules/calibration.py`) ✅ ChArUco implémenté — validation terrain en attente
 
 **Problème** : Les objectifs de webcam bon marché introduisent une **barrel distortion** — les objets au centre de l'image paraissent plus grands qu'ils ne le sont. L'homographie corrige la perspective mais pas cette distorsion, ce qui cause une erreur de mesure d'environ **10 %** sur les distances intérieures à la zone de travail (mesuré le 2026-06-12 avec la Philips SPC 1330NC à 200 mm de hauteur).
 
-**Solution** : Calibration one-shot avec une **mire ChArUco** imprimée (damier fusionné avec des marqueurs ArUco). Les coefficients de distorsion sont calculés avec `cv2.aruco.calibrateCameraCharuco`, sauvegardés dans `assets/camera_calibration.npz`, et appliqués via `cv2.undistort` avant tout traitement.
+**Solution** : Calibration one-shot avec une **mire ChArUco** imprimée (damier fusionné avec des marqueurs ArUco). Les coefficients de distorsion sont sauvegardés dans `assets/camera_calibration.npz` (gitignoré — spécifique à chaque caméra/objectif physique) et appliqués via `cv2.undistort` avant tout traitement.
 
 > **Choix ChArUco (décidé 2026-07-11)** : préféré à l'échiquier classique car chaque coin est identifié individuellement par son marqueur ArUco. La calibration reste donc valide même si la mire est partiellement hors champ ou occultée — plus robuste et plus rapide à capturer. Cohérent avec le reste du projet qui utilise déjà ArUco (opencv-contrib).
 
 **Procédure de calibration (une seule fois) :**
-1. Générer et imprimer la planche ChArUco sur A4 paysage
-2. Lancer `tests/demo_calibration.py` et capturer 15+ vues sous différents angles
-3. Les coefficients sont sauvegardés automatiquement dans `assets/camera_calibration.npz`
+1. Générer et imprimer la planche ChArUco (bouton "Générer la mire" dans `gui/screen_calibration.py`, ou `generate_charuco_image`)
+2. Dans l'écran de calibration, capturer 15+ vues sous différents angles — la détection en direct affiche le nombre de coins ChArUco trouvés et la distance caméra↔mire
+3. Les coefficients sont calculés en arrière-plan (`QThread`) puis sauvegardés automatiquement dans `assets/camera_calibration.npz`
 
 **Interface publique :**
 ```python
-generate_charuco_board(output_path, squares_x, squares_y, square_mm, marker_mm)  # génère la mire
-calibrate(images, board)                                     # → (camera_matrix, dist_coeffs, error)
-undistort(image, camera_matrix, dist_coeffs)                 # → image corrigée (mêmes dimensions)
-save_calibration(path, camera_matrix, dist_coeffs)           # sauvegarde .npz
-load_calibration(path)                                       # → (camera_matrix, dist_coeffs) ou (None, None)
+create_charuco_board(squares_x, squares_y, square_mm, marker_mm, dict_id, legacy_pattern)  # → cv2.aruco.CharucoBoard
+generate_charuco_image(board, output_path, ...)               # génère et sauvegarde l'image de la mire
+detect_charuco(image, board, detector)                        # → (corners, ids, preview, marker_count)
+calibrate_charuco(all_corners, all_ids, board, image_size)     # → (camera_matrix, dist_coeffs, error)
+estimate_board_pose(corners, ids, board, camera_matrix, dist_coeffs)  # → (rvec, tvec) ou (None, None)
+distance_to_board_normal_mm(rvec, tvec)                        # → distance (mm) caméra↔plan de la mire
+undistort(image, camera_matrix, dist_coeffs)                   # → image corrigée (mêmes dimensions)
+save_calibration(path, camera_matrix, dist_coeffs)             # sauvegarde .npz
+load_calibration(path)                                         # → (camera_matrix, dist_coeffs) ou (None, None)
 ```
 
-> ⚠️ **À faire (Semaine 1)** : `modules/calibration.py` utilise encore l'échiquier — à réécrire en ChArUco (cf. CLAUDE.md §9).
+> **Bug OpenCV 5.0 (corrigé 2026-07-29)** : `cv2.aruco.calibrateCameraCharuco()` a été supprimée de l'API "legacy" ChArUco dans OpenCV 5.0. Remplacée par le mécanisme générique recommandé : `board.matchImagePoints()` convertit chaque pose (coins ChArUco détectés + IDs) en paires points-objet 3D / points-image 2D à partir de la géométrie connue de la mire, puis `cv2.calibrateCamera()` (la même fonction générique que pour un échiquier classique) calcule la calibration. Détail complet en `MANUEL_MAINTENANCE.md` section 4.3.
+
+> **Détection débloquée (2026-07-29)** : deux causes cumulées empêchaient `CharucoDetector.detectBoard()` de reconstruire la mire alors que `detectMarkers()` (ArUco brut) fonctionnait déjà : (1) `camera_index` dans `local_config.json` pointait sur la webcam intégrée du PC de dev, pas la caméra USB ; (2) `charuco_legacy_pattern: true` était incompatible avec les mires générées par l'appli — `board.generateImage()` ignore ce réglage et produit toujours le format "nouveau" (post-4.6), alors que `detectBoard()` le respecte côté détection. Réglage par défaut désormais `false`. Détail en `MANUEL_MAINTENANCE.md` section 4.2.
+
+> **⚠️ Point ouvert — collision d'IDs ArUco** : le plateau (marqueurs de référentiel) et la mire ChArUco partagent le même dictionnaire `DICT_4X4_50` sans plage d'IDs séparée, ce qui perturbe la détection quand les deux sont visibles simultanément (cas normal pendant la calibration, où le plateau reste posé sous la mire). Contournement actuel : masquer le plateau avec du papier pendant la calibration. Voir aussi la question ouverte sur les IDs réels du plateau en section 9.
 
 **Critère de qualité :** erreur de reprojection < 1.0 px (acceptable), < 0.5 px (excellent).
 
-**Précision attendue après calibration :** ≤ 2 mm sur 100 mm (vs ~10 mm sans calibration).
+**Précision attendue après calibration :** ≤ 2 mm sur 100 mm (vs ~10 mm sans calibration). **Non encore validé en conditions réelles** — les 15 poses ont été capturées sur le PC de développement pour valider le pipeline logiciel ; à refaire sur le Raspberry Pi + Philips SPC1330NC réels.
 
 ---
 
@@ -900,6 +908,8 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 - [x] **Calibration objectif** : ✅ Mire **ChArUco** retenue (2026-07-11, remplace l'échiquier)
 - [x] **Zones de dépôt** : ✅ **Cordons multiples**, une quantité par cordon (2026-07-11)
 - [x] **Persistance des préparations** : ✅ Fichier **JSON** rechargeable/éditable (2026-07-11)
+- [ ] **Collision d'IDs ArUco plateau/mire** (2026-07-29) : plateau et mire ChArUco partagent `DICT_4X4_50` sans plage d'IDs séparée → confusion du détecteur quand les deux sont visibles ensemble. Contournement actuel : masquer le plateau pendant la calibration.
+- [ ] **IDs réels des marqueurs du plateau à confirmer** (2026-07-29) : un test suggère `{0,3,4,5}` plutôt que `{0,1,2,3}` (documenté en section 6 de CLAUDE.md). À vérifier par une photo du plateau seul, sans mire — si confirmé, `VisionProcessor.compute_homography()` doit être adapté aux IDs réels.
 
 ---
 
@@ -915,6 +925,7 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 | 2026-06-11 | Phase 2 S2 | Ajout compute_homography, warp_image, pixel_to_mm. Démo côte à côte validée visuellement. 14/14 tests passés. |
 | 2026-06-12 | Phase 2 S3 | Validation métrologique : barrel distortion ~10 % identifiée. Re-mesure zone 151×104 mm, hauteur caméra 200 mm. Création `calibration.py`, `demo_calibration.py`, `demo_validation.py`, `chessboard_calibration.png`. Calibration à exécuter chez soi. |
 | 2026-07-11 | — | Révision planning (soutenances blanches 22/07·05/08·12/08, rapport IUT 17/08, soutenance 31/08). CNC quasi assemblée + Marlin confirmé. Cadrage du process de dépose + 4 décisions : calibration **ChArUco**, **cordons multiples** avec quantité/cordon, **fichier de préparation JSON**, **temps de dépose** au rapport. |
+| 2026-07-29 | Phase 8 | Détection ChArUco débloquée (2 causes : `camera_index` erroné + `charuco_legacy_pattern` incompatible avec les mires générées par l'appli). Bug OpenCV 5.0 corrigé (`calibrateCameraCharuco` supprimée → remplacée par `board.matchImagePoints()` + `cv2.calibrateCamera()`). Ajout de l'estimation de pose et de la distance caméra↔mire (`estimate_board_pose`, `distance_to_board_normal_mm`, solvePnP). Overlay de debug ArUco/ChArUco ajouté sur les écrans capture et calibration — c'est lui qui a permis d'isoler les deux causes de blocage. `assets/camera_calibration.npz` ajouté au `.gitignore` (spécifique à chaque caméra). `MANUEL_UTILISATEUR.md` et `MANUEL_MAINTENANCE.md` créés. Points ouverts identifiés : collision d'IDs ArUco plateau/mire, IDs réels du plateau à confirmer (`{0,3,4,5}` ?). 45/45 tests passés. |
 
 ---
 
