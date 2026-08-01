@@ -19,6 +19,7 @@ from gui.screen_run import ScreenRun
 from gui.screen_report import ScreenReport
 from gui.screen_calibration import ScreenCalibration
 from gui.screen_plateau import ScreenPlateau
+from gui.screen_cordons import ScreenCordons
 
 
 # Feuille de style globale appliquée à toute l'application
@@ -117,6 +118,7 @@ class MainApp(QMainWindow):
         self._screen_report = ScreenReport()
         self._screen_calibration = ScreenCalibration()
         self._screen_plateau = ScreenPlateau()
+        self._screen_cordons = ScreenCordons()
 
         # Ajouter les écrans à la pile — l'index correspond à l'ordre d'ajout
         self._stack.addWidget(self._screen_capture)     # index 0
@@ -125,6 +127,7 @@ class MainApp(QMainWindow):
         self._stack.addWidget(self._screen_report)      # index 3
         self._stack.addWidget(self._screen_calibration) # index 4
         self._stack.addWidget(self._screen_plateau)     # index 5
+        self._stack.addWidget(self._screen_cordons)     # index 6
 
         # Fournir la machine à screen_capture pour le bouton Homing
         self._screen_capture.set_machine(self._machine)
@@ -162,6 +165,8 @@ class MainApp(QMainWindow):
         self._screen_calibration.back_requested.connect(self._go_from_calibration_to_capture)
         self._screen_capture.plateau_requested.connect(self._go_to_plateau)
         self._screen_plateau.back_requested.connect(self._go_from_plateau_to_capture)
+        self._screen_plateau.plateau_validated.connect(self._go_to_cordons)
+        self._screen_cordons.back_requested.connect(self._go_from_cordons_to_plateau)
 
         # Changements de matériel demandés depuis l'écran 1 — appliqués ici, car MainApp
         # est propriétaire de la Camera et de la Machine partagées par tous les écrans
@@ -238,6 +243,18 @@ class MainApp(QMainWindow):
         """Retourner vers l'écran de capture depuis la création de plateau."""
         self._screen_plateau.stop_camera()
         self._go_to_capture()
+
+    def _go_to_cordons(self, donnees: object) -> None:
+        """Basculer vers le tracé des cordons, une fois le plateau validé."""
+        # Le tracé travaille sur la photo figée : plus besoin de la caméra
+        self._screen_plateau.stop_camera()
+        self._screen_cordons.set_plateau(donnees)
+        self._stack.setCurrentIndex(6)
+
+    def _go_from_cordons_to_plateau(self) -> None:
+        """Revenir à la création de plateau — typiquement pour reprendre une photo."""
+        self._screen_plateau.start_camera()
+        self._stack.setCurrentIndex(5)
 
     # ------------------------------------------------------------------ choix du matériel
 

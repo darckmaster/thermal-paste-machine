@@ -693,6 +693,99 @@ def test_rectangle_from_diagonal_ne_reinterprete_pas_une_forte_rotation() -> Non
     assert taille == (PRODUIT_W, PRODUIT_H), "les côtés ne doivent pas être échangés"
 
 
+# ------------------------------------------------------------------ warp_zone
+
+def _zone_pour_warp(rotation_deg: float = 0.0) -> tuple:
+    """Une image de plateau synthétique et la zone qui y est posée.
+
+    L'image est fabriquée en dessinant le rectangle de la zone directement en pixels,
+    puis en construisant l'homographie qui fait correspondre pixels et millimètres.
+    """
+    marqueurs = _marqueurs_synthetiques()
+    vision = VisionProcessor(ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM)
+    H = vision.compute_homography(marqueurs)
+
+    # Une zone de 60 × 40 mm posée à 40 mm du bord, éventuellement tournée
+    centres = _zone_centers(4, 40.0, 40.0, rotation_deg=rotation_deg)
+    layout = detect_deposit_zones_mm(centres)
+    return vision, H, layout.zones[0]
+
+
+def test_warp_zone_dimensions_a_l_echelle_demandee() -> None:
+    """L'image redressée doit faire exactement la taille de la zone × l'échelle."""
+    vision, H, zone = _zone_pour_warp()
+    image = np.full((400, 600, 3), 128, dtype=np.uint8)
+
+    resultat = vision.warp_zone(image, zone, H, px_per_mm=4.0)
+
+    # Zone de 60 × 40 mm à 4 px/mm → 240 × 160 px
+    assert resultat.shape[:2] == (160, 240), f"obtenu {resultat.shape[:2]}"
+
+
+def test_warp_zone_redresse_une_zone_tournee() -> None:
+    """Le cœur de la fonction : une zone vissée de travers doit ressortir DROITE.
+
+    Méthode : on peint une bande dans l'image source le long d'un côté de la zone
+    inclinée. Après redressement, cette bande doit border proprement l'image de sortie
+    — ce qui ne serait pas le cas si la rotation n'était pas compensée.
+    """
+    vision, H, zone = _zone_pour_warp(rotation_deg=20.0)
+
+    # Image source blanche, avec la moitié HAUTE de la zone peinte en noir. On dessine
+    # dans le repère de la zone puis on reprojette en pixels, ce qui garantit que la
+    # bande est bien inclinée de 20° dans l'image source.
+    image = np.full((400, 600, 3), 255, dtype=np.uint8)
+    largeur, hauteur = zone.size_mm
+    coins_haut_mm = [
+        zone.to_plateau_mm((0.0, 0.0)),
+        zone.to_plateau_mm((largeur, 0.0)),
+        zone.to_plateau_mm((largeur, hauteur / 2)),
+        zone.to_plateau_mm((0.0, hauteur / 2)),
+    ]
+    polygone = np.array(vision.mm_to_pixels(coins_haut_mm, H), dtype=np.int32)
+    cv2.fillPoly(image, [polygone], (0, 0, 0))
+
+    resultat = vision.warp_zone(image, zone, H, px_per_mm=4.0)
+    h_px = resultat.shape[0]
+
+    moitie_haute = resultat[: h_px // 2 - 4].mean()
+    moitie_basse = resultat[h_px // 2 + 4:].mean()
+
+    assert moitie_haute < 40, (
+        f"la moitié haute devrait être noire (moyenne {moitie_haute:.0f}) — "
+        f"la rotation de la zone n'a pas été compensée"
+    )
+    assert moitie_basse > 215, (
+        f"la moitié basse devrait être blanche (moyenne {moitie_basse:.0f})"
+    )
+
+
+def test_warp_zone_origine_au_coin_haut_gauche() -> None:
+    """Le pixel (0, 0) de l'image redressée doit être le coin haut-gauche de la zone.
+
+    C'est ce qui permet de convertir un clic en millimètres par une simple division,
+    sans repasser par l'homographie point par point.
+    """
+    vision, H, zone = _zone_pour_warp(rotation_deg=12.0)
+
+    # Marquer un carré noir de 10 × 10 mm au coin haut-gauche de la zone
+    image = np.full((400, 600, 3), 255, dtype=np.uint8)
+    coins_mm = [zone.to_plateau_mm(p) for p in
+                ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0))]
+    cv2.fillPoly(image, [np.array(vision.mm_to_pixels(coins_mm, H), dtype=np.int32)],
+                 (0, 0, 0))
+
+    px_per_mm = 4.0
+    resultat = vision.warp_zone(image, zone, H, px_per_mm)
+
+    # Le carré doit se retrouver en haut à gauche de l'image redressée (10 mm × 4 = 40 px)
+    coin = resultat[5:35, 5:35].mean()
+    ailleurs = resultat[60:, 60:].mean()
+
+    assert coin < 40, f"le coin haut-gauche devrait être noir (moyenne {coin:.0f})"
+    assert ailleurs > 215, f"le reste devrait être blanc (moyenne {ailleurs:.0f})"
+
+
 # ===========================================================================
 # Sur image réelle — chaîne complète, matériel branché
 # ===========================================================================

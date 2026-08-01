@@ -740,6 +740,56 @@ class VisionProcessor:
 
         return cv2.warpPerspective(image, H_zone, output_size)
 
+    def warp_zone(
+        self,
+        image: np.ndarray,
+        zone: "DepositZone",
+        homography: np.ndarray,
+        px_per_mm: float,
+    ) -> np.ndarray:
+        """Redresse une zone de dépose, y compris si elle est vissée de travers.
+
+        Différence avec warp_region() : celle-ci ne sait extraire qu'un rectangle ALIGNÉ
+        sur les axes du plateau. Or une zone peut être montée avec quelques degrés
+        d'écart — c'est tout l'objet du calcul de rotation. Sans redressement, l'opérateur
+        tracerait ses cordons sur une image penchée, et le repère relatif de la zone ne
+        correspondrait pas à ce qu'il voit.
+
+        L'image retournée montre la zone bien droite, à l'échelle px_per_mm, et son coin
+        (0, 0) est le coin haut-gauche de la zone. Un clic à (px, py) dans cette image
+        correspond donc simplement à (px / px_per_mm, py / px_per_mm) en mm relatifs à la
+        zone — la conversion devient une division, sans repasser par l'homographie.
+
+        Le transport se compose de trois étapes, appliquées de droite à gauche :
+            pixel source → mm plateau      : l'homographie
+            mm plateau   → mm zone         : translation vers le coin, puis rotation -θ
+            mm zone      → pixel de sortie : mise à l'échelle px_per_mm
+        """
+        theta = math.radians(zone.rotation_deg)
+        cos_t, sin_t = math.cos(theta), math.sin(theta)
+        origine_x, origine_y = zone.corners_mm[0]
+
+        # mm plateau → mm zone. C'est la forme matricielle de DepositZone.to_zone_mm() :
+        # translation de -origine, puis rotation de -θ. Les deux sont fusionnées ici en
+        # une seule matrice, la translation étant déjà multipliée par la rotation.
+        vers_zone = np.array([
+            [cos_t,  sin_t, -cos_t * origine_x - sin_t * origine_y],
+            [-sin_t, cos_t,  sin_t * origine_x - cos_t * origine_y],
+            [0.0,    0.0,    1.0],
+        ], dtype=np.float64)
+
+        echelle = np.array([
+            [px_per_mm, 0.0,       0.0],
+            [0.0,       px_per_mm, 0.0],
+            [0.0,       0.0,       1.0],
+        ], dtype=np.float64)
+
+        largeur_mm, hauteur_mm = zone.size_mm
+        taille = (max(1, int(round(largeur_mm * px_per_mm))),
+                  max(1, int(round(hauteur_mm * px_per_mm))))
+
+        return cv2.warpPerspective(image, echelle @ vers_zone @ homography, taille)
+
     def deposit_zone_bounds_mm(
         self,
         detected_markers: dict,
