@@ -1,8 +1,19 @@
+import math
+
 import cv2
 import numpy as np
 import pytest
 
-from modules.vision import VisionProcessor
+from modules.vision import (
+    VisionProcessor,
+    detect_deposit_zones_mm,
+    _candidate_pairs,
+    _rectangle_from_diagonal,
+    ANOMALIE_ANGLE,
+    ANOMALIE_CONFLIT,
+    ANOMALIE_DIAGONALE,
+    ANOMALIE_INVERSEE,
+)
 from modules.config import (
     ARUCO_DICT_ID,
     ARUCO_MARKER_SIZE_MM,
@@ -362,3 +373,317 @@ def test_warp_image_retourne_numpy_array(vision: VisionProcessor) -> None:
     result = vision.warp_image(image_source, H, (300, 200))
 
     assert isinstance(result, np.ndarray), "warp_image() doit retourner un np.ndarray"
+
+
+# ===========================================================================
+# Zones de dépose — géométrie (lot A)
+# ===========================================================================
+
+# Format du produit utilisé par tous les tests de zone : 60 mm × 40 mm,
+# soit une diagonale de sqrt(60² + 40²) ≈ 72,11 mm
+PRODUIT_W = 60.0
+PRODUIT_H = 40.0
+
+
+def _zone_centers(id_tl: int, x: float, y: float,
+                  w: float = PRODUIT_W, h: float = PRODUIT_H,
+                  rotation_deg: float = 0.0) -> dict:
+    """Fabrique les 2 centres de marqueurs d'une zone posée en (x, y).
+
+    Le marqueur haut-gauche porte l'ID id_tl, le bas-droit id_tl + 1.
+    Le vecteur diagonale d'un rectangle tourné de θ est le vecteur diagonale non
+    tourné, tourné de θ — c'est la relation utilisée à la reconstruction, appliquée
+    ici dans l'autre sens pour fabriquer les données de test.
+    """
+    theta = math.radians(rotation_deg)
+    dx = w * math.cos(theta) - h * math.sin(theta)
+    dy = w * math.sin(theta) + h * math.cos(theta)
+    return {id_tl: (x, y), id_tl + 1: (x + dx, y + dy)}
+
+
+def _plateau_de_trois_zones() -> dict:
+    """Trois zones bien montées, disposées comme sur le croquis de l'étudiant.
+
+    IDs 4/5, 6/7 et 8/9. Point important : les tags 5 et 6 sont consécutifs, tout
+    comme 7 et 8 — l'algorithme voit donc forcément les paires FANTÔMES (5,6) et
+    (7,8), formées du coin bas-droit d'une zone et du coin haut-gauche de la
+    suivante. C'est le cas d'ambiguïté réel que le filtrage par diagonale élimine.
+    """
+    centres = {}
+    centres.update(_zone_centers(4, 10.0, 10.0))    # zone A, en haut à gauche
+    centres.update(_zone_centers(6, 110.0, 10.0))   # zone B, en haut à droite
+    centres.update(_zone_centers(8, 10.0, 80.0))    # zone C, en bas à gauche
+    return centres
+
+
+# ------------------------------------------------------------------ appariement
+
+def test_candidate_pairs_ignore_les_marqueurs_du_plateau() -> None:
+    """Les IDs 0-3 étant réservés aux coins du plateau, la paire (2,3) qu'ils
+    forment ne doit jamais être proposée comme zone de dépose."""
+    paires = _candidate_pairs([0, 1, 2, 3, 4, 5], first_zone_marker_id=4)
+
+    assert (2, 3) not in paires, "les coins du plateau ne forment pas une zone"
+    assert (4, 5) in paires
+
+
+def test_candidate_pairs_enumere_les_recouvrements() -> None:
+    """Un tag doit pouvoir apparaître dans deux paires candidates — c'est justement
+    l'ambiguïté que les étapes suivantes lèveront."""
+    paires = _candidate_pairs([4, 5, 6], first_zone_marker_id=4)
+
+    assert (4, 5) in paires and (5, 6) in paires
+
+
+# ------------------------------------------------------------------ cas nominal
+
+def test_trois_zones_bien_montees_toutes_valides() -> None:
+    """Sur un plateau conforme, les 3 zones réelles sont retenues et les 2 paires
+    fantômes (5,6) et (7,8) sont éliminées par leur diagonale aberrante."""
+    layout = detect_deposit_zones_mm(_plateau_de_trois_zones())
+
+    assert len(layout.zones) == 3, f"3 zones attendues, obtenu : {layout.zones}"
+    assert len(layout.valid_zones) == 3, "aucune anomalie ne devait être relevée"
+    assert not layout.has_anomalies
+
+    paires = {(z.id_top_left, z.id_bottom_right) for z in layout.zones}
+    assert paires == {(4, 5), (6, 7), (8, 9)}
+
+    # Tous les tags sont utilisés : aucun ne doit rester orphelin
+    assert layout.unpaired_ids == []
+
+
+def test_format_du_produit_deduit_sans_saisie_operateur() -> None:
+    """Le format (w, h) doit être retrouvé à partir des seules diagonales, sans que
+    l'opérateur n'ait rien à saisir."""
+    layout = detect_deposit_zones_mm(_plateau_de_trois_zones())
+
+    w, h = layout.product_size_mm
+    assert w == pytest.approx(PRODUIT_W, abs=0.5)
+    assert h == pytest.approx(PRODUIT_H, abs=0.5)
+    assert layout.reference_diagonal_mm == pytest.approx(
+        math.hypot(PRODUIT_W, PRODUIT_H), abs=0.5
+    )
+
+
+def test_coins_reconstruits_dans_l_ordre_horaire() -> None:
+    """Les 4 coins doivent sortir dans l'ordre haut-gauche, haut-droit, bas-droit,
+    bas-gauche — l'ordre attendu pour tracer le contour sans croisement."""
+    layout = detect_deposit_zones_mm(_zone_centers(4, 10.0, 20.0))
+    zone = layout.zones[0]
+
+    haut_gauche, haut_droit, bas_droit, bas_gauche = zone.corners_mm
+
+    assert haut_gauche == pytest.approx((10.0, 20.0), abs=0.1)
+    assert haut_droit == pytest.approx((70.0, 20.0), abs=0.1)
+    assert bas_droit == pytest.approx((70.0, 60.0), abs=0.1)
+    assert bas_gauche == pytest.approx((10.0, 60.0), abs=0.1)
+
+
+# ------------------------------------------------------------------ anomalies
+
+def test_zone_montee_a_l_envers_detectee() -> None:
+    """Une zone dont les deux marqueurs sont intervertis pointe vers le haut-gauche
+    au lieu du bas-droit : ses deux composantes de diagonale sont négatives."""
+    centres = _plateau_de_trois_zones()
+    # Intervertir les positions des tags 8 et 9 — le montage est fait à l'envers
+    centres[8], centres[9] = centres[9], centres[8]
+
+    layout = detect_deposit_zones_mm(centres)
+
+    zone_inversee = [z for z in layout.zones if z.id_top_left == 8]
+    assert len(zone_inversee) == 1, "la zone doit rester listée pour être signalée"
+    assert ANOMALIE_INVERSEE in zone_inversee[0].anomalies
+    assert not zone_inversee[0].is_valid
+    assert layout.has_anomalies
+
+    # Les 2 autres zones restent exploitables : une anomalie n'invalide pas le plateau
+    assert len(layout.valid_zones) == 2
+
+
+def test_zone_trop_inclinee_signalee() -> None:
+    """Au-delà du seuil (10° par défaut), une zone est signalée comme mal vissée."""
+    centres = {}
+    centres.update(_zone_centers(4, 10.0, 10.0))
+    centres.update(_zone_centers(6, 110.0, 10.0))
+    centres.update(_zone_centers(8, 10.0, 80.0, rotation_deg=25.0))  # de travers
+
+    layout = detect_deposit_zones_mm(centres)
+
+    zone_penchee = [z for z in layout.zones if z.id_top_left == 8][0]
+    assert ANOMALIE_ANGLE in zone_penchee.anomalies
+    assert zone_penchee.rotation_deg == pytest.approx(25.0, abs=1.0)
+
+
+def test_legere_inclinaison_toleree() -> None:
+    """Une rotation de montage de quelques degrés est normale et ne doit pas invalider
+    la zone — c'est tout l'intérêt de gérer la rotation."""
+    centres = {}
+    centres.update(_zone_centers(4, 10.0, 10.0))
+    centres.update(_zone_centers(6, 110.0, 10.0))
+    centres.update(_zone_centers(8, 10.0, 80.0, rotation_deg=4.0))
+
+    layout = detect_deposit_zones_mm(centres)
+
+    zone = [z for z in layout.zones if z.id_top_left == 8][0]
+    assert zone.is_valid, f"une zone à 4° doit rester exploitable ({zone.anomalies})"
+    assert zone.rotation_deg == pytest.approx(4.0, abs=1.0)
+
+
+def test_paire_fantome_de_meme_longueur_ne_casse_pas_le_plateau() -> None:
+    """Régression : sur un plateau en grille, une paire fantôme peut avoir EXACTEMENT
+    la longueur de diagonale de référence, et le filtrage par longueur ne suffit pas.
+
+    Deux zones 60×40 côte à côte espacées de 60 mm : la paire (5,6), formée du coin
+    bas-droit de la première et du coin haut-gauche de la seconde, a pour vecteur
+    (60, -40) contre (60, +40) pour les vraies zones — même longueur au millimètre
+    près. Elle empruntant leurs tags, elle invalidait les deux zones réelles par
+    conflit : un plateau parfaitement monté devenait inexploitable.
+
+    Le tri par SIGNE des composantes l'écarte : une zone réelle a forcément ses deux
+    composantes positives, le Y du repère plateau étant dirigé vers le bas.
+    """
+    centres = {}
+    centres.update(_zone_centers(4, 10.0, 10.0))
+    centres.update(_zone_centers(6, 130.0, 10.0))
+
+    # Prérequis du test : vérifier que le fantôme a bien la longueur de référence,
+    # sinon le test passerait pour de mauvaises raisons
+    fantome = (centres[6][0] - centres[5][0], centres[6][1] - centres[5][1])
+    assert math.hypot(*fantome) == pytest.approx(
+        math.hypot(PRODUIT_W, PRODUIT_H), abs=0.01
+    ), "prérequis : la paire fantôme doit avoir exactement la longueur de référence"
+
+    layout = detect_deposit_zones_mm(centres)
+
+    paires = {(z.id_top_left, z.id_bottom_right) for z in layout.zones}
+    assert paires == {(4, 5), (6, 7)}, "le fantôme (5,6) ne doit pas être retenu"
+    assert len(layout.valid_zones) == 2, "les deux zones réelles doivent rester saines"
+    assert not layout.has_anomalies
+
+
+def test_paires_en_conflit_invalidees_toutes_les_deux() -> None:
+    """Si deux paires à la bonne longueur se disputent un marqueur, aucune des deux
+    n'est exploitable : impossible de savoir laquelle est la vraie zone."""
+    # (4,5) et (5,6) ont toutes deux une diagonale (60, 40) → le tag 5 est revendiqué
+    # par les deux, ce qui est géométriquement impossible
+    centres = {
+        4: (10.0, 10.0),
+        5: (70.0, 50.0),
+        6: (130.0, 90.0),
+    }
+
+    layout = detect_deposit_zones_mm(centres)
+
+    assert len(layout.zones) == 2
+    for zone in layout.zones:
+        assert ANOMALIE_CONFLIT in zone.anomalies
+    assert layout.valid_zones == []
+
+
+def test_diagonale_hors_norme_ecarte_la_paire() -> None:
+    """Une paire dont la diagonale ne ressemble à aucune autre est écartée, et ses
+    marqueurs se retrouvent signalés comme orphelins."""
+    centres = _plateau_de_trois_zones()
+    # Ajouter une paire (20,21) au format manifestement différent (zone deux fois plus
+    # grande) : elle ne doit pas être confondue avec les vraies zones
+    centres.update(_zone_centers(20, 10.0, 150.0, w=120.0, h=80.0))
+
+    layout = detect_deposit_zones_mm(centres)
+
+    paires = {(z.id_top_left, z.id_bottom_right) for z in layout.zones}
+    assert (20, 21) not in paires, "la paire hors format ne doit pas être retenue"
+    assert layout.unpaired_ids == [20, 21]
+    assert layout.has_anomalies, "des marqueurs orphelins doivent alerter l'opérateur"
+
+
+# ------------------------------------------------------------------ cas limites
+
+def test_plateau_sans_marqueur_ne_plante_pas() -> None:
+    """Aucun marqueur : le résultat doit être vide, sans exception."""
+    layout = detect_deposit_zones_mm({})
+
+    assert layout.zones == []
+    assert layout.unpaired_ids == []
+    assert layout.product_size_mm is None
+    assert layout.reference_diagonal_mm is None
+
+
+def test_zone_unique_ne_permet_pas_de_detecter_un_mauvais_montage() -> None:
+    """Limite documentée du dispositif : avec une seule zone, celle-ci définit à elle
+    seule la référence de format. Sa rotation ressort donc nulle même si elle est
+    physiquement de travers — il faut au moins deux zones pour comparer.
+
+    Ce test fige ce comportement pour qu'il ne soit pas pris plus tard pour un bug.
+    """
+    layout = detect_deposit_zones_mm(_zone_centers(4, 10.0, 10.0, rotation_deg=30.0))
+
+    assert len(layout.valid_zones) == 1
+    assert layout.valid_zones[0].rotation_deg == pytest.approx(0.0, abs=0.01)
+
+
+def test_rectangle_from_diagonal_solution_unique() -> None:
+    """Le format de référence étant ORIENTÉ (issu de la médiane des zones), la
+    rotation se déduit sans ambiguïté : une diagonale (60, 40) pour un produit
+    60×40 donne exactement 0°."""
+    coins, rotation_deg, taille = _rectangle_from_diagonal(
+        (0.0, 0.0), (60.0, 40.0), PRODUIT_W, PRODUIT_H
+    )
+
+    assert rotation_deg == pytest.approx(0.0, abs=0.01)
+    assert taille == (PRODUIT_W, PRODUIT_H)
+    assert coins[2] == pytest.approx((60.0, 40.0), abs=0.01), \
+        "le coin bas-droit doit retomber sur l'extrémité de la diagonale"
+
+
+def test_rectangle_from_diagonal_ne_reinterprete_pas_une_forte_rotation() -> None:
+    """Régression : une forte rotation ne doit PAS être réinterprétée en petite
+    rotation avec les côtés échangés.
+
+    Un rectangle 60×40 tourné de 25,8° a la même direction de diagonale qu'un 40×60
+    posé droit. Tant que la fonction envisageait les deux solutions symétriques et
+    gardait la plus petite rotation, une zone vissée de travers ressortait à ~2° et
+    l'anomalie de montage passait inaperçue.
+    """
+    # Diagonale d'un 60×40 tourné de 25° : R(25°) appliqué au vecteur (60, 40)
+    theta = math.radians(25.0)
+    dx = PRODUIT_W * math.cos(theta) - PRODUIT_H * math.sin(theta)
+    dy = PRODUIT_W * math.sin(theta) + PRODUIT_H * math.cos(theta)
+
+    _, rotation_deg, taille = _rectangle_from_diagonal(
+        (0.0, 0.0), (dx, dy), PRODUIT_W, PRODUIT_H
+    )
+
+    assert rotation_deg == pytest.approx(25.0, abs=0.01), \
+        "la rotation réelle doit être rendue telle quelle, pas ramenée à ~2°"
+    assert taille == (PRODUIT_W, PRODUIT_H), "les côtés ne doivent pas être échangés"
+
+
+# ------------------------------------------------------------------ intégration
+
+def test_detect_deposit_zones_depuis_des_marqueurs_pixels(vision: VisionProcessor) -> None:
+    """Chaînage complet : marqueurs en pixels → homographie → zones en mm.
+
+    Vérifie que la méthode de VisionProcessor fait bien le passage pixels → mm avant
+    de déléguer à la fonction pure, et qu'elle ignore les marqueurs du plateau.
+    """
+    marqueurs = _marqueurs_synthetiques()   # les 4 coins du plateau, IDs 0-3
+    H = vision.compute_homography(marqueurs)
+
+    # Deux zones côte à côte SUR LA MÊME LIGNE, comme sur le croquis du plateau réel.
+    # C'est le cas piégeux : la paire fantôme (5,6), formée du coin bas-droit de la
+    # première et du coin haut-gauche de la seconde, a exactement la même LONGUEUR de
+    # diagonale que les vraies zones — par symétrie, son vecteur est (100, -80) contre
+    # (100, +80). Seul le tri par signe des composantes permet de l'écarter ; sans lui
+    # elle invaliderait par conflit les deux zones réelles, dont elle emprunte les tags.
+    marqueurs[4] = _coins_autour(150, 100)
+    marqueurs[5] = _coins_autour(250, 180)
+    marqueurs[6] = _coins_autour(350, 100)
+    marqueurs[7] = _coins_autour(450, 180)
+
+    layout = vision.detect_deposit_zones(marqueurs, H)
+
+    paires = {(z.id_top_left, z.id_bottom_right) for z in layout.zones}
+    assert paires == {(4, 5), (6, 7)}, \
+        "les 2 zones doivent être trouvées, et les coins du plateau ignorés"
+    assert len(layout.valid_zones) == 2

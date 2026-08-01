@@ -1,3 +1,6 @@
+import math          # Trigonométrie pour les rotations de zone (atan2, cos, sin)
+import statistics    # median() — plus robuste que la moyenne face à une zone mal montée
+
 import cv2
 import numpy as np
 
@@ -52,6 +55,403 @@ def _plateau_corner_positions_mm() -> dict:
         1: (WORK_AREA_WIDTH_MM,   WORK_AREA_HEIGHT_MM),  # bas-droit
         2: (0.0,                  WORK_AREA_HEIGHT_MM),  # bas-gauche
     }
+
+
+# ===========================================================================
+# Zones de dépose — géométrie
+# ===========================================================================
+#
+# Une zone de dépose est l'emplacement d'un produit sur le plateau. Elle est
+# matérialisée par DEUX marqueurs ArUco, dont les centres sont posés aux deux
+# extrémités de la diagonale haut-gauche → bas-droit du rectangle.
+#
+# Convention d'appariement : l'ID du marqueur bas-droit vaut celui du marqueur
+# haut-gauche PLUS UN. Cette règle donne une orientation à la zone : si le
+# marqueur n se retrouve en bas à droite du n+1, la zone a été montée à
+# l'envers — c'est détectable (voir ANOMALIE_INVERSEE).
+#
+# Les zones sont vissées à demeure et accueillent toutes le MÊME produit :
+# leurs diagonales ont donc la même longueur, à l'erreur de montage près.
+# C'est cette invariante qui lève l'ambiguïté d'appariement — sans elle, le
+# tag 5 pourrait aussi bien clore la paire (4,5) qu'ouvrir la paire (5,6).
+
+# Premier ID utilisable pour une zone. Les IDs 0 à 3 sont réservés aux coins du
+# plateau (voir _plateau_corner_positions_mm) : sans cette borne, la paire (2,3)
+# formée par deux coins du plateau serait prise pour une zone de dépose.
+FIRST_ZONE_MARKER_ID = 4
+
+# Tolérance sur la longueur de diagonale, en mm. Deux zones dont les diagonales
+# diffèrent de moins que ça sont considérées comme portant le même produit.
+# Doit rester supérieure à l'imprécision de mesure (homographie approchée du
+# repli 2 marqueurs comprise) mais très inférieure à l'écart qui séparerait une
+# vraie diagonale d'un appariement fantaisiste.
+ZONE_DIAGONAL_TOLERANCE_MM = 5.0
+
+# Au-delà de cet angle (en degrés) par rapport au repère du plateau, une zone est
+# signalée comme mal montée. Le technicien qui visse les zones a pour consigne de
+# les poser toutes droites et orientées pareil : un écart important trahit une
+# erreur de montage, pas une variation normale.
+ZONE_MAX_ROTATION_DEG = 10.0
+
+# Anomalies détectables sur une zone. Des chaînes plutôt qu'une énumération :
+# elles seront affichées telles quelles à l'opérateur et sérialisées en JSON.
+ANOMALIE_INVERSEE = "zone_inversee"
+ANOMALIE_DIAGONALE = "diagonale_hors_norme"
+ANOMALIE_CONFLIT = "paire_en_conflit"
+ANOMALIE_ANGLE = "angle_excessif"
+
+
+class DepositZone:
+    """Une zone de dépose reconstruite : son rectangle, son orientation, son état.
+
+    Toutes les coordonnées sont en mm dans le repère du plateau (origine au
+    marqueur 3, X vers la droite, Y vers le bas — voir _plateau_corner_positions_mm).
+    """
+
+    def __init__(
+        self,
+        id_top_left: int,
+        id_bottom_right: int,
+        corners_mm: tuple,
+        rotation_deg: float,
+        diagonal_mm: float,
+        size_mm: tuple,
+        anomalies: list,
+    ) -> None:
+        # IDs des deux marqueurs qui définissent la zone (id_bottom_right = id_top_left + 1)
+        self.id_top_left = id_top_left
+        self.id_bottom_right = id_bottom_right
+        # Les 4 coins du rectangle reconstruit, dans l'ordre haut-gauche, haut-droit,
+        # bas-droit, bas-gauche — c'est l'ordre attendu par cv2.polylines pour tracer
+        # le contour de la zone sans croisement
+        self.corners_mm = corners_mm
+        # Rotation de la zone par rapport au repère du plateau, en degrés.
+        # Positive = sens horaire à l'écran (l'axe Y du repère descend).
+        self.rotation_deg = rotation_deg
+        # Longueur mesurée de la diagonale entre les deux centres de marqueurs
+        self.diagonal_mm = diagonal_mm
+        # (largeur, hauteur) retenues pour cette zone, issues du format de référence
+        self.size_mm = size_mm
+        # Liste des anomalies (constantes ANOMALIE_*) — vide si la zone est saine
+        self.anomalies = anomalies
+
+    @property
+    def is_valid(self) -> bool:
+        """Une zone est exploitable si aucune anomalie n'a été relevée."""
+        return not self.anomalies
+
+    @property
+    def center_mm(self) -> tuple:
+        """Centre géométrique du rectangle — sert à placer une étiquette à l'écran."""
+        xs = [c[0] for c in self.corners_mm]
+        ys = [c[1] for c in self.corners_mm]
+        return (sum(xs) / 4.0, sum(ys) / 4.0)
+
+    def __repr__(self) -> str:
+        etat = "OK" if self.is_valid else ",".join(self.anomalies)
+        return (
+            f"DepositZone({self.id_top_left}/{self.id_bottom_right}, "
+            f"rot={self.rotation_deg:.1f}°, diag={self.diagonal_mm:.1f}mm, {etat})"
+        )
+
+
+class PlateauLayout:
+    """Résultat complet de l'analyse d'un plateau : les zones trouvées et le contexte."""
+
+    def __init__(
+        self,
+        zones: list,
+        unpaired_ids: list,
+        reference_diagonal_mm,
+        product_size_mm,
+    ) -> None:
+        # Toutes les zones reconstruites, valides ou non — l'IHM a besoin des
+        # invalides pour les signaler visuellement à l'opérateur
+        self.zones = zones
+        # Marqueurs de la plage "zone" (ID >= FIRST_ZONE_MARKER_ID) qui n'ont abouti
+        # à aucune paire retenue : soit leur voisin n'est pas détecté, soit la paire
+        # qu'ils formaient avait une diagonale hors norme
+        self.unpaired_ids = unpaired_ids
+        # Longueur de diagonale de référence (médiane du groupe majoritaire), ou None
+        self.reference_diagonal_mm = reference_diagonal_mm
+        # Format (largeur, hauteur) déduit du produit, ou None si indéterminable
+        self.product_size_mm = product_size_mm
+
+    @property
+    def valid_zones(self) -> list:
+        """Les seules zones sur lesquelles on peut travailler sans risque."""
+        return [z for z in self.zones if z.is_valid]
+
+    @property
+    def has_anomalies(self) -> bool:
+        """True si l'opérateur doit être averti avant de continuer."""
+        return bool(self.unpaired_ids) or any(not z.is_valid for z in self.zones)
+
+
+def _candidate_pairs(marker_ids, first_zone_marker_id: int) -> list:
+    """Liste les paires (n, n+1) possibles parmi les marqueurs détectés.
+
+    Une même étiquette peut apparaître dans DEUX paires candidates : le tag 5
+    ouvre la paire (5,6) et clôt la paire (4,5). C'est volontaire — on énumère
+    tout, le tri se fait ensuite sur la longueur de diagonale.
+    """
+    ids = sorted(i for i in marker_ids if i >= first_zone_marker_id)
+    presents = set(ids)
+    return [(i, i + 1) for i in ids if (i + 1) in presents]
+
+
+def _reference_diagonal_mm(longueurs: list, tolerance_mm: float):
+    """Détermine la longueur de diagonale de référence du plateau.
+
+    Principe : toutes les zones portant le même produit, la « bonne » longueur est
+    celle qui revient le plus souvent. On regroupe donc les longueurs par proximité
+    (± tolerance_mm), on retient le groupe le plus peuplé, et on renvoie sa MÉDIANE
+    plutôt que le représentant qui a servi à le former — la médiane moyenne les
+    petites erreurs de mesure sur toutes les zones du groupe.
+
+    En cas d'égalité de taille entre deux groupes, le premier rencontré l'emporte
+    (ordre croissant des IDs) : c'est arbitraire mais déterministe, donc reproductible.
+
+    Retourne None si la liste est vide.
+    """
+    if not longueurs:
+        return None
+
+    meilleur_groupe: list = []
+    for candidate in longueurs:
+        # Toutes les longueurs qui « ressemblent » à ce candidat
+        groupe = [L for L in longueurs if abs(L - candidate) <= tolerance_mm]
+        if len(groupe) > len(meilleur_groupe):
+            meilleur_groupe = groupe
+
+    return statistics.median(meilleur_groupe)
+
+
+def _rectangle_from_diagonal(p_tl: tuple, p_br: tuple, w_mm: float, h_mm: float) -> tuple:
+    """Reconstruit un rectangle de format (w_mm, h_mm) à partir de sa diagonale.
+
+    Les deux extrémités de la diagonale ne suffisent PAS à définir un rectangle : il
+    en existe une infinité, un par angle. Connaître le format du produit lève cette
+    indétermination, et le calcul devient direct : faire tourner un rectangle de θ
+    fait tourner sa diagonale de θ aussi. L'angle de la diagonale mesurée vaut donc
+    θ + angle(w, h), d'où **θ = angle(diagonale) − angle(w, h)**.
+
+    Pourquoi une SEULE solution, et pas les deux solutions symétriques
+    ------------------------------------------------------------------
+    Il subsiste une ambiguïté classique quand on ignore lequel des deux côtés est la
+    largeur : le rectangle (h, w) posé droit a la même direction de diagonale que le
+    rectangle (w, h) tourné. On aurait alors deux solutions, et il faudrait départager
+    en gardant la plus faible rotation.
+
+    Cette ambiguïté n'existe pas ici, parce que le format est déduit de la MÉDIANE des
+    composantes de diagonale sur toutes les zones du plateau (voir
+    detect_deposit_zones_mm, étape 5) : c'est donc un format ORIENTÉ, la majorité des
+    zones ayant déjà tranché quel côté est la largeur. Envisager l'échange (h, w)
+    serait même nuisible : une zone vissée à 25° verrait sa diagonale réinterprétée
+    comme celle d'une zone 40×60 posée à 2°, et l'anomalie de montage passerait
+    inaperçue. C'est précisément ce qu'a montré test_zone_trop_inclinee_signalee.
+
+    Une zone réellement montée à 90° du format de référence n'est pas perdue pour
+    autant : sa diagonale pointe alors vers la gauche, ce qui la fait détecter comme
+    zone inversée (ANOMALIE_INVERSEE).
+
+    Retourne (coins, rotation_deg, (largeur, hauteur)) où coins est le tuple
+    (haut-gauche, haut-droit, bas-droit, bas-gauche) en mm.
+
+    ⚠️ Le coin bas-droit reconstruit peut différer de quelques dixièmes de p_br : le
+    rectangle est bâti sur le format de RÉFÉRENCE du produit, pas sur la longueur
+    mesurée de cette diagonale-ci, qui porte le bruit de détection.
+    """
+    angle_diagonale = math.atan2(p_br[1] - p_tl[1], p_br[0] - p_tl[0])
+    largeur, hauteur = w_mm, h_mm
+
+    theta = angle_diagonale - math.atan2(hauteur, largeur)
+    # Ramener dans [-pi, pi] — sans ça un angle de -179° passerait pour « plus grand »
+    # que +181°, alors que c'est le même écart au repère du plateau
+    theta = math.atan2(math.sin(theta), math.cos(theta))
+
+    # Vecteurs unitaires des deux côtés du rectangle, tournés de theta.
+    # u longe la largeur, v longe la hauteur ; v est u tourné d'un quart de tour.
+    u = (math.cos(theta), math.sin(theta))
+    v = (-math.sin(theta), math.cos(theta))
+
+    haut_gauche = p_tl
+    haut_droit = (p_tl[0] + largeur * u[0], p_tl[1] + largeur * u[1])
+    bas_droit = (haut_droit[0] + hauteur * v[0], haut_droit[1] + hauteur * v[1])
+    bas_gauche = (p_tl[0] + hauteur * v[0], p_tl[1] + hauteur * v[1])
+
+    coins = (haut_gauche, haut_droit, bas_droit, bas_gauche)
+    return coins, math.degrees(theta), (largeur, hauteur)
+
+
+def detect_deposit_zones_mm(
+    centers_mm: dict,
+    first_zone_marker_id: int = FIRST_ZONE_MARKER_ID,
+    diagonal_tolerance_mm: float = ZONE_DIAGONAL_TOLERANCE_MM,
+    max_rotation_deg: float = ZONE_MAX_ROTATION_DEG,
+) -> PlateauLayout:
+    """Reconstruit les zones de dépose à partir des centres de marqueurs en mm.
+
+    Fonction PURE : elle ne touche ni à la caméra ni à OpenCV, elle ne manipule que
+    des coordonnées en mm. C'est ce qui la rend entièrement testable sans matériel —
+    la conversion pixels → mm est faite en amont par VisionProcessor.
+
+    Paramètre :
+        centers_mm : {id_marqueur: (x_mm, y_mm)} — centres des marqueurs détectés,
+                     déjà convertis dans le repère du plateau
+
+    Déroulé (chaque étape dépend de la précédente) :
+        1. énumérer les paires candidates (n, n+1)
+        2. en déduire la longueur de diagonale de référence (groupe majoritaire)
+        3. écarter les paires dont la diagonale s'en écarte
+        4. invalider les paires qui se disputent un même marqueur
+        5. déduire le format (w, h) du produit des zones saines et à l'endroit
+        6. reconstruire chaque rectangle et mesurer sa rotation
+
+    ⚠️ Limite connue : avec une SEULE zone détectée, celle-ci définit à elle seule la
+    référence. Sa rotation ressort donc nulle par construction et aucune erreur de
+    montage n'est décelable. Ce n'est pas un défaut d'implémentation mais une limite
+    du dispositif : il faut au moins deux zones pour que la comparaison ait un sens.
+    """
+    # --- Étape 1 : paires candidates ---------------------------------------
+    paires = _candidate_pairs(centers_mm.keys(), first_zone_marker_id)
+
+    # Vecteur diagonale de chaque paire, du marqueur haut-gauche vers le bas-droit
+    diagonales = {}
+    for id_tl, id_br in paires:
+        p_tl = centers_mm[id_tl]
+        p_br = centers_mm[id_br]
+        diagonales[(id_tl, id_br)] = (p_br[0] - p_tl[0], p_br[1] - p_tl[1])
+
+    longueurs = {
+        paire: math.hypot(d[0], d[1]) for paire, d in diagonales.items()
+    }
+
+    # --- Étape 2 : trier les paires par plausibilité d'orientation ----------
+    # Le repère du plateau ayant son Y dirigé vers le BAS, une zone correctement
+    # montée va du haut-gauche vers le bas-droit : ses deux composantes de diagonale
+    # sont POSITIVES. Trois cas se présentent donc :
+    #   - deux composantes positives  → zone plausible
+    #   - deux composantes négatives  → zone montée à l'envers, à signaler
+    #   - composantes de signes mixtes → paire FANTÔME, à écarter sans bruit
+    #
+    # Ce tri n'est pas un raffinement : sur un plateau en grille régulière, la paire
+    # fantôme formée du coin bas-droit d'une zone et du coin haut-gauche de sa voisine
+    # de droite a exactement la MÊME longueur de diagonale que les vraies zones, par
+    # symétrie. Sans ce tri elle passerait le filtre de longueur, puis invaliderait par
+    # conflit les deux zones réelles avec lesquelles elle partage ses tags — un plateau
+    # parfaitement monté deviendrait inexploitable.
+    plausibles = {p: d for p, d in diagonales.items() if d[0] > 0 and d[1] > 0}
+    inversees = {p: d for p, d in diagonales.items() if d[0] < 0 and d[1] < 0}
+
+    # --- Étape 3 : longueur de référence et filtrage ------------------------
+    # La référence se calcule sur les seules zones plausibles. Repli sur les zones
+    # inversées si aucune n'est plausible : un plateau intégralement monté à l'envers
+    # doit être signalé comme tel, pas rester silencieusement vide.
+    base_reference = plausibles if plausibles else inversees
+    reference = _reference_diagonal_mm(
+        [longueurs[p] for p in base_reference], diagonal_tolerance_mm
+    )
+
+    def _a_la_bonne_longueur(paire) -> bool:
+        """Une paire est retenue si sa diagonale correspond au format du plateau."""
+        return (
+            reference is not None
+            and abs(longueurs[paire] - reference) <= diagonal_tolerance_mm
+        )
+
+    retenues = [p for p in plausibles if _a_la_bonne_longueur(p)]
+    retenues_inversees = [p for p in inversees if _a_la_bonne_longueur(p)]
+
+    # --- Étape 4 : conflits -------------------------------------------------
+    # Un marqueur ne peut appartenir qu'à une seule zone physique. S'il subsiste dans
+    # deux paires retenues, on ne peut pas trancher automatiquement : les DEUX sont
+    # marquées en conflit et l'opérateur devra rectifier le plateau.
+    # Les zones inversées participent à l'analyse : si l'une d'elles se dispute un tag
+    # avec une zone saine, l'opérateur doit le savoir. Les fantômes, eux, ont déjà été
+    # écartés à l'étape 2 et ne peuvent donc plus invalider personne.
+    usages: dict = {}
+    for paire in retenues + retenues_inversees:
+        for marker_id in paire:
+            usages.setdefault(marker_id, []).append(paire)
+    paires_en_conflit = {
+        paire for paires_du_tag in usages.values() if len(paires_du_tag) > 1
+        for paire in paires_du_tag
+    }
+
+    # --- Étape 5 : format du produit ---------------------------------------
+    # Une zone bien montée est quasiment droite : son vecteur diagonale vaut donc
+    # directement (largeur, hauteur). En prenant la médiane sur toutes les zones
+    # saines, on obtient le format du produit sans rien demander à l'opérateur, et
+    # une zone isolée montée de travers ne fausse pas le résultat.
+    # Seules les paires « retenues » entrent ici : les inversées sont exclues, leur
+    # diagonale pointant à l'opposé tirerait la médiane vers des valeurs négatives.
+    diagonales_saines = [
+        diagonales[paire] for paire in retenues
+        if paire not in paires_en_conflit
+    ]
+    if diagonales_saines:
+        product_size_mm = (
+            statistics.median(d[0] for d in diagonales_saines),
+            statistics.median(d[1] for d in diagonales_saines),
+        )
+    else:
+        product_size_mm = None
+
+    # --- Étape 6 : reconstruction de chaque zone ---------------------------
+    zones = []
+    for paire in sorted(retenues + retenues_inversees):
+        id_tl, id_br = paire
+        anomalies = []
+        est_inversee = paire in retenues_inversees
+
+        if paire in paires_en_conflit:
+            anomalies.append(ANOMALIE_CONFLIT)
+
+        if est_inversee:
+            anomalies.append(ANOMALIE_INVERSEE)
+
+        # Pour une zone inversée, le marqueur porteur du plus petit ID se trouve
+        # physiquement en bas à droite : on inverse les deux points d'appui pour que
+        # le rectangle reconstruit recouvre quand même la zone réelle. L'opérateur
+        # verra ainsi le défaut signalé AU BON ENDROIT sur l'image.
+        point_haut_gauche = centers_mm[id_br] if est_inversee else centers_mm[id_tl]
+        point_bas_droit = centers_mm[id_tl] if est_inversee else centers_mm[id_br]
+
+        if product_size_mm is None:
+            # Aucune référence de format : impossible de reconstruire un rectangle.
+            # On dégrade proprement plutôt que de lever une exception — la zone
+            # reste listée pour que l'IHM puisse la signaler.
+            zones.append(DepositZone(
+                id_tl, id_br,
+                corners_mm=(centers_mm[id_tl],) * 4,
+                rotation_deg=0.0,
+                diagonal_mm=longueurs[paire],
+                size_mm=(0.0, 0.0),
+                anomalies=anomalies + [ANOMALIE_DIAGONALE],
+            ))
+            continue
+
+        coins, rotation_deg, taille = _rectangle_from_diagonal(
+            point_haut_gauche, point_bas_droit, product_size_mm[0], product_size_mm[1]
+        )
+
+        if abs(rotation_deg) > max_rotation_deg:
+            anomalies.append(ANOMALIE_ANGLE)
+
+        zones.append(DepositZone(
+            id_tl, id_br, coins, rotation_deg, longueurs[paire], taille, anomalies
+        ))
+
+    # Marqueurs de la plage "zone" restés sur le carreau : soit leur voisin manque à
+    # l'appel, soit la paire qu'ils formaient a été écartée à l'étape 3
+    ids_utilises = {i for paire in retenues + retenues_inversees for i in paire}
+    unpaired_ids = sorted(
+        i for i in centers_mm
+        if i >= first_zone_marker_id and i not in ids_utilises
+    )
+
+    return PlateauLayout(zones, unpaired_ids, reference, product_size_mm)
 
 
 class VisionProcessor:
@@ -324,6 +724,34 @@ class VisionProcessor:
         # min/max plutôt que "a puis b" : peu importe lequel des deux marqueurs
         # est physiquement en haut-gauche ou bas-droit de la zone
         return (min(x_a, x_b), min(y_a, y_b), max(x_a, x_b), max(y_a, y_b))
+
+    def detect_deposit_zones(
+        self,
+        detected_markers: dict,
+        homography: np.ndarray,
+        first_zone_marker_id: int = FIRST_ZONE_MARKER_ID,
+        diagonal_tolerance_mm: float = ZONE_DIAGONAL_TOLERANCE_MM,
+        max_rotation_deg: float = ZONE_MAX_ROTATION_DEG,
+    ) -> PlateauLayout:
+        """Reconstruit toutes les zones de dépose visibles sur le plateau.
+
+        Cette méthode ne fait que le passage pixels → mm ; toute la géométrie est
+        dans detect_deposit_zones_mm(), volontairement laissée en fonction pure pour
+        rester testable sans caméra ni homographie (voir son docstring pour le
+        détail de l'algorithme et ses limites).
+        """
+        # Centre de chaque marqueur détecté, converti dans le repère mm du plateau
+        centers_mm = {}
+        for marker_id, corners in detected_markers.items():
+            cx, cy = corners.mean(axis=0)
+            centers_mm[marker_id] = self.pixel_to_mm(cx, cy, homography)
+
+        return detect_deposit_zones_mm(
+            centers_mm,
+            first_zone_marker_id=first_zone_marker_id,
+            diagonal_tolerance_mm=diagonal_tolerance_mm,
+            max_rotation_deg=max_rotation_deg,
+        )
 
     def pixel_to_mm(
         self, px: float, py: float, homography: np.ndarray

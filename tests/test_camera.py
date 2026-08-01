@@ -2,16 +2,27 @@ import pytest
 import numpy as np
 
 from modules.camera import Camera
+from modules.config import CAMERA_INDEX
 
 
 @pytest.fixture
 def camera():
-    """Fixture pytest : ouvre la caméra avant le test, la ferme après dans tous les cas."""
+    """Fixture pytest : ouvre la caméra avant le test, la ferme après dans tous les cas.
+
+    ⚠️ On ouvre la caméra CONFIGURÉE pour cette machine (CAMERA_INDEX, surchargeable
+    dans local_config.json), et surtout pas l'index 0 en dur. Sur un PC de
+    développement, l'index 0 est la webcam intégrée alors que le projet travaille avec
+    la caméra USB : les tests validaient donc un matériel qui n'est pas celui de la
+    machine (constaté le 2026-08-01). Si CAMERA_INDEX vaut None, Camera détecte
+    automatiquement — même comportement qu'au démarrage de l'application.
+    """
     # Tenter d'ouvrir la caméra — si elle n'est pas branchée, on saute le test plutôt que de le faire échouer
     try:
-        cam = Camera(device_index=0)
+        cam = Camera(CAMERA_INDEX)
     except RuntimeError:
-        pytest.skip("Caméra non disponible sur cette machine — test ignoré")
+        pytest.skip(
+            f"Caméra {CAMERA_INDEX} non disponible sur cette machine — test ignoré"
+        )
 
     # 'yield' passe l'objet cam au test ; tout ce qui est après s'exécute en nettoyage (teardown)
     yield cam
@@ -70,7 +81,10 @@ def test_list_devices_retourne_des_index_ouvrables() -> None:
 
     # Chaque index annoncé doit vraiment donner une caméra utilisable — c'est toute la
     # raison d'être du test de lecture ajouté dans list_devices (isOpened() ment sur
-    # Windows, voir son docstring)
+    # Windows, voir son docstring).
+    # Ici l'ouverture index par index est VOULUE : on vérifie une propriété de
+    # list_devices sur toutes les caméras du système, pas le comportement du projet
+    # sur sa caméra configurée — ne pas remplacer par CAMERA_INDEX.
     for i in indices:
         cam = Camera(device_index=i)
         try:
