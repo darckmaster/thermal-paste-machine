@@ -103,6 +103,40 @@ qui signalerait à tort un problème de diagonale alors que celle-ci est correct
 Deux seuils de réglage, dans `modules/vision.py` : `ZONE_DIAGONAL_TOLERANCE_MM` (5 mm)
 et `ZONE_MAX_ROTATION_DEG` (10°).
 
+### Redressement d'une zone pour le tracé
+
+`VisionProcessor.warp_zone()` produit l'image d'une zone vue **droite**, même si elle est
+vissée de travers. À ne pas confondre avec `warp_region()`, qui ne sait extraire qu'un
+rectangle aligné sur les axes du plateau.
+
+Le transport compose trois matrices, appliquées de droite à gauche :
+
+```
+pixel source → mm plateau       : l'homographie
+mm plateau   → mm zone          : translation vers le coin, puis rotation -θ
+mm zone      → pixel de sortie  : mise à l'échelle px_per_mm
+```
+
+Conséquence pratique dont dépend tout l'éditeur de cordons : l'image obtenue a son coin
+`(0, 0)` sur le coin haut-gauche de la zone et une échelle constante. **Un clic à
+`(px, py)` vaut donc `(px / px_per_mm, py / px_per_mm)` en mm relatifs à la zone** — une
+simple division, sans repasser par l'homographie point par point.
+
+### Report des cordons et précision
+
+Les cordons sont mémorisés en mm relatifs à la **zone de référence**, celle que
+l'opérateur a ouverte en premier. Les afficher sur une autre zone consiste à appliquer
+`DepositZone.to_plateau_mm()` de la zone visée, puis à reprojeter en pixels avec
+`mm_to_pixels()`.
+
+⚠️ **La précision du report dépend de la qualité de l'homographie.** Avec le repli à 2
+marqueurs — le mode nominal sur la Geeetech — il n'y a pas de correction de perspective :
+plus une zone est éloignée des marqueurs servant de référence, plus sa position accumule
+d'erreur. Imperceptible à l'écran, cela se traduira par quelques millimètres de décalage à
+la dépose réelle. Les deux parades sont la calibration ChArUco (corrige la distorsion
+d'objectif, première source d'erreur) et, sur la CNC, un recul de caméra permettant de
+voir les quatre coins du plateau.
+
 ## 2. Configuration par machine
 
 Chaque machine (PC de dev, RPi Geeetech, futur RPi CNC) a son propre

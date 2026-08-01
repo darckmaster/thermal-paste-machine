@@ -17,7 +17,7 @@ L'interface s'organise en 6 écrans :
 ```
 [Capture] → [Tracé du chemin] → [Dépose en cours] → [Rapport] → (retour à Capture)
     ↕                ↕
-[Calibration]   [Créer un plateau]   (accessibles depuis l'écran Capture)
+[Calibration]   [Créer un plateau] → [Cordons]      (accessibles depuis l'écran Capture)
 ```
 
 **Deux processus cohabitent pour l'instant.**
@@ -221,3 +221,59 @@ millimètres est moins précise.
 - Le **format du produit** affiché est déduit de l'ensemble des zones. Avec une seule zone
   saine, il vaut simplement les dimensions de cette zone et ne constitue aucun contrôle :
   il faut au moins deux zones pour que la comparaison ait un sens.
+
+## 8. Écran « Cordons » — tracer les dépôts
+
+> **En construction.** Le tracé fonctionne, mais l'enregistrement et le lancement de la
+> dépose ne sont pas encore disponibles.
+
+On y arrive en appuyant sur **Continuer** depuis l'écran de création de plateau. Cet écran
+a **deux modes**, entre lesquels on fait des allers-retours.
+
+### Mode vue d'ensemble
+
+La photo du plateau, avec les zones exploitables entourées en vert.
+
+- **Appuyer sur une zone** pour y tracer les cordons. La première zone choisie devient la
+  zone de **référence** : c'est dans son repère que les cordons sont mémorisés.
+- **Modifier les cordons** ramène à cette zone de référence pour compléter ou corriger le
+  tracé. Le bouton reste inactif tant qu'aucune zone n'a été choisie.
+- Une fois des cordons tracés, ils apparaissent **en orange sur toutes les zones** : c'est
+  la vérification visuelle que le report s'est bien fait.
+
+### Mode tracé
+
+La zone choisie, affichée **redressée et agrandie** — même si elle est vissée légèrement
+de travers, elle apparaît droite.
+
+| Geste | Effet |
+|---|---|
+| Appui | Pose un point. Le premier appui démarre un cordon |
+| Double-appui | Pose le dernier point et **termine** le cordon |
+| Appui sur un cordon existant | Le **sélectionne** (il passe en jaune épais) |
+| Appui à l'écart | Démarre un nouveau cordon |
+
+Un cordon en cours de tracé est **vert** ; les cordons terminés sont **orange**. À la
+souris, un trait pointillé suit le curseur pour montrer le segment en préparation — ce
+confort n'existe pas au doigt, l'écran tactile n'ayant pas de survol.
+
+| Bouton | Rôle |
+|---|---|
+| **Annuler** | Défait la dernière action : un point posé, un cordon terminé, ou une suppression |
+| **Refaire** | Rejoue ce qui vient d'être annulé |
+| **Supprimer** | Efface le cordon sélectionné, en entier |
+| **Valider** | Termine et revient à la vue d'ensemble |
+
+⚠️ **Annuler ne remonte que d'un seul cran.** Il n'y a pas d'historique : après une
+annulation, il n'y a plus rien à annuler. Toute nouvelle action rend le « Refaire »
+caduc.
+
+⚠️ **Valider reste inactif tant qu'un cordon est en cours de tracé.** Il faut d'abord le
+terminer par un double-appui, sinon il serait perdu sans avertissement.
+
+### Deux points à connaître
+
+- Un cordon d'un seul point est **abandonné** : sans second point, il n'a aucun segment,
+  donc rien à déposer.
+- Ouvrir une **autre** zone que celle de référence y affiche les mêmes cordons, mais ne
+  change pas le repère de travail. Changer de repère déplacerait les cordons déjà tracés.
