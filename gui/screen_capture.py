@@ -4,7 +4,7 @@
 import numpy as np
 import cv2
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QComboBox
 )
 from PyQt5.QtCore import Qt, QTimer, QThread, QObject, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QImage, QPixmap
@@ -63,6 +63,13 @@ class ScreenCapture(QWidget):
 
     # Signal émis quand l'opérateur veut accéder à l'écran de calibration caméra
     calibration_requested = pyqtSignal()
+
+    # Signaux de changement de matériel. L'écran ne remplace PAS lui-même la caméra ou
+    # le port : les objets Camera et Machine appartiennent à MainApp (qui les partage
+    # avec les autres écrans), donc seul MainApp peut les échanger proprement. L'écran
+    # se contente de dire ce que l'opérateur a choisi.
+    camera_selected = pyqtSignal(int)          # index OpenCV de la caméra choisie
+    machine_port_selected = pyqtSignal(str)    # nom du port série choisi (ex. "COM3")
 
     def __init__(self) -> None:
         super().__init__()
@@ -138,6 +145,38 @@ class ScreenCapture(QWidget):
         self._status_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self._status_label)
 
+        # Ligne "matériel" — choix du port machine et de la caméra.
+        # Placée sur l'écran 1 parce que c'est le premier écran affiché : l'opérateur
+        # règle son matériel avant toute action, sans avoir à éditer local_config.json.
+        device_layout = QHBoxLayout()
+        device_layout.setSpacing(8)
+
+        device_layout.addWidget(QLabel("Machine :"))
+        self._combo_port = QComboBox()
+        # 44 px = taille minimale d'une cible tactile confortable sur l'écran 7"
+        self._combo_port.setMinimumHeight(44)
+        # "activated" plutôt que "currentIndexChanged" : activated n'est émis que sur une
+        # action de l'opérateur, alors que currentIndexChanged se déclenche AUSSI quand on
+        # remplit la liste par code → cela provoquerait un changement de port fantôme à
+        # chaque rafraîchissement de la liste.
+        self._combo_port.activated.connect(self._on_port_selected)
+        device_layout.addWidget(self._combo_port, stretch=1)
+
+        device_layout.addWidget(QLabel("Caméra :"))
+        self._combo_camera = QComboBox()
+        self._combo_camera.setMinimumHeight(44)
+        self._combo_camera.activated.connect(self._on_camera_selected)
+        device_layout.addWidget(self._combo_camera, stretch=1)
+
+        # Rafraîchir : re-scanner le matériel sans relancer l'application — utile quand
+        # on branche la carte ou la caméra après le démarrage
+        self._btn_refresh = QPushButton("Rafraichir")
+        self._btn_refresh.setProperty("role", "secondary")
+        self._btn_refresh.clicked.connect(self.refresh_device_lists)
+        device_layout.addWidget(self._btn_refresh)
+
+        layout.addLayout(device_layout)
+
         # Bouton Homing — ligne séparée au-dessus des boutons de capture
         homing_layout = QHBoxLayout()
         homing_layout.setSpacing(8)
@@ -178,6 +217,115 @@ class ScreenCapture(QWidget):
         btn_layout.addWidget(self._btn_validate)
         btn_layout.addWidget(self._btn_retake)
         layout.addLayout(btn_layout)
+
+    # ------------------------------------------------------------------ choix du matériel
+
+    def refresh_device_lists(self) -> None:
+        """(Re)remplir les deux listes déroulantes en scannant le matériel présent.
+
+        Appelée une fois au démarrage par app.py (après set_machine/set_camera), puis à
+        chaque clic sur "Rafraichir".
+        """
+        self._refresh_port_list()
+        self._refresh_camera_list()
+
+    def _refresh_port_list(self) -> None:
+        """Remplir la liste des ports série et y présélectionner le port courant."""
+        # Retenir le port actuellement configuré AVANT de vider la liste
+        port_courant = self._machine.port if self._machine is not None else None
+
+        self._combo_port.clear()
+        ports = Machine.list_ports()
+
+        for device, libelle in ports:
+            # Le texte affiché est le libellé lisible, mais la donnée associée
+            # (userData) est le vrai nom de device — c'est lui qu'on émettra
+            self._combo_port.addItem(libelle, device)
+
+        if not ports:
+            # Aucun port : afficher une entrée explicite plutôt qu'une liste vide muette
+            self._combo_port.addItem("Aucun port detecte", None)
+            self._combo_port.setEnabled(False)
+            return
+
+        self._combo_port.setEnabled(True)
+
+        if port_courant is not None:
+            position = self._combo_port.findData(port_courant)
+            if position >= 0:
+                self._combo_port.setCurrentIndex(position)
+            else:
+                # Cas courant en développement : config.py contient "/dev/ttyUSB0" alors
+                # qu'on travaille sous Windows. On ajoute quand même l'entrée, marquée
+                # "absent", pour que la liste reflète honnêtement ce qui est configuré.
+                self._combo_port.addItem(f"{port_courant} (absent)", port_courant)
+                self._combo_port.setCurrentIndex(self._combo_port.count() - 1)
+
+    def _refresh_camera_list(self) -> None:
+        """Remplir la liste des caméras et y présélectionner celle en cours d'usage."""
+        index_courant = self._camera.index if self._camera is not None else None
+
+        # Le scan ouvre et referme chaque index. Si l'aperçu tourne en même temps, le
+        # timer lit dans la caméra pendant que le scan la sollicite → frames perdues et
+        # scan peu fiable. On suspend l'aperçu le temps du scan, puis on le rétablit
+        # seulement s'il était actif (ne pas relancer un aperçu sur photo figée).
+        apercu_actif = self._timer.isActive()
+        self._timer.stop()
+        try:
+            # Exclure la caméra en service : la sonder ouvrirait un second handle sur le
+            # même périphérique, dont la fermeture couperait le flux en cours (voir le
+            # docstring de Camera.list_devices). C'est ce qui cassait l'aperçu au démarrage
+            # et après chaque changement de caméra (constaté le 2026-08-01).
+            indices = Camera.list_devices(
+                exclude={index_courant} if index_courant is not None else None
+            )
+        finally:
+            if apercu_actif:
+                self._timer.start(100)
+
+        # La caméra en service ayant été volontairement écartée du scan, elle doit être
+        # réintégrée à la main pour figurer dans la liste proposée à l'opérateur
+        if index_courant is not None and index_courant not in indices:
+            indices.append(index_courant)
+        indices.sort()
+
+        self._combo_camera.clear()
+
+        if not indices:
+            self._combo_camera.addItem("Aucune camera detectee", None)
+            self._combo_camera.setEnabled(False)
+            return
+
+        self._combo_camera.setEnabled(True)
+        for i in indices:
+            # Suffixe "(en cours)" pour que l'opérateur repère celle qui alimente l'aperçu
+            suffixe = " (en cours)" if i == index_courant else ""
+            self._combo_camera.addItem(f"Camera {i}{suffixe}", i)
+
+        if index_courant is not None:
+            position = self._combo_camera.findData(index_courant)
+            if position >= 0:
+                self._combo_camera.setCurrentIndex(position)
+
+    def _on_port_selected(self, position: int) -> None:
+        """L'opérateur a choisi un port — prévenir MainApp, qui seul détient la Machine."""
+        device = self._combo_port.itemData(position)
+        if device:
+            self.machine_port_selected.emit(device)
+
+    def _on_camera_selected(self, position: int) -> None:
+        """L'opérateur a choisi une caméra — prévenir MainApp, qui seul détient la Camera."""
+        index = self._combo_camera.itemData(position)
+        if index is not None:
+            self.camera_selected.emit(int(index))
+
+    def set_status(self, message: str) -> None:
+        """Afficher un message dans la barre de statut de cet écran.
+
+        Permet à MainApp de rendre compte à l'opérateur du résultat d'un changement de
+        matériel (succès, ou refus parce que la machine est connectée).
+        """
+        self._status_label.setText(message)
 
     # ------------------------------------------------------------------ caméra
 

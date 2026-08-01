@@ -2,6 +2,7 @@
 # Firmware confirmé : Marlin 1.1.8 — port /dev/ttyUSB0 — 250000 baud
 
 import serial   # Librairie pyserial pour la communication série USB
+import serial.tools.list_ports  # Sous-module pyserial d'énumération des ports présents
 import time     # Pour la pause après l'ouverture du port (reset Arduino)
 from typing import Optional
 
@@ -38,6 +39,56 @@ class Machine:
 
         # Objet port série — None tant que connect() n'a pas été appelé
         self._serial: Optional[serial.Serial] = None
+
+    # ------------------------------------------------------------------ choix du port
+
+    @staticmethod
+    def list_ports() -> list:
+        """Liste les ports série présents sur le système.
+
+        Retourne une liste de tuples (device, libellé) triée par device, ex. :
+            [("COM3", "COM3 — USB-SERIAL CH340"), ("COM5", "COM5 — Bluetooth")]
+
+        Le premier élément est ce qu'attend pyserial (à passer à set_port), le second
+        est fait pour l'affichage : la description du pilote permet à l'opérateur de
+        repérer la carte Marlin (puce CH340) au milieu des autres périphériques série
+        que Windows expose souvent (Bluetooth, adaptateurs divers).
+
+        Méthode statique : on doit pouvoir lister les ports AVANT d'avoir choisi lequel
+        utiliser, donc sans instance de Machine.
+        """
+        ports = []
+        for info in serial.tools.list_ports.comports():
+            # description vaut la chaîne "n/a" quand le pilote ne renseigne rien —
+            # l'afficher n'apporterait aucune information à l'opérateur
+            if info.description and info.description != "n/a":
+                libelle = f"{info.device} — {info.description}"
+            else:
+                libelle = info.device
+            ports.append((info.device, libelle))
+
+        # Trier pour que l'ordre de la liste déroulante soit stable d'un lancement à
+        # l'autre — comports() ne garantit aucun ordre particulier
+        return sorted(ports)
+
+    @property
+    def port(self) -> str:
+        """Port série actuellement configuré (sert à présélectionner la liste déroulante)."""
+        return self._port
+
+    def set_port(self, port: str) -> None:
+        """Change le port série qui sera utilisé au prochain connect().
+
+        Refuse le changement tant que la connexion est ouverte : basculer de port
+        pendant une dépose enverrait la suite des commandes G-code dans le vide, buse
+        toujours en mouvement. L'opérateur doit d'abord laisser le cycle se terminer.
+        """
+        if self.is_connected():
+            raise RuntimeError(
+                "Impossible de changer de port : la machine est connectée. "
+                "Attendre la fin du cycle en cours."
+            )
+        self._port = port
 
     # ------------------------------------------------------------------ connexion
 

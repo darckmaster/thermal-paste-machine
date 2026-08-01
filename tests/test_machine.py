@@ -225,3 +225,56 @@ def test_emergency_stop_sans_connexion_ne_plante_pas():
     """emergency_stop() ne doit pas lever d'exception si non connecté."""
     machine = creer_machine()
     machine.emergency_stop()  # ne doit pas planter
+
+
+# ------------------------------------------------------------------ tests choix du port
+
+def test_list_ports_retourne_des_paires_device_libelle():
+    """list_ports() doit retourner des tuples (device, libellé) exploitables tels quels
+    par la liste déroulante de l'écran 1.
+
+    On ne peut pas savoir quels ports existent sur la machine qui exécute les tests, donc
+    on valide la FORME du résultat, pas son contenu. Le libellé doit toujours contenir le
+    nom du device, puisqu'il est construit à partir de lui.
+    """
+    ports = Machine.list_ports()
+
+    assert isinstance(ports, list)
+    for entree in ports:
+        assert isinstance(entree, tuple) and len(entree) == 2, \
+            f"chaque entrée doit être un tuple (device, libellé), obtenu : {entree!r}"
+        device, libelle = entree
+        assert isinstance(device, str) and device, "le device ne doit pas être vide"
+        assert device in libelle, \
+            f"le libellé '{libelle}' doit contenir le nom du device '{device}'"
+
+    # Le tri doit rendre l'ordre stable d'un appel à l'autre (confort d'affichage)
+    assert ports == sorted(ports)
+
+
+def test_set_port_change_le_port_hors_connexion():
+    """set_port() doit remplacer le port tant qu'aucune connexion n'est ouverte."""
+    machine = creer_machine()
+    assert machine.port == SERIAL_PORT  # valeur initiale, issue de config.py
+
+    machine.set_port("COM_TEST")
+
+    assert machine.port == "COM_TEST"
+
+
+@patch('modules.machine.time.sleep')
+@patch('modules.machine.serial.Serial')
+def test_set_port_refuse_pendant_connexion(mock_serial_class, mock_sleep):
+    """set_port() doit lever RuntimeError si la machine est connectée, et NE PAS changer
+    le port — sécurité : rebasculer de port pendant une dépose enverrait la suite du
+    G-code dans le vide, buse toujours en mouvement."""
+    mock_port = creer_port_serie_mock(['ok\n', 'ok\n'])  # G90 + M302 dans connect()
+    mock_serial_class.return_value = mock_port
+
+    machine = creer_machine()
+    machine.connect()
+
+    with pytest.raises(RuntimeError):
+        machine.set_port("COM_TEST")
+
+    assert machine.port == SERIAL_PORT, "le port ne doit pas avoir changé malgré l'erreur"

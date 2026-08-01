@@ -16,6 +16,20 @@ from modules.config import (
     WORK_AREA_WIDTH_MM, WORK_AREA_HEIGHT_MM,
 )
 
+# Résolution (pixels par mm) de l'image redressée utilisée pour zoomer sur la
+# zone de dépose. Plus élevé = tracé plus précis mais image plus lourde à
+# afficher/rafraîchir ; 8 px/mm donne ~1 mm de précision de clic sur un écran
+# tactile sans ralentir l'interface.
+ZONE_PX_PER_MM = 8.0
+
+# IDs des deux marqueurs ArUco qui délimitent la zone de dépose, en diagonale
+# (voir modules/vision.py::deposit_zone_bounds_mm). Le plateau n'utilise en
+# pratique que les IDs 0-3 (compute_homography/compute_homography_approx) —
+# ID 4 est donc libre côté code même s'il était initialement cité comme
+# "réservé au plateau" (CLAUDE.md section 6, à corriger).
+ZONE_MARKER_ID_A = 4
+ZONE_MARKER_ID_B = 5
+
 
 class LineSelector(QLabel):
     """QLabel interactif — chaque clic/toucher ajoute un point au tracé.
@@ -107,6 +121,18 @@ class ScreenZone(QWidget):
         super().__init__()
         self._image: np.ndarray | None = None
         self._homography: np.ndarray | None = None
+        # True = homographie précise (4 marqueurs plateau), False = approximative
+        # (2-3 marqueurs, repli caméra Geeetech — voir _detect_zone)
+        self._homography_precise: bool = True
+        # Image de travail réellement affichée dans le sélecteur : soit la
+        # photo brute (repli si la zone de dépose n'est pas détectée), soit
+        # le zoom redressé sur la zone (voir _detect_zone). C'est TOUJOURS
+        # cette image, pas self._image, qui sert de référence aux conversions
+        # pixel→mm dans _point_to_mm.
+        self._display_source: np.ndarray | None = None
+        # Coin (x_min, y_min) en mm de la zone de dépose dans le repère du
+        # plateau — None tant que le zoom n'est pas actif (mode repli brut)
+        self._zone_origin_mm: tuple | None = None
         self._vision = VisionProcessor(ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM)
         self._setup_ui()
 
@@ -118,8 +144,7 @@ class ScreenZone(QWidget):
         self._btn_undo.setEnabled(False)
         self._n_points_label.setText("0 point(s)")
 
-        self._detect_homography(image)
-        self._display_image(image)
+        self._detect_zone(image)
 
     # ------------------------------------------------------------------ interface
 
@@ -201,33 +226,116 @@ class ScreenZone(QWidget):
         btn_layout.addWidget(self._btn_launch, stretch=2)
         layout.addLayout(btn_layout)
 
-    # ------------------------------------------------------------------ détection ArUco
+    # ------------------------------------------------------------------ détection ArUco + zone
 
-    def _detect_homography(self, image: np.ndarray) -> None:
-        """Détecter les marqueurs ArUco et calculer l'homographie."""
+    def _detect_zone(self, image: np.ndarray) -> None:
+        """Détecter les marqueurs, calculer l'homographie du plateau, puis zoomer
+        sur la zone de dépose (marqueurs ZONE_MARKER_ID_A/B) si elle est visible.
+
+        Quatre cas possibles, du meilleur au pire :
+          1. Les 4 marqueurs du plateau (0-3) sont visibles → homographie précise
+             (compute_homography, correction de perspective complète).
+          2. Seulement 2 ou 3 sont visibles → homographie approximative
+             (compute_homography_approx) : repli nécessaire sur la Geeetech, dont
+             la caméra fixe ne voit pas les 4 coins d'un plateau pleine taille
+             (constaté le 2026-07-30). Précision réduite — voir le docstring de
+             compute_homography_approx() dans modules/vision.py.
+          3. Un seul marqueur (ou aucun) → aucune conversion pixel→mm possible.
+          4. Plateau détecté (cas 1 ou 2) mais zone de dépose (4/5) absente →
+             repli sur la photo brute complète, avec message d'avertissement.
+        """
         markers = self._vision.detect_markers(image)
-        if len(markers) == 4:
+        plateau_ids_vus = {0, 1, 2, 3} & markers.keys()
+
+        if len(plateau_ids_vus) == 4:
             self._homography = self._vision.compute_homography(markers)
-            self._status_label.setText(
-                "4 marqueurs detectes — appuyer sur la photo pour tracer le chemin"
-            )
+            self._homography_precise = True
+        elif len(plateau_ids_vus) >= 2:
+            self._homography = self._vision.compute_homography_approx(markers)
+            self._homography_precise = False
         else:
             self._homography = None
+            self._homography_precise = False
+            self._zone_origin_mm = None
+            self._display_source = image
             self._status_label.setText(
-                f"Attention : {len(markers)}/4 marqueurs detectes — "
+                f"Attention : marqueurs du plateau insuffisants "
+                f"({len(plateau_ids_vus)}/4 détectés, 2 minimum) — "
                 f"conversion pixels→mm indisponible"
             )
+            self._display_image(self._display_source)
+            return
+
+        # Avertissement permanent tant que l'homographie n'est qu'approximative —
+        # préfixé aux messages de statut ci-dessous pour rester visible à l'opérateur
+        avertissement_precision = (
+            "" if self._homography_precise else
+            "⚠ Précision réduite (2-3 marqueurs plateau, pas de correction de perspective) — "
+        )
+
+        zone_ok = {ZONE_MARKER_ID_A, ZONE_MARKER_ID_B}.issubset(markers.keys())
+        if not zone_ok:
+            self._zone_origin_mm = None
+            self._display_source = image
+            self._status_label.setText(
+                f"{avertissement_precision}"
+                f"Plateau détecté, mais zone de dépose non trouvée "
+                f"(marqueurs {ZONE_MARKER_ID_A}/{ZONE_MARKER_ID_B} manquants) — "
+                f"tracé sur la photo complète"
+            )
+            self._display_image(self._display_source)
+            return
+
+        # Zone de dépose détectée : redresser DIRECTEMENT la sous-région de la
+        # zone (warp_region), pas tout le plateau — la caméra Geeetech ne
+        # photographie jamais l'intégralité du WORK_AREA (192×192 mm), donc
+        # redresser vers un canevas plein plateau puis découper produirait une
+        # image noire dès que la zone tombe dans la partie jamais photographiée
+        # (bug constaté le 2026-07-30, voir le docstring de warp_region()).
+        x_min, y_min, x_max, y_max = self._vision.deposit_zone_bounds_mm(
+            markers, self._homography, ZONE_MARKER_ID_A, ZONE_MARKER_ID_B
+        )
+
+        zone_w_px = int((x_max - x_min) * ZONE_PX_PER_MM)
+        zone_h_px = int((y_max - y_min) * ZONE_PX_PER_MM)
+        crop = self._vision.warp_region(
+            image, self._homography, (x_min, y_min), ZONE_PX_PER_MM, (zone_w_px, zone_h_px)
+        )
+
+        if crop.size == 0:
+            # Zone dégénérée (marqueurs quasi confondus) — pas de crash, mais
+            # impossible d'afficher un zoom exploitable
+            self._zone_origin_mm = None
+            self._display_source = image
+            self._status_label.setText(
+                f"{avertissement_precision}"
+                "Zone de dépose détectée mais trop petite — vérifier le placement des marqueurs "
+                f"{ZONE_MARKER_ID_A}/{ZONE_MARKER_ID_B}"
+            )
+            self._display_image(self._display_source)
+            return
+
+        self._zone_origin_mm = (x_min, y_min)
+        self._display_source = crop
+        self._status_label.setText(
+            f"{avertissement_precision}"
+            f"Zone de dépose {x_max - x_min:.0f}×{y_max - y_min:.0f} mm — "
+            f"appuyer sur la photo pour tracer le chemin"
+        )
+        self._display_image(self._display_source)
 
     # ------------------------------------------------------------------ conversion coordonnées
 
     def _label_to_image_coords(self, lx: int, ly: int) -> tuple:
-        """Convertir coordonnées label (pixels affichés) → pixels de l'image originale."""
-        if self._image is None:
+        """Convertir coordonnées label (pixels affichés) → pixels de l'image
+        réellement affichée (self._display_source : zoom sur la zone si
+        disponible, sinon photo brute — voir _detect_zone)."""
+        if self._display_source is None:
             return lx, ly
 
         lw = self._selector.width()
         lh = self._selector.height()
-        ih, iw = self._image.shape[:2]
+        ih, iw = self._display_source.shape[:2]
 
         # Facteur de zoom appliqué par Qt (KeepAspectRatio)
         ratio = min(lw / iw, lh / ih)
@@ -243,18 +351,34 @@ class ScreenZone(QWidget):
         return int(ix), int(iy)
 
     def _point_to_mm(self, pt: QPoint) -> tuple | None:
-        """Convertir un point label → (x_mm, y_mm) via l'homographie.
+        """Convertir un point label → (x_mm, y_mm) absolus dans le repère du
+        plateau (celui attendu par screen_run.py, qui y ajoute MACHINE_ORIGIN).
 
-        Retourne None si l'homographie n'est pas disponible ou si le point
-        est hors de la zone de travail.
+        Deux modes selon ce qui est affiché (self._display_source) :
+          - Zoom sur la zone de dépose (self._zone_origin_mm connu) : l'image
+            affichée est une image redressée à échelle FIXE (ZONE_PX_PER_MM),
+            donc pixel→mm est une simple division, pas besoin de repasser par
+            l'homographie point par point. On rajoute ensuite l'origine de la
+            zone pour obtenir des mm absolus plateau.
+          - Repli sur la photo brute (pas de zoom) : conversion par
+            l'homographie comme avant, clippée à la zone de travail complète.
+
+        Retourne None si aucune conversion n'est possible (ArUco insuffisants).
         """
         if self._homography is None:
             return None
 
         ix, iy = self._label_to_image_coords(pt.x(), pt.y())
-        x_mm, y_mm = self._vision.pixel_to_mm(ix, iy, self._homography)
 
-        # Clipper à la zone de travail physique
+        if self._zone_origin_mm is not None:
+            zone_x_mm = ix / ZONE_PX_PER_MM
+            zone_y_mm = iy / ZONE_PX_PER_MM
+            x_mm = self._zone_origin_mm[0] + zone_x_mm
+            y_mm = self._zone_origin_mm[1] + zone_y_mm
+        else:
+            x_mm, y_mm = self._vision.pixel_to_mm(ix, iy, self._homography)
+
+        # Clipper à la zone de travail physique (garde-fou dans les deux modes)
         x_mm = max(0.0, min(x_mm, WORK_AREA_WIDTH_MM))
         y_mm = max(0.0, min(y_mm, WORK_AREA_HEIGHT_MM))
 

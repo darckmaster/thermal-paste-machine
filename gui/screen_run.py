@@ -151,11 +151,17 @@ class ScreenRun(QWidget):
         """Démarrer l'exécution : générer la trajectoire et lancer le thread."""
         self._machine = machine
 
-        # Convertir les coordonnées ArUco (mm depuis le marqueur 0) en coordonnées machine
-        # (mm depuis le home G28). La formule est : machine = aruco + origine_machine.
-        # L'origine machine correspond à la position du marqueur 0 mesurée avec M114.
+        # Convertir les coordonnées ArUco (mm depuis le marqueur 3, coin haut-gauche du
+        # plateau) en coordonnées machine (mm depuis le home G28).
+        # MACHINE_ORIGIN_X/Y = position machine du marqueur 3, mesurée avec M114.
+        #
+        # X : simple addition — l'axe X ArUco et l'axe X machine vont tous deux vers la droite.
+        # Y : SOUSTRACTION — depuis le 2026-08-01 l'axe Y ArUco descend (comme les lignes
+        #     d'une image, voir modules/vision.py::_plateau_corner_positions_mm) alors que
+        #     l'axe Y machine monte vers le fond. C'est LE seul endroit du code où les deux
+        #     repères se rejoignent, donc le seul où cette inversion doit apparaître.
         points_machine = [
-            (x + MACHINE_ORIGIN_X, y + MACHINE_ORIGIN_Y)
+            (x + MACHINE_ORIGIN_X, MACHINE_ORIGIN_Y - y)
             for x, y in points_mm
         ]
 

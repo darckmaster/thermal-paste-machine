@@ -35,29 +35,69 @@ class Camera:
         return cv2.VideoCapture(device_index)
 
     @staticmethod
+    def list_devices(max_index: int = 5, exclude: Optional[set] = None) -> list:
+        """Liste les index de caméra qui répondent sur ce système.
+
+        Teste les index 0 à max_index-1 en ouvrant puis refermant chacun, et retourne
+        les index qui se sont ouverts (ordre croissant). Sert à remplir la liste
+        déroulante de choix de caméra sur l'écran 1.
+
+        ⚠️ `exclude` n'est PAS une commodité, c'est une protection. Sonder un index déjà
+        ouvert par l'application ouvre un SECOND handle sur le même périphérique ; sous
+        DirectShow (Windows) le release() de ce second handle coupe le flux du premier,
+        et la caméra en service se met à échouer à chaque lecture (symptôme observé le
+        2026-08-01 : l'aperçu affichait "Camera deconnectee" juste après le scan).
+        L'appelant doit donc y passer l'index en cours d'utilisation, puis le réintégrer
+        lui-même dans la liste affichée — voir gui/screen_capture.py::_refresh_camera_list().
+
+        Méthode statique : on doit pouvoir lister les caméras avant d'en avoir ouvert une.
+        """
+        exclus = exclude or set()
+        disponibles = []
+        for i in range(max_index):
+            # Ne jamais toucher un index déjà en service (voir l'avertissement ci-dessus)
+            if i in exclus:
+                continue
+            cap = Camera._open_cap(i)
+            if cap.isOpened():
+                # isOpened() ne suffit PAS : sur Windows, des index fantômes s'ouvrent
+                # sans jamais délivrer la moindre image (même piège que dans _open_cap).
+                # Proposer une telle caméra dans la liste ferait choisir à l'opérateur un
+                # périphérique inutilisable → on exige une lecture réellement réussie.
+                for _ in range(3):
+                    ret, _frame = cap.read()
+                    if ret:
+                        disponibles.append(i)
+                        break
+            # Libérer dans tous les cas — on voulait juste tester la présence, et un cap
+            # non ouvert doit quand même être relâché pour ne pas fuir de descripteur
+            cap.release()
+        return disponibles
+
+    @staticmethod
     def _find_best_index() -> int:
         """Détecte automatiquement la caméra USB à utiliser.
 
-        Teste les indices 0 à 4 et retourne le dernier index fonctionnel.
+        Retourne le DERNIER index fonctionnel trouvé par list_devices().
         Logique : sur un PC avec webcam intégrée (index 0) + caméra USB (index 1),
         retourne 1. Sur un RPi avec une seule caméra USB, retourne 0.
         """
-        dernier_trouve = -1
-        for i in range(5):
-            cap = Camera._open_cap(i)
-            if cap.isOpened():
-                dernier_trouve = i
-                cap.release()  # Libérer immédiatement — on voulait juste tester la présence
+        disponibles = Camera.list_devices()
 
-        if dernier_trouve == -1:
+        if not disponibles:
             raise RuntimeError("Aucune caméra détectée sur ce système")
 
-        return dernier_trouve
+        return disponibles[-1]
 
     def __init__(self, device_index: Optional[int] = None) -> None:
         # Si aucun index fourni (None), détecter automatiquement la meilleure caméra
         if device_index is None:
             device_index = Camera._find_best_index()
+
+        # Mémoriser l'index réellement utilisé — permet à l'interface de présélectionner
+        # la bonne entrée dans la liste déroulante de choix de caméra (écran 1), y compris
+        # quand l'index a été déterminé automatiquement juste au-dessus
+        self.index: int = device_index
 
         self._cap = Camera._open_cap(device_index)
 

@@ -3,6 +3,10 @@
 
     "camera_index": 1,
 
+    "_comment_serial": "serial_port : port de la carte Marlin. '/dev/ttyUSB0' sur le RPi, 'COM3' (ou autre) sous Windows — le repérer dans la liste deroulante 'Machine' de l'ecran 1, c'est celui dont la description mentionne la puce serie USB (CH340), pas un port Bluetooth. serial_baudrate : doit correspondre au firmware de la carte (250000 sur la Geeetech, souvent 115200 ailleurs) ; si le port est bon mais que la machine ne repond pas, c'est le premier parametre a verifier.",
+    "serial_port": "COM3",
+    "serial_baudrate": 250000,
+
     "calibration_min_images": 15,
 
     "charuco_cols": 4,

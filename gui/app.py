@@ -138,6 +138,11 @@ class MainApp(QMainWindow):
         self._screen_capture.set_camera(self._camera)
         self._screen_calibration.set_camera(self._camera)
 
+        # Remplir les listes déroulantes de choix du matériel de l'écran 1. À faire APRÈS
+        # set_machine() et set_camera() : les listes présélectionnent le port et la caméra
+        # réellement en service, donc elles doivent les connaître.
+        self._screen_capture.refresh_device_lists()
+
         # Données du cycle courant — stockées au fil de la navigation pour le rapport PDF
         self._captured_image = None   # photo de la pièce (numpy BGR)
         self._points_mm: list = []    # tracé de l'opérateur (coordonnées ArUco mm)
@@ -151,6 +156,11 @@ class MainApp(QMainWindow):
         self._screen_report.new_piece_requested.connect(self._go_to_capture)
         self._screen_capture.calibration_requested.connect(self._go_to_calibration)
         self._screen_calibration.back_requested.connect(self._go_from_calibration_to_capture)
+
+        # Changements de matériel demandés depuis l'écran 1 — appliqués ici, car MainApp
+        # est propriétaire de la Camera et de la Machine partagées par tous les écrans
+        self._screen_capture.camera_selected.connect(self._on_camera_selected)
+        self._screen_capture.machine_port_selected.connect(self._on_machine_port_selected)
 
         # Démarrer sur l'écran de capture
         self._go_to_capture()
@@ -202,6 +212,65 @@ class MainApp(QMainWindow):
         # Arrêter la caméra de calibration avant de relancer celle de capture
         self._screen_calibration.stop_camera()
         self._go_to_capture()
+
+    # ------------------------------------------------------------------ choix du matériel
+
+    def _on_camera_selected(self, device_index: int) -> None:
+        """Basculer sur une autre caméra, choisie dans la liste déroulante de l'écran 1.
+
+        MainApp est le seul propriétaire de l'objet Camera (partagé avec l'écran de
+        calibration) : c'est donc ici, et nulle part ailleurs, que l'ancienne est
+        libérée et la nouvelle ouverte.
+        """
+        # Rien à faire si c'est déjà la caméra en service — éviter une fermeture puis
+        # réouverture inutile, qui coûte 1 à 2 secondes
+        if self._camera is not None and self._camera.index == device_index:
+            return
+
+        # Couper les deux aperçus AVANT de libérer : un timer qui lirait dans une caméra
+        # déjà relâchée lèverait une RuntimeError en plein changement
+        self._screen_capture.stop_camera()
+        self._screen_calibration.stop_camera()
+
+        if self._camera is not None:
+            self._camera.release()
+            self._camera = None
+
+        try:
+            self._camera = Camera(device_index)
+            message = f"Camera {device_index} activee"
+        except RuntimeError as e:
+            # Caméra débranchée entre le scan et la sélection, ou occupée par un autre
+            # logiciel : on reste sans caméra plutôt que de laisser un objet inutilisable
+            self._camera = None
+            message = f"Camera {device_index} indisponible : {e}"
+
+        # Redistribuer la nouvelle référence (ou None) aux deux écrans concernés
+        self._screen_capture.set_camera(self._camera)
+        self._screen_calibration.set_camera(self._camera)
+
+        # Relancer l'aperçu : on est forcément sur l'écran 1, seul écran à porter la liste
+        self._screen_capture.start_camera()
+        # Rafraîchir la liste pour remettre le suffixe "(en cours)" sur la bonne entrée
+        self._screen_capture.refresh_device_lists()
+        self._screen_capture.set_status(message)
+
+    def _on_machine_port_selected(self, port: str) -> None:
+        """Changer le port série de la machine, choisi dans la liste déroulante de l'écran 1.
+
+        Aucune connexion n'est ouverte ici : la Machine ne se connecte qu'au moment du
+        homing ou de la dépose, dans leur thread respectif. On ne fait donc que changer
+        le port qui sera utilisé au prochain connect().
+        """
+        try:
+            self._machine.set_port(port)
+            self._screen_capture.set_status(f"Port machine : {port}")
+        except RuntimeError as e:
+            # set_port refuse pendant une connexion ouverte — le message vient de Machine
+            self._screen_capture.set_status(str(e))
+            # Remettre la liste sur le port réellement en service, pour ne pas laisser
+            # croire que le changement a été pris en compte
+            self._screen_capture.refresh_device_lists()
 
     # ------------------------------------------------------------------ cycle de vie
 
