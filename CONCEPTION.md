@@ -279,22 +279,42 @@ class Camera:
 
 **Principe** : 4 marqueurs ArUco placés aux coins de la zone de travail permettent de calculer une homographie (transformation de perspective) qui redresse l'image et convertit les pixels en mm.
 
-**Marqueurs** : Dictionnaire `DICT_4X4_50`, IDs 0–3 (coin haut-gauche, haut-droit, bas-droit, bas-gauche). Taille physique : 28 mm × 28 mm. Zone de travail : 151 × 104 mm (centre-à-centre, mesuré le 2026-06-12).
+**Marqueurs du plateau** : Dictionnaire `DICT_4X4_50`, IDs 0–3, taille physique 28 mm × 28 mm. Disposition physique relevée le 2026-08-01, **telle qu'elle apparaît à l'écran** :
+
+```
+3 ─────── 0        origine du repère mm = marqueur 3 (haut-gauche)
+│         │        X+ vers la droite
+│         │        Y+ vers le BAS (comme les lignes d'une image)
+2 ─────── 1
+```
+
+**Marqueurs de la zone de dépose** : IDs 4 et 5, posés aux deux coins opposés (en diagonale) de la zone où se trouve la pièce. Ils ne servent pas à l'homographie, seulement à délimiter la sous-région à redresser et à afficher.
+
+**Choix du repère (2026-08-01)** : l'axe Y descend, à l'inverse de l'axe Y machine qui croît vers le fond. Deux raisons l'emportent sur l'inconvénient de cette inversion :
+1. toutes les coordonnées du plateau restent **positives** (0 → WORK_AREA), ce qui évite les index négatifs (voir le bug d'écran noir, section 4.2 bis) ;
+2. l'image redressée s'affiche **dans le bon sens**. Avec le repère précédent (Y vers le haut), `warp_image()` renvoyait le haut de la photo en bas de l'image redressée — miroir vertical présent depuis la Phase 2, invisible sur un plateau à peu près symétrique, corrigé le 2026-08-01 et verrouillé par `test_warp_image_orientation_non_miroir`.
+
+La conversion vers le repère machine se fait en **un seul endroit** du code, `gui/screen_run.py` : `machine_x = x_mm + MACHINE_ORIGIN_X`, `machine_y = MACHINE_ORIGIN_Y - y_mm`.
 
 **Interface publique :**
 ```python
 class VisionProcessor:
     def __init__(self, aruco_dict_id, marker_real_size_mm: float)
     def detect_markers(self, image: np.ndarray) -> dict           # {id: corners (4,2)}
-    def compute_homography(self, detected_markers: dict) -> np.ndarray  # matrice H 3×3
+    def compute_homography(self, detected_markers: dict) -> np.ndarray  # H 3×3, 4 marqueurs
+    def compute_homography_approx(self, detected_markers: dict) -> np.ndarray  # 2-3 marqueurs
     def warp_image(self, image, homography, output_size) -> np.ndarray
+    def warp_region(self, image, homography, origin_mm, px_per_mm, output_size) -> np.ndarray
+    def deposit_zone_bounds_mm(self, detected_markers, homography, id_a=4, id_b=5) -> tuple
     def pixel_to_mm(self, px, py, homography) -> tuple[float, float]
 ```
 
 **Principe de l'homographie :**
 `cv2.getPerspectiveTransform` calcule une matrice H (3×3) à partir de 4 paires de points (centres des marqueurs en pixels → positions réelles en mm). Pour tout point `p` dans l'image source, `H·p` donne ses coordonnées en mm dans le repère de la zone de travail.
 
-**Résultats sessions 1 & 2 (2026-06-11) :** 14/14 tests passés. Détection 4 marqueurs simultanée confirmée. Image redressée validée visuellement.
+**Repli à 2-3 marqueurs — mode nominal sur la Geeetech.** La caméra fixe de la Geeetech ne peut pas cadrer les 4 coins d'un plateau pleine taille : en pratique seuls les 2 marqueurs du haut (IDs 3 et 0) sont visibles, confirmé par observation directe le 2026-08-01. `compute_homography_approx()` calcule alors une **similitude** (rotation + échelle + translation, 4 degrés de liberté, `cv2.estimateAffinePartial2D`) au lieu d'une perspective complète (8 degrés de liberté). La correction de l'effet trapèze est impossible à déterminer avec 2 points, donc la précision est moindre et l'erreur croît avec l'inclinaison réelle de la caméra. L'interface affiche en permanence « ⚠ Précision réduite » dans ce mode. La CNC cible, qui a la place de reculer la caméra, devra utiliser `compute_homography()`.
+
+**Résultats sessions 1 & 2 (2026-06-11) :** 14/14 tests passés. Détection 4 marqueurs simultanée confirmée. Image redressée validée visuellement (le miroir vertical n'a été détecté que le 2026-08-01, par le calcul et non à l'œil).
 
 ### 4.3 Calibration objectif (`modules/calibration.py`) ✅ ChArUco implémenté — validation terrain en attente
 
@@ -909,7 +929,10 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 - [x] **Zones de dépôt** : ✅ **Cordons multiples**, une quantité par cordon (2026-07-11)
 - [x] **Persistance des préparations** : ✅ Fichier **JSON** rechargeable/éditable (2026-07-11)
 - [ ] **Collision d'IDs ArUco plateau/mire** (2026-07-29) : plateau et mire ChArUco partagent `DICT_4X4_50` sans plage d'IDs séparée → confusion du détecteur quand les deux sont visibles ensemble. Contournement actuel : masquer le plateau pendant la calibration.
-- [ ] **IDs réels des marqueurs du plateau à confirmer** (2026-07-29) : un test suggère `{0,3,4,5}` plutôt que `{0,1,2,3}` (documenté en section 6 de CLAUDE.md). À vérifier par une photo du plateau seul, sans mire — si confirmé, `VisionProcessor.compute_homography()` doit être adapté aux IDs réels.
+- [x] **IDs réels des marqueurs du plateau** : ✅ **résolu le 2026-08-01** — fausse alerte. Le plateau utilise bien `{0,1,2,3}` ; la liste `{0,3,4,5}` observée en v0.1 se décomposait en 2 marqueurs de plateau cadrés (3 et 0, ceux du haut) + les 2 marqueurs de **zone de dépose** (4 et 5). Pas de collision plateau/zone.
+- [x] **Disposition et origine du repère plateau** : ✅ **arrêté le 2026-08-01** — `3`=haut-gauche (origine), `0`=haut-droit, `1`=bas-droit, `2`=bas-gauche ; X+ à droite, Y+ vers le bas (voir section 4.2).
+- [ ] **`MACHINE_ORIGIN_X/Y` à remesurer** (2026-08-01) : les valeurs actuelles (20/50 mm) datent du 2026-07-01 et correspondent à l'ancienne position du marqueur 0. Le `M114` doit être refait buse au-dessus du **marqueur 3** (haut-gauche). Tant que ce n'est pas fait, la dépose sur machine réelle sera décalée.
+- [ ] **Interprétation du plateau 220×220 mm** (2026-08-01) : mesure supposée prise bord extérieur à bord extérieur des marqueurs → 192 mm centre-à-centre après retrait des 28 mm d'un marqueur. À confirmer au mètre sur la machine.
 
 ---
 
@@ -925,6 +948,7 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 | 2026-06-11 | Phase 2 S2 | Ajout compute_homography, warp_image, pixel_to_mm. Démo côte à côte validée visuellement. 14/14 tests passés. |
 | 2026-06-12 | Phase 2 S3 | Validation métrologique : barrel distortion ~10 % identifiée. Re-mesure zone 151×104 mm, hauteur caméra 200 mm. Création `calibration.py`, `demo_calibration.py`, `demo_validation.py`, `chessboard_calibration.png`. Calibration à exécuter chez soi. |
 | 2026-07-11 | — | Révision planning (soutenances blanches 22/07·05/08·12/08, rapport IUT 17/08, soutenance 31/08). CNC quasi assemblée + Marlin confirmé. Cadrage du process de dépose + 4 décisions : calibration **ChArUco**, **cordons multiples** avec quantité/cordon, **fichier de préparation JSON**, **temps de dépose** au rapport. |
+| 2026-08-01 | Phase 8 | **v0.1.1 — Repère plateau refait + choix du matériel dans l'interface.** Disposition réelle des marqueurs relevée (`3`=haut-gauche, `0`=haut-droit, `1`=bas-droit, `2`=bas-gauche) et origine du repère mm placée sur le marqueur 3, avec Y dirigé vers le bas : coordonnées positives partout, et correction d'un **miroir vertical** de `warp_image()`/`warp_region()` présent depuis la Phase 2 (mis en évidence par le calcul, pas à l'œil). Inversion vers l'axe Y machine concentrée en un seul point (`screen_run.py`). Deux listes déroulantes ajoutées sur l'écran 1 pour choisir le port machine et la caméra, avec `Machine.list_ports()` / `Camera.list_devices()` côté modules et application du changement par `MainApp` (seul propriétaire de `Camera` et `Machine`). `serial_port` et `serial_baudrate` rendus surchargeables via `local_config.json`. Bug corrigé : le scan de caméras cassait le flux en cours en ouvrant un second handle DirectShow sur l'index déjà utilisé (symptôme trompeur « Camera deconnectee ») → `list_devices(exclude=...)`. Question ouverte du 2026-07-29 sur les IDs du plateau close (fausse alerte). 62/62 tests passés. |
 | 2026-07-29 | Phase 8 | Détection ChArUco débloquée (2 causes : `camera_index` erroné + `charuco_legacy_pattern` incompatible avec les mires générées par l'appli). Bug OpenCV 5.0 corrigé (`calibrateCameraCharuco` supprimée → remplacée par `board.matchImagePoints()` + `cv2.calibrateCamera()`). Ajout de l'estimation de pose et de la distance caméra↔mire (`estimate_board_pose`, `distance_to_board_normal_mm`, solvePnP). Overlay de debug ArUco/ChArUco ajouté sur les écrans capture et calibration — c'est lui qui a permis d'isoler les deux causes de blocage. `assets/camera_calibration.npz` ajouté au `.gitignore` (spécifique à chaque caméra). `MANUEL_UTILISATEUR.md` et `MANUEL_MAINTENANCE.md` créés. Points ouverts identifiés : collision d'IDs ArUco plateau/mire, IDs réels du plateau à confirmer (`{0,3,4,5}` ?). 45/45 tests passés. |
 
 ---
