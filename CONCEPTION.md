@@ -495,20 +495,75 @@ class PathPlanner:
     # Retourne : [{"type": "move", "x": x, "y": y}, {"type": "dispense", "amount": v}, ...]
 ```
 
-### Fichier de préparation (JSON) — décidé 2026-07-11
+### Fichier de préparation (JSON) — implémenté le 2026-08-01 (lot B)
 
-Une **préparation** (liste de cordons + quantités) est sérialisée en **JSON** dans `preparations/`. Elle peut être **rechargée et éditée** avant relance, à condition que le plateau soit inchangé (responsabilité de l'opérateur). Format indicatif :
+Module : `modules/preparation.py`. Une **préparation** rassemble tout le travail fait sur un plateau — produit, zones, cordons, paramètres — et se sérialise en JSON dans `preparations/`. Les zones étant vissées à demeure, une préparation validée est rejouable telle quelle, sans rien retracer.
+
+> **Évolution par rapport à la décision du 2026-07-11.** Le format initialement esquissé stockait les cordons en **pixels** avec une quantité de pâte par cordon. Deux choses ont changé depuis le cadrage du 2026-08-01 : (1) les points sont désormais en **mm relatifs à la zone**, ce qui les rend applicables à toutes les zones du plateau et insensibles à un déplacement de la caméra ; (2) la quantité n'est plus un attribut de cordon mais résulte de **deux paramètres globaux** — vitesse de déplacement et vitesse d'extrusion — le rapport entre les deux déterminant l'épaisseur du boudin.
+
+**Modèle de données**
+
+```python
+Cordon       points_mm (relatifs à la zone) · length_mm · is_valid
+Settings     travel_speed_mm_min · extrusion_speed_mm_min
+             zone_diagonal_tolerance_mm · zone_max_rotation_deg
+Preparation  product_name · zones · cordons · settings · reference_zone_id
+             created_at · updated_at
+             → cordons_for_zone(zone) · total_length_mm · valid_zones · reference_zone
+```
+
+Les cordons appartiennent à la **préparation**, pas à une zone : toutes les zones portant le même produit, les dupliquer par zone créerait autant de copies à maintenir cohérentes pour aucune information supplémentaire. `reference_zone_id` mémorise la zone sur laquelle l'opérateur les a tracés, pour que le bouton de retour à l'édition y revienne directement.
+
+Le passage d'un repère à l'autre est porté par la zone elle-même : `DepositZone.to_plateau_mm()` et `to_zone_mm()`, exactement inverses l'une de l'autre. C'est l'opération qui matérialise « un cordon tracé une fois s'applique partout ».
+
+**Stratégie à deux fichiers**
+
+| Fichier | Écrit par | Rôle |
+|---|---|---|
+| `<produit>.json` | Action de l'opérateur | Préparation **validée** |
+| `<produit>.autosave.json` | Automatiquement, toutes les 5 s | Filet **anti-plantage** |
+
+L'autosave ne touche jamais au fichier définitif ; l'enregistrement définitif supprime l'autosave. La présence d'un `.autosave.json` au démarrage signale donc un travail interrompu, et rien d'autre. Les deux passent par une **écriture atomique** (temporaire + `os.replace`) : une sauvegarde anti-plantage coupée en pleine écriture laisserait un fichier tronqué et ne protégerait de rien.
+
+**Robustesse de lecture** : un `format_version` supérieur à celui du logiciel est **refusé** avec un message explicite, plutôt que relu de travers — sur des coordonnées de dépose, une lecture silencieusement fausse enverrait la buse au mauvais endroit. Une clé manquante, à l'inverse, reprend sa valeur par défaut, ce qui garde les fichiers anciens lisibles.
+
+**Exemple réel** (extrait, 2 zones dont une inclinée de 2,5°) :
 
 ```json
 {
-  "created": "2026-07-11T14:30:00",
-  "work_area_mm": [151, 104],
+  "format_version": 1,
+  "product_name": "Calculateur ABC",
+  "reference_zone_id": 4,
+  "settings": {
+    "travel_speed_mm_min": 3000.0,
+    "extrusion_speed_mm_min": 100.0,
+    "zone_diagonal_tolerance_mm": 5.0,
+    "zone_max_rotation_deg": 10.0
+  },
+  "zones": [
+    {
+      "id_top_left": 4, "id_bottom_right": 5,
+      "corners_mm": [[10.0, 20.0], [70.0, 20.0], [70.0, 60.0], [10.0, 60.0]],
+      "rotation_deg": 0.0, "diagonal_mm": 72.11,
+      "size_mm": [60.0, 40.0], "anomalies": []
+    },
+    {
+      "id_top_left": 6, "id_bottom_right": 7,
+      "corners_mm": [[110.0, 20.0], [169.94, 22.62], [168.2, 62.58], [108.26, 59.96]],
+      "rotation_deg": 2.5, "diagonal_mm": 72.11,
+      "size_mm": [60.0, 40.0], "anomalies": []
+    }
+  ],
   "cordons": [
-    {"points_px": [[x1, y1], [x2, y2]], "paste_mm": 5.0},
-    {"points_px": [[x3, y3], [x4, y4]], "paste_mm": 3.0}
+    { "points_mm": [[5, 5], [55, 5]] },
+    { "points_mm": [[5, 35], [30, 20], [55, 35]] }
   ]
 }
 ```
+
+Les paires de coordonnées sont volontairement maintenues sur une seule ligne : `json.dumps(indent=2)` les éclaterait sur six lignes chacune, et un plateau réaliste ferait plusieurs centaines de lignes de crochets quasi vides. Le fichier étant un livrable qu'on doit pouvoir ouvrir et corriger dans un éditeur, la lisibilité compte. Le résultat reste du JSON strictement standard.
+
+**Résultat** : 30 tests dédiés, 108/108 pour la suite complète.
 
 ---
 
@@ -1015,6 +1070,7 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 | 2026-06-11 | Phase 2 S2 | Ajout compute_homography, warp_image, pixel_to_mm. Démo côte à côte validée visuellement. 14/14 tests passés. |
 | 2026-06-12 | Phase 2 S3 | Validation métrologique : barrel distortion ~10 % identifiée. Re-mesure zone 151×104 mm, hauteur caméra 200 mm. Création `calibration.py`, `demo_calibration.py`, `demo_validation.py`, `chessboard_calibration.png`. Calibration à exécuter chez soi. |
 | 2026-07-11 | — | Révision planning (soutenances blanches 22/07·05/08·12/08, rapport IUT 17/08, soutenance 31/08). CNC quasi assemblée + Marlin confirmé. Cadrage du process de dépose + 4 décisions : calibration **ChArUco**, **cordons multiples** avec quantité/cordon, **fichier de préparation JSON**, **temps de dépose** au rapport. |
+| 2026-08-01 | Phase 8 | **v0.3.0 — Lot B : modèle de données et persistance JSON.** Création de `modules/preparation.py` (classes `Cordon`, `Settings`, `Preparation` + couche de persistance) et ajout du transfert de repère `to_plateau_mm()` / `to_zone_mm()` sur `DepositZone`. Choix structurants : cordons rattachés à la préparation et non à une zone, coordonnées en mm relatifs à la zone, quantité de pâte issue de deux paramètres globaux plutôt que d'un attribut par cordon, stratégie à deux fichiers (définitif + autosave) avec écriture atomique, et `format_version` refusant les fichiers plus récents que le logiciel. Formatage du JSON adapté pour rester lisible à l'œil. Voir section 6 pour le détail. 108/108 tests passés (30 nouveaux). |
 | 2026-08-01 | Phase 8 | **v0.2.0 — Lot A : géométrie des zones de dépose.** Cadrage complet du besoin avec l'étudiant (plusieurs zones par plateau, plusieurs cordons par zone, cordons définis une fois et appliqués partout, zones vissées à demeure donc sauvegardables). Implémentation de `detect_deposit_zones_mm()` en fonction pure : appariement `(n, n+1)`, tri par signe des composantes, longueur de diagonale de référence, détection des conflits, déduction du format du produit par médiane, reconstruction du rectangle et de sa rotation. Deux règles convenues au départ ont dû être corrigées à l'épreuve des tests (voir section 4.2 bis) : le filtrage par longueur seul laissait passer les paires fantômes d'un plateau en grille, et la règle de la plus petite rotation rendait indétectables les erreurs de montage. Correction au passage d'un défaut des tests caméra, qui ouvraient l'index 0 en dur — donc la webcam intégrée du PC — au lieu de la caméra configurée dans `local_config.json`. 78/78 tests passés (15 nouveaux). |
 | 2026-08-01 | Phase 8 | **v0.1.1 — Repère plateau refait + choix du matériel dans l'interface.** Disposition réelle des marqueurs relevée (`3`=haut-gauche, `0`=haut-droit, `1`=bas-droit, `2`=bas-gauche) et origine du repère mm placée sur le marqueur 3, avec Y dirigé vers le bas : coordonnées positives partout, et correction d'un **miroir vertical** de `warp_image()`/`warp_region()` présent depuis la Phase 2 (mis en évidence par le calcul, pas à l'œil). Inversion vers l'axe Y machine concentrée en un seul point (`screen_run.py`). Deux listes déroulantes ajoutées sur l'écran 1 pour choisir le port machine et la caméra, avec `Machine.list_ports()` / `Camera.list_devices()` côté modules et application du changement par `MainApp` (seul propriétaire de `Camera` et `Machine`). `serial_port` et `serial_baudrate` rendus surchargeables via `local_config.json`. Bug corrigé : le scan de caméras cassait le flux en cours en ouvrant un second handle DirectShow sur l'index déjà utilisé (symptôme trompeur « Camera deconnectee ») → `list_devices(exclude=...)`. Question ouverte du 2026-07-29 sur les IDs du plateau close (fausse alerte). 62/62 tests passés. |
 | 2026-07-29 | Phase 8 | Détection ChArUco débloquée (2 causes : `camera_index` erroné + `charuco_legacy_pattern` incompatible avec les mires générées par l'appli). Bug OpenCV 5.0 corrigé (`calibrateCameraCharuco` supprimée → remplacée par `board.matchImagePoints()` + `cv2.calibrateCamera()`). Ajout de l'estimation de pose et de la distance caméra↔mire (`estimate_board_pose`, `distance_to_board_normal_mm`, solvePnP). Overlay de debug ArUco/ChArUco ajouté sur les écrans capture et calibration — c'est lui qui a permis d'isoler les deux causes de blocage. `assets/camera_calibration.npz` ajouté au `.gitignore` (spécifique à chaque caméra). `MANUEL_UTILISATEUR.md` et `MANUEL_MAINTENANCE.md` créés. Points ouverts identifiés : collision d'IDs ArUco plateau/mire, IDs réels du plateau à confirmer (`{0,3,4,5}` ?). 45/45 tests passés. |
