@@ -45,6 +45,49 @@ L'inversion se fait à **un seul endroit** du code, `gui/screen_run.py` :
 `MACHINE_ORIGIN_X/Y` (`modules/config.py`) est la position machine du **marqueur 3** :
 c'est au-dessus de lui, et pas d'un autre, qu'il faut faire le `M114` de mesure.
 
+### Zones de dépose — règles de reconstruction
+
+Une **zone de dépose** est l'emplacement d'un produit, vissé à demeure sur le plateau.
+Elle est repérée par **deux marqueurs ArUco** dont les centres sont posés aux extrémités
+de la diagonale haut-gauche → bas-droit, avec la convention
+`id(bas-droit) = id(haut-gauche) + 1`. Les IDs des zones commencent à **4** (0 à 3 étant
+les coins du plateau). Toutes les zones portent le **même produit**, donc la même
+diagonale : c'est cette invariante qui fait tout fonctionner.
+
+`modules/vision.py::detect_deposit_zones_mm()` enchaîne six étapes :
+
+| # | Étape | Rôle |
+|---|---|---|
+| 1 | Paires candidates `(n, n+1)` | Un tag peut apparaître dans deux paires — l'ambiguïté est levée plus loin |
+| 2 | Tri par signe des composantes | `(+,+)` = zone plausible · `(−,−)` = zone inversée · **signes mixtes = paire fantôme, écartée** |
+| 3 | Longueur de diagonale de référence | Groupe majoritaire à ± tolérance, puis médiane du groupe |
+| 4 | Conflits | Un tag revendiqué par deux paires invalide les deux |
+| 5 | Format `(w, h)` du produit | Médiane des composantes de diagonale des zones saines |
+| 6 | Rectangle et rotation | `θ = angle(diagonale) − angle(w, h)` |
+
+**Deux pièges déjà rencontrés, à ne pas réintroduire :**
+
+**a) Le filtrage par longueur ne suffit pas sur un plateau en grille.** Deux zones
+voisines sur une même ligne engendrent une paire fantôme (coin bas-droit de l'une, coin
+haut-gauche de l'autre) dont le vecteur est le symétrique du vrai : `(60, −40)` contre
+`(60, +40)`, donc **exactement la même longueur**. Elle empruntant leurs tags aux deux
+zones réelles, elle les invalidait par conflit et rendait un plateau parfaitement monté
+inexploitable. C'est le tri par signe de l'étape 2 qui l'élimine.
+
+**b) Ne pas chercher « la plus petite rotation » parmi les solutions symétriques.** Un
+rectangle 60×40 tourné de 25,8° a une diagonale orientée comme un 40×60 posé droit :
+retenir la plus petite rotation ferait ressortir toute zone très inclinée à ~2°, et
+l'anomalie de montage passerait inaperçue. L'ambiguïté n'existe pas ici parce que le
+format déduit à l'étape 5 est **orienté** — la majorité des zones a déjà tranché quel
+côté est la largeur. Une zone réellement montée à 90° sort en zone inversée.
+
+**Limite du dispositif** : avec une **seule** zone détectée, elle définit à elle seule la
+référence de format ; sa rotation ressort donc nulle même si elle est physiquement de
+travers. Ce n'est pas un bug (test `test_zone_unique_ne_permet_pas_de_detecter_un_mauvais_montage`).
+
+Deux seuils de réglage, dans `modules/vision.py` : `ZONE_DIAGONAL_TOLERANCE_MM` (5 mm)
+et `ZONE_MAX_ROTATION_DEG` (10°).
+
 ## 2. Configuration par machine
 
 Chaque machine (PC de dev, RPi Geeetech, futur RPi CNC) a son propre
@@ -208,6 +251,16 @@ pytest              # suite complète — doit toujours passer avant un commit/p
 pytest tests/test_vision.py   # un module en particulier
 python tests/demo_camera.py   # démo manuelle avec caméra réelle (pas dans pytest)
 ```
+
+**Les tests caméra utilisent la caméra CONFIGURÉE**, c'est-à-dire `CAMERA_INDEX` issu de
+`local_config.json`, et non l'index 0 en dur. Jusqu'au 2026-08-01 la fixture ouvrait
+l'index 0 : sur un PC de développement elle validait donc la webcam intégrée pendant que
+le projet travaillait avec la caméra USB, et un défaut propre à cette dernière serait
+passé inaperçu. Conséquence pratique : la suite est plus lente (~1 min contre ~30 s), la
+caméra USB étant plus longue à s'initialiser — c'est le prix de tester le bon matériel.
+
+Si aucune caméra n'est branchée, les tests concernés se `skip` proprement, ils
+n'échouent pas.
 
 ## 6. Où sont stockées les données
 
