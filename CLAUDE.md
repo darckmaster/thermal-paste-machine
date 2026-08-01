@@ -263,6 +263,54 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ## 8. Prochaine session — agenda
 
+---
+
+### 🚩 POINT DE REPRISE — dernière session close le 2026-08-01 (`v0.4.1`)
+
+**État du dépôt** : `master` = `d58ce9e`, working tree propre, tout est poussé sur GitHub.
+**Tests** : 155/155 (`pytest`). Ajouter `-m "not toutes_cameras"` pour éviter d'ouvrir la
+webcam intégrée du PC (~41 s au lieu de ~65 s).
+
+**Ce qui a été fait le 2026-08-01** — six releases dans la journée :
+
+| Version | Contenu |
+|---|---|
+| `v0.1.1` | Repère du plateau refait (origine = marqueur 3, Y vers le bas) + choix du matériel dans l'IHM |
+| `v0.2.0` | **Lot A** — géométrie des zones de dépose (`detect_deposit_zones_mm`) |
+| `v0.3.0` | **Lot B** — modèle `Preparation` + persistance JSON |
+| `v0.3.1` | Sélection de la caméra de test par détection ArUco |
+| `v0.4.0` | **Lot C1** — écran « Créer un plateau » : capture, détection, diagnostic |
+| `v0.4.1` | **Lot C2** — écran « Cordons » : zoom, tracé, report sur toutes les zones |
+
+**➡️ PROCHAINE ÉTAPE : lot C3 (`v0.4.2`)** — persistance et paramètres. Tout le modèle est
+déjà écrit et testé (lot B), il s'agit essentiellement de câblage :
+
+1. Autosave toutes les 5 s via un `QTimer` → `preparation.save_autosave()`, **en excluant
+   la polyline en cours** (`ScreenCordons.cordons` ne retourne déjà que les cordons
+   terminés — brancher sur le signal `cordons_modified`)
+2. Bouton d'enregistrement → `preparation.save_preparation()` (supprime l'autosave)
+3. Au démarrage : `preparation.list_autosaves()` → proposer de reprendre un travail
+   interrompu
+4. Fenêtre de paramètres : 2 vitesses + 2 seuils, tous déjà dans `preparation.Settings`
+
+**⛔ À TRANCHER AVANT DE COMMENCER C3** : la saisie du nom de produit passe par une boîte
+de dialogue clavier (`ScreenPlateau.ask_product_name`). **Sur l'écran tactile du RPi, sans
+clavier physique, c'est inutilisable.** Deux pistes : un clavier virtuel système, ou une
+sélection dans la liste des produits déjà enregistrés (évite aussi les fautes de frappe
+sur une référence).
+
+**Convention de numérotation** : le lot C est en `v0.4.x` — C1 = `.0`, C2 = `.1`,
+donc **C3 = `v0.4.2`**.
+
+**Reste ouvert côté machine (🏭, à faire au boulot)** :
+- `MACHINE_ORIGIN_X/Y` (20/50) à **remesurer au `M114`**, buse au-dessus du **marqueur 3**
+  (haut-gauche). Tant que ce n'est pas fait, la dépose réelle sera décalée.
+- Calibration ChArUco à exécuter sur le RPi et la caméra réels.
+- Confirmer au mètre « plateau 220×220 mm bord extérieur à bord extérieur » → 192 mm
+  centre-à-centre.
+
+---
+
 **Phases 4–7 ✅ validées — CNC quasi assemblée (Marlin confirmé) — Phase 8 en cours + nouvelles fonctionnalités décidées le 2026-07-11.**
 
 > 📅 **Le planning détaillé jour par jour (11/07 → 31/08) est en section 9.** Cette section 8 conserve le détail technique de l'agenda Phase 8.
