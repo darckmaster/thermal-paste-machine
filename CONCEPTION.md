@@ -316,6 +316,73 @@ class VisionProcessor:
 
 **Résultats sessions 1 & 2 (2026-06-11) :** 14/14 tests passés. Détection 4 marqueurs simultanée confirmée. Image redressée validée visuellement (le miroir vertical n'a été détecté que le 2026-08-01, par le calcul et non à l'œil).
 
+### 4.2 bis Zones de dépose — reconstruction géométrique (lot A, 2026-08-01)
+
+**Besoin** : le plateau porte **plusieurs zones de dépose**, chacune accueillant un
+exemplaire du **même produit**. Les cordons de pâte sont tracés une seule fois sur une
+zone de référence, puis appliqués à toutes les autres. Les zones étant vissées à demeure,
+l'ensemble est sauvegardé pour être rejoué.
+
+**Repérage** : chaque zone est délimitée par **2 marqueurs ArUco** dont les centres sont
+posés aux extrémités de la diagonale haut-gauche → bas-droit, avec la convention
+`id(bas-droit) = id(haut-gauche) + 1`. Les IDs de zone commencent à 4, les IDs 0-3 étant
+réservés aux coins du plateau. Cette convention d'incrément donne une **orientation** à
+la zone, ce qui rend détectable un montage à l'envers.
+
+**Problème central** : la convention `(n, n+1)` est ambiguë. Le tag 5 peut clore la paire
+`(4,5)` ou ouvrir la paire `(5,6)`. Il n'existe aucun moyen local de trancher.
+
+**Solution retenue** : exploiter l'invariante « toutes les zones portent le même produit,
+donc ont la même diagonale ». On énumère toutes les paires possibles, on détermine la
+longueur de diagonale **la plus représentée** sur le plateau, et on ne retient que les
+paires qui la respectent. Les appariements fantaisistes ont une diagonale sans rapport et
+disparaissent.
+
+**Deux difficultés résolues en cours de développement** — utiles pour le rapport, elles
+illustrent l'écart entre une règle qui paraît juste sur le papier et son comportement réel :
+
+1. *Le filtrage par longueur ne suffit pas.* Sur un plateau en grille, deux zones voisines
+   d'une même ligne engendrent une paire fantôme dont le vecteur diagonale est le
+   **symétrique** du vrai — `(60, −40)` contre `(60, +40)` — donc de longueur strictement
+   identique. Elle empruntant leurs tags aux deux zones réelles, elle les invalidait par
+   conflit : un plateau parfaitement monté devenait inexploitable. La correction s'appuie
+   sur le repère du plateau : le Y descendant, une zone correctement montée a ses **deux
+   composantes positives**. Signes mixtes = fantôme (écarté), deux négatives = zone
+   inversée (signalée).
+
+2. *La règle de « la plus petite rotation » se retournait contre nous.* Deux extrémités de
+   diagonale ne définissent pas un rectangle ; connaître le format du produit ramène le
+   nombre de solutions à deux, symétriques. Retenir la plus faible rotation semblait
+   naturel — mais un rectangle 60×40 tourné de 25,8° a une diagonale orientée exactement
+   comme un 40×60 posé droit, si bien que toute zone très inclinée ressortait à ~2° et que
+   l'anomalie de montage devenait indétectable. L'ambiguïté n'existe en fait pas, le format
+   étant déduit de la **médiane** des composantes sur toutes les zones : c'est un format
+   *orienté*, la majorité ayant déjà tranché quel côté est la largeur. La rotation se
+   calcule alors directement, `θ = angle(diagonale) − angle(w, h)`.
+
+**Déduction du format du produit sans saisie opérateur** : les zones étant censées être
+vissées à peu près droites, le vecteur diagonale d'une zone bien montée vaut directement
+`(largeur, hauteur)`. La médiane sur l'ensemble des zones saines donne donc le format du
+produit sans rien demander à l'opérateur, et une zone isolée de travers ne fausse pas le
+résultat.
+
+**Anomalies détectées** : zone inversée, diagonale hors norme, paire en conflit, angle
+excessif. Une zone anormale n'invalide pas le plateau : elle est signalée et l'opérateur
+choisit de continuer avec les seules zones saines ou de rectifier le montage.
+
+**Limite assumée** : avec une **seule** zone détectée, celle-ci définit à elle seule la
+référence de format ; sa rotation ressort donc nulle même si elle est physiquement de
+travers. C'est une limite mathématique du dispositif, pas un défaut d'implémentation — il
+faut au moins deux zones pour que la comparaison ait un sens.
+
+**Interface publique** (fonction pure, testable sans caméra) :
+```python
+detect_deposit_zones_mm(centers_mm, ...) -> PlateauLayout
+VisionProcessor.detect_deposit_zones(detected_markers, homography, ...) -> PlateauLayout
+```
+
+**Résultat** : 15 tests dédiés, 78/78 pour la suite complète.
+
 ### 4.3 Calibration objectif (`modules/calibration.py`) ✅ ChArUco implémenté — validation terrain en attente
 
 **Problème** : Les objectifs de webcam bon marché introduisent une **barrel distortion** — les objets au centre de l'image paraissent plus grands qu'ils ne le sont. L'homographie corrige la perspective mais pas cette distorsion, ce qui cause une erreur de mesure d'environ **10 %** sur les distances intérieures à la zone de travail (mesuré le 2026-06-12 avec la Philips SPC 1330NC à 200 mm de hauteur).
@@ -948,6 +1015,7 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 | 2026-06-11 | Phase 2 S2 | Ajout compute_homography, warp_image, pixel_to_mm. Démo côte à côte validée visuellement. 14/14 tests passés. |
 | 2026-06-12 | Phase 2 S3 | Validation métrologique : barrel distortion ~10 % identifiée. Re-mesure zone 151×104 mm, hauteur caméra 200 mm. Création `calibration.py`, `demo_calibration.py`, `demo_validation.py`, `chessboard_calibration.png`. Calibration à exécuter chez soi. |
 | 2026-07-11 | — | Révision planning (soutenances blanches 22/07·05/08·12/08, rapport IUT 17/08, soutenance 31/08). CNC quasi assemblée + Marlin confirmé. Cadrage du process de dépose + 4 décisions : calibration **ChArUco**, **cordons multiples** avec quantité/cordon, **fichier de préparation JSON**, **temps de dépose** au rapport. |
+| 2026-08-01 | Phase 8 | **v0.2.0 — Lot A : géométrie des zones de dépose.** Cadrage complet du besoin avec l'étudiant (plusieurs zones par plateau, plusieurs cordons par zone, cordons définis une fois et appliqués partout, zones vissées à demeure donc sauvegardables). Implémentation de `detect_deposit_zones_mm()` en fonction pure : appariement `(n, n+1)`, tri par signe des composantes, longueur de diagonale de référence, détection des conflits, déduction du format du produit par médiane, reconstruction du rectangle et de sa rotation. Deux règles convenues au départ ont dû être corrigées à l'épreuve des tests (voir section 4.2 bis) : le filtrage par longueur seul laissait passer les paires fantômes d'un plateau en grille, et la règle de la plus petite rotation rendait indétectables les erreurs de montage. Correction au passage d'un défaut des tests caméra, qui ouvraient l'index 0 en dur — donc la webcam intégrée du PC — au lieu de la caméra configurée dans `local_config.json`. 78/78 tests passés (15 nouveaux). |
 | 2026-08-01 | Phase 8 | **v0.1.1 — Repère plateau refait + choix du matériel dans l'interface.** Disposition réelle des marqueurs relevée (`3`=haut-gauche, `0`=haut-droit, `1`=bas-droit, `2`=bas-gauche) et origine du repère mm placée sur le marqueur 3, avec Y dirigé vers le bas : coordonnées positives partout, et correction d'un **miroir vertical** de `warp_image()`/`warp_region()` présent depuis la Phase 2 (mis en évidence par le calcul, pas à l'œil). Inversion vers l'axe Y machine concentrée en un seul point (`screen_run.py`). Deux listes déroulantes ajoutées sur l'écran 1 pour choisir le port machine et la caméra, avec `Machine.list_ports()` / `Camera.list_devices()` côté modules et application du changement par `MainApp` (seul propriétaire de `Camera` et `Machine`). `serial_port` et `serial_baudrate` rendus surchargeables via `local_config.json`. Bug corrigé : le scan de caméras cassait le flux en cours en ouvrant un second handle DirectShow sur l'index déjà utilisé (symptôme trompeur « Camera deconnectee ») → `list_devices(exclude=...)`. Question ouverte du 2026-07-29 sur les IDs du plateau close (fausse alerte). 62/62 tests passés. |
 | 2026-07-29 | Phase 8 | Détection ChArUco débloquée (2 causes : `camera_index` erroné + `charuco_legacy_pattern` incompatible avec les mires générées par l'appli). Bug OpenCV 5.0 corrigé (`calibrateCameraCharuco` supprimée → remplacée par `board.matchImagePoints()` + `cv2.calibrateCamera()`). Ajout de l'estimation de pose et de la distance caméra↔mire (`estimate_board_pose`, `distance_to_board_normal_mm`, solvePnP). Overlay de debug ArUco/ChArUco ajouté sur les écrans capture et calibration — c'est lui qui a permis d'isoler les deux causes de blocage. `assets/camera_calibration.npz` ajouté au `.gitignore` (spécifique à chaque caméra). `MANUEL_UTILISATEUR.md` et `MANUEL_MAINTENANCE.md` créés. Points ouverts identifiés : collision d'IDs ArUco plateau/mire, IDs réels du plateau à confirmer (`{0,3,4,5}` ?). 45/45 tests passés. |
 
