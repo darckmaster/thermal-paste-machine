@@ -268,6 +268,54 @@ n'échouent pas.
 |---|---|---|
 | Calibration objectif | `assets/camera_calibration.npz` | Non — spécifique à chaque machine |
 | Config par machine | `local_config.json` | Non |
-| Préparations (tracés sauvegardés) | `preparations/` | ⬜ Fonctionnalité pas encore implémentée |
+| Préparations validées | `preparations/<produit>.json` | Non |
+| Travaux interrompus (autosave) | `preparations/<produit>.autosave.json` | Non |
 | Rapports PDF générés | `reports/*.pdf` | Non |
 | Mire ChArUco générée | `assets/charuco_calibration.png` | À vérifier au cas par cas |
+
+### 6.1 Fichier de préparation — format et cycle de vie
+
+Une **préparation** rassemble tout le travail fait sur un plateau : la référence du
+produit, les zones détectées, les cordons et les paramètres de dépose. Le module
+responsable est `modules/preparation.py`.
+
+**Deux fichiers, deux rôles** :
+
+| Fichier | Écrit par | Rôle |
+|---|---|---|
+| `<produit>.json` | Le bouton d'enregistrement | La préparation **validée** par l'opérateur |
+| `<produit>.autosave.json` | Automatiquement, toutes les 5 s | Filet **anti-plantage** |
+
+L'autosave ne touche jamais au fichier définitif : tant que l'opérateur n'a pas validé,
+son dernier enregistrement volontaire reste intact. À l'inverse, l'enregistrement
+définitif **supprime** l'autosave — sans quoi l'application proposerait indéfiniment de
+reprendre un travail déjà terminé. La présence d'un `.autosave.json` au démarrage
+signale donc un travail interrompu, et rien d'autre.
+
+**Écriture atomique** : les deux fichiers passent par un temporaire puis `os.replace()`.
+Une coupure en pleine écriture laisserait sinon un fichier tronqué — particulièrement
+absurde pour une sauvegarde dont le rôle est justement de protéger des plantages.
+
+**Coordonnées** : les cordons sont enregistrés en **mm relatifs à la zone** (origine au
+coin haut-gauche, axes le long des côtés). C'est ce qui permet de rejouer un même cordon
+dans toutes les zones, et ça les rend insensibles à un léger déplacement de la caméra.
+Les positions des zones, elles, sont en mm **absolus** dans le repère du plateau : elles
+ne valent donc que pour la position de caméra du jour où la photo a été prise.
+
+**`format_version`** : un fichier écrit par une version **plus récente** du logiciel est
+refusé avec un message explicite, plutôt que relu de travers — sur des coordonnées de
+dépose, une lecture silencieusement fausse enverrait la buse au mauvais endroit. À
+l'inverse une clé *manquante* reprend sa valeur par défaut, donc un fichier ancien reste
+lisible. Incrémenter `FORMAT_VERSION` dès qu'un changement rend les anciens fichiers
+inexploitables.
+
+**Nom de fichier** : le nom du produit est saisi librement par l'opérateur et sert de nom
+de fichier. Les caractères interdits (`< > : " / \ | ? *`) sont remplacés par `_`, sinon
+une référence du type `REF 12/34` créerait un sous-dossier fantôme. Le champ
+`product_name` **à l'intérieur** du fichier garde la référence exacte, c'est lui qui est
+affiché à l'écran.
+
+**Lisibilité** : les paires de coordonnées sont maintenues sur une seule ligne. Sans ce
+traitement, `json.dumps(indent=2)` éclaterait chaque `[x, y]` sur six lignes et un
+plateau réaliste ferait plusieurs centaines de lignes de crochets quasi vides. Le
+résultat reste du JSON strictement standard.
