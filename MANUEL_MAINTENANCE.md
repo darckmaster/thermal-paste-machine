@@ -19,7 +19,31 @@ assets/     ressources générées ou statiques (mires, calibration, synoptiques
 
 `gui/app.py::MainApp` possède **une seule instance `Camera`**, partagée entre l'écran
 de capture et l'écran de calibration (évite un release/reopen coûteux à chaque
-changement d'écran).
+changement d'écran). Il possède aussi l'unique instance `Machine`.
+
+**Conséquence pour tout ajout de fonctionnalité** : un écran ne remplace jamais la
+caméra ni la machine lui-même. Les listes déroulantes de l'écran 1 émettent les signaux
+`camera_selected(int)` / `machine_port_selected(str)`, et c'est `MainApp` qui applique le
+changement puis redistribue la nouvelle référence aux écrans. Sans cette règle, deux
+endroits différents ouvriraient la caméra et l'un des deux handles finirait non libéré.
+
+### Repère géométrique du plateau (⚠ mis à jour le 2026-08-01)
+
+Disposition physique des marqueurs de coin, **telle qu'elle apparaît à l'écran** :
+
+```
+3 ─────── 0        origine mm = marqueur 3 (haut-gauche)
+│         │        X+ vers la droite
+│         │        Y+ vers le BAS (comme les lignes d'une image)
+2 ─────── 1
+```
+
+L'axe Y du repère mm est donc **opposé** à l'axe Y machine (qui croît vers le fond).
+L'inversion se fait à **un seul endroit** du code, `gui/screen_run.py` :
+`machine_y = MACHINE_ORIGIN_Y - y_mm`. Ne pas la dupliquer ailleurs.
+
+`MACHINE_ORIGIN_X/Y` (`modules/config.py`) est la position machine du **marqueur 3** :
+c'est au-dessus de lui, et pas d'un autre, qu'il faut faire le `M114` de mesure.
 
 ## 2. Configuration par machine
 
@@ -33,6 +57,8 @@ Paramètres surchargeables (voir `modules/config.py` pour les valeurs par défau
 | Clé | Rôle |
 |---|---|
 | `camera_index` | Index OpenCV de la caméra USB. **Voir section 4 — ne jamais supposer un index sans vérifier.** |
+| `serial_port` | Port de la carte Marlin. Défaut `/dev/ttyUSB0` (RPi) ; sous Windows, mettre `COM3` ou équivalent |
+| `serial_baudrate` | Vitesse série, doit correspondre au firmware. Défaut 250000 (Geeetech) ; souvent 115200 ailleurs |
 | `calibration_min_images` | Nombre minimum de poses ChArUco avant de pouvoir calibrer (défaut 15) |
 | `charuco_cols` / `charuco_rows` | Dimensions de la mire en cases (défaut 4×4) |
 | `charuco_square_mm` / `charuco_marker_mm` | Taille physique case/marqueur de la mire imprimée |
@@ -139,15 +165,41 @@ marqueurs du plateau (papier blanc) pendant la calibration. Correctif propre à
 prévoir : attribuer à la mire une plage d'IDs disjointe de celle du plateau (voir
 `CONCEPTION.md` pour le suivi).
 
-### 4.5 IDs réels des marqueurs du plateau à vérifier
+### 4.5 IDs réels des marqueurs du plateau — ✅ résolu (v0.1.1)
 
-Un test de détection (session v0.1) a montré des IDs dupliqués `{0, 3, 4, 5}` entre
-plateau et mire dans une même image — ce qui suggère que les marqueurs physiques du
-plateau pourraient être `{0, 3, 4, 5}` plutôt que `{0, 1, 2, 3}` comme documenté dans
-`CLAUDE.md`/`modules/vision.py::compute_homography()`. **Non confirmé formellement**
-(nécessite une photo du plateau seul, sans mire, pour trancher). Si confirmé, ça
-casserait `compute_homography()` qui exige explicitement les IDs 0,1,2,3 — à vérifier
-en priorité avant de s'appuyer dessus pour la suite du projet.
+**Doute de la session v0.1** : un test de détection avait montré `{0, 3, 4, 5}`, laissant
+craindre que les marqueurs du plateau soient `{0, 3, 4, 5}` au lieu de `{0, 1, 2, 3}`.
+
+**Conclusion (2026-08-01, observation en direct sur le plateau réel)** : fausse piste. Le
+plateau utilise bien `{0, 1, 2, 3}`. La liste `{0, 3, 4, 5}` se décompose en :
+
+- `3` et `0` = les deux marqueurs du **haut** du plateau, seuls cadrés par la caméra fixe ;
+- `4` et `5` = les deux marqueurs de la **zone de dépose**, qui ne sont pas des marqueurs
+  de plateau ;
+- `1` et `2` = les coins du bas, hors champ.
+
+Aucune collision d'IDs entre plateau et zone. Autre enseignement : **le repli à 2
+marqueurs est le mode nominal** sur la Geeetech, pas un cas dégradé rare — voir
+`modules/vision.py::compute_homography_approx()`.
+
+### 4.6 « Camera deconnectee — rebrancher et relancer » alors que rien n'est débranché
+
+**Symptôme** : l'aperçu de l'écran 1 se fige sur ce message, au démarrage ou juste après
+un changement de caméra, sans qu'aucun câble n'ait bougé.
+
+**Cause** (identifiée en v0.1.1) : le scan qui remplit la liste déroulante des caméras
+ouvrait **tous** les index, y compris celui déjà utilisé par l'application. Ça crée un
+second handle sur le même périphérique ; sous DirectShow, le `release()` de ce second
+handle **coupe le flux du premier**. La caméra devient muette, `capture()` échoue 3 fois
+de suite et l'écran affiche le message de déconnexion — qui est donc trompeur.
+
+**Protection en place** : `Camera.list_devices(exclude=...)` ne sonde jamais un index
+déjà en service ; `gui/screen_capture.py::_refresh_camera_list()` y passe l'index courant
+puis le réintègre à la main dans la liste affichée. Verrouillé par le test
+`test_list_devices_exclude_preserve_la_camera_en_service`.
+
+⚠️ **Règle générale à retenir** : ne jamais ouvrir une `VideoCapture` sur un index déjà
+ouvert ailleurs dans le processus, même brièvement, même pour "juste tester".
 
 ## 5. Lancer les tests
 

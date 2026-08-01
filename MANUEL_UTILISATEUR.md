@@ -29,12 +29,30 @@ l'opérateur sur une photo de la pièce, avec une quantité de pâte réglable.
 
 C'est l'écran de démarrage. Il affiche le flux de la caméra en direct.
 
+- **Choisir le matériel** (ligne du haut, sous l'image) : deux listes déroulantes.
+  - **Machine** : port série de la carte de commande. Choisir celui dont la description
+    mentionne un port série USB (puce CH340) — sous Windows, ne pas confondre avec les
+    ports Bluetooth, qui apparaissent aussi dans la liste.
+  - **Caméra** : caméra utilisée pour l'aperçu et la photo. Celle en service est suffixée
+    `(en cours)`.
+  - **Rafraichir** : re-scanne le matériel présent, sans redémarrer l'application. À
+    utiliser après avoir branché la carte ou la caméra.
+  - ⚠️ Ces choix ne sont **pas conservés** au redémarrage : l'application repart des
+    valeurs enregistrées dans sa configuration (voir `MANUEL_MAINTENANCE.md` section 2
+    pour les y inscrire définitivement).
 - **Positionner la pièce** : poser le boîtier à déposer sur le plateau, à l'intérieur
-  de la zone délimitée par les 4 marqueurs ArUco (repères noir et blanc aux coins).
+  de la zone délimitée par les 2 marqueurs ArUco de zone (IDs 4 et 5, placés en
+  diagonale aux coins opposés de la zone de dépose).
 - **Vérifier les marqueurs** : le flux vidéo dessine un carré vert autour de chaque
   marqueur ArUco détecté, avec son numéro (ID). Sous l'image, un message indique
-  combien de marqueurs sont vus (`Marqueurs détectés : [0, 1, 2, 3]`). **Les 4 doivent
-  être visibles** pour pouvoir tracer un chemin à l'écran suivant.
+  lesquels sont vus (ex. `Marqueurs détectés : [0, 3, 4, 5]`). Il faut :
+  - **au moins 2 marqueurs du plateau** parmi les IDs 0, 1, 2, 3 (les coins) ;
+  - **les 2 marqueurs de zone** 4 et 5.
+
+  Sur la Geeetech, la caméra est trop proche pour cadrer les 4 coins du plateau à la
+  fois : voir seulement les 2 marqueurs du haut (IDs 3 et 0) est le fonctionnement
+  **normal**, pas une anomalie. La précision est simplement un peu moindre, et l'écran
+  suivant le signale.
 - **Homing (G28)** : envoie la machine à sa position de référence (butées mécaniques).
   À faire avant tout nouveau cycle si ce n'est pas automatique. Prend 30 à 60 secondes ;
   l'interface reste utilisable pendant ce temps.
@@ -46,8 +64,12 @@ C'est l'écran de démarrage. Il affiche le flux de la caméra en direct.
 
 ## 3. Écran 2 — Tracer le chemin de dépose
 
-Affiche la photo capturée. L'opérateur trace le chemin de dépose en tapant/cliquant
-directement dessus.
+Affiche la photo capturée, **zoomée et redressée sur la zone de dépose** (le rectangle
+délimité par les marqueurs 4 et 5) : on ne trace pas sur toute la photo, mais sur un
+gros plan vu du dessus de la seule zone utile. Le message sous l'image indique la taille
+réelle de cette zone, par exemple `Zone de dépose 60×40 mm`.
+
+L'opérateur trace le chemin de dépose en tapant/cliquant directement dessus.
 
 - **Ajouter un point** : cliquer/toucher sur la photo. Un cercle vert marque le premier
   point (départ), un cercle rouge le dernier (arrivée), des cercles orange les points
@@ -60,9 +82,13 @@ directement dessus.
 - **Lancer** : disponible dès 2 points tracés (minimum pour former un segment). Convertit
   le tracé en coordonnées réelles (mm) et passe à l'exécution.
 
-⚠️ Si moins de 4 marqueurs ArUco sont détectés sur la photo, le message d'avertissement
-"conversion pixels→mm indisponible" s'affiche et le tracé ne pourra pas être lancé
-correctement — retourner à l'écran 1 et reprendre une photo avec les 4 marqueurs visibles.
+Messages d'avertissement possibles sous l'image, du moins grave au plus grave :
+
+| Message | Signification | Que faire |
+|---|---|---|
+| `⚠ Précision réduite (2-3 marqueurs plateau...)` | Seuls 2 ou 3 coins du plateau sont visibles. La correction de perspective ne peut pas être calculée, la conversion en mm est approximative. **Situation normale sur la Geeetech.** | Le tracé fonctionne. Pour plus de précision, reculer la caméra si c'est possible. |
+| `Plateau détecté, mais zone de dépose non trouvée (marqueurs 4/5 manquants)` | Le zoom sur la zone est impossible : le tracé se fait sur la photo entière. | Vérifier que les 2 marqueurs de zone sont bien posés et visibles, puis reprendre une photo. |
+| `Attention : marqueurs du plateau insuffisants (.../4 détectés, 2 minimum) — conversion pixels→mm indisponible` | Moins de 2 coins du plateau vus : aucune conversion en mm n'est possible. | Retourner à l'écran 1 et reprendre une photo avec au moins 2 marqueurs de coin visibles. |
 
 ## 4. Écran 3 — Dépose en cours
 
