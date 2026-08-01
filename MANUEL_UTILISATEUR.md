@@ -12,16 +12,25 @@
 
 ## 1. Vue d'ensemble
 
-L'interface s'organise en 5 écrans, dans l'ordre du cycle de dépose :
+L'interface s'organise en 6 écrans :
 
 ```
 [Capture] → [Tracé du chemin] → [Dépose en cours] → [Rapport] → (retour à Capture)
-    ↕
-[Calibration caméra]  (accessible depuis l'écran Capture, à part du cycle normal)
+    ↕                ↕
+[Calibration]   [Créer un plateau]   (accessibles depuis l'écran Capture)
 ```
 
-Un cycle complet dépose de la pâte thermique le long d'**un seul chemin** tracé par
-l'opérateur sur une photo de la pièce, avec une quantité de pâte réglable.
+**Deux processus cohabitent pour l'instant.**
+
+Le **cycle historique** (sections 2 à 5) dépose la pâte le long d'**un seul chemin**
+tracé sur une photo de la pièce. C'est le seul qui va aujourd'hui jusqu'à la dépose
+réelle sur la machine.
+
+Le **nouveau processus multi-zones** (section 7) traite un plateau portant **plusieurs
+zones de dépose**, chacune accueillant un exemplaire du même produit, avec des cordons
+tracés une seule fois et appliqués à toutes. Il est en cours de construction : à ce
+stade il sait reconnaître les zones et diagnostiquer le montage, mais pas encore tracer
+ni déposer. Les deux processus fusionneront quand le nouveau sera complet.
 
 ---
 
@@ -37,6 +46,9 @@ C'est l'écran de démarrage. Il affiche le flux de la caméra en direct.
     `(en cours)`.
   - **Rafraichir** : re-scanne le matériel présent, sans redémarrer l'application. À
     utiliser après avoir branché la carte ou la caméra.
+- **Créer un plateau** : ouvre le nouveau processus multi-zones (voir section 7). Il
+  cohabite pour l'instant avec le cycle décrit aux sections 3 à 5, qui reste le seul à
+  aller jusqu'à la dépose réelle.
   - ⚠️ Ces choix ne sont **pas conservés** au redémarrage : l'application repart des
     valeurs enregistrées dans sa configuration (voir `MANUEL_MAINTENANCE.md` section 2
     pour les y inscrire définitivement).
@@ -142,3 +154,70 @@ bouton "Calibration caméra".
 6. **Sauvegarder** : enregistre les coefficients dans `assets/camera_calibration.npz`
    (actif seulement si l'erreur est acceptable).
 7. **Recommencer** : efface les poses capturées pour refaire l'opération depuis le début.
+
+## 7. Écran « Créer un plateau » — processus multi-zones
+
+> **En construction.** À ce stade, cet écran reconnaît les zones de dépose et diagnostique
+> le montage du plateau. Le tracé des cordons et la dépose viendront ensuite.
+
+### Ce qu'est une zone de dépose
+
+Une **zone de dépose** est l'emplacement d'un produit sur le plateau. Elle est **vissée à
+demeure** et repérée par **deux marqueurs ArUco** collés aux deux extrémités de sa
+diagonale, du coin **haut-gauche** au coin **bas-droit**.
+
+**Règle de numérotation à respecter au montage** : le marqueur du bas-droit porte l'identifiant
+du haut-gauche **plus un**. Une zone `4` en haut à gauche a donc son `5` en bas à droite.
+C'est cette règle qui permet au logiciel de dire si une zone a été posée à l'envers.
+
+Les identifiants `0` à `3` sont réservés aux quatre coins du plateau : les zones commencent
+donc à `4`. Toutes les zones d'un plateau accueillent le **même produit**, donc ont les
+mêmes dimensions.
+
+### Marche à suivre
+
+1. Depuis l'écran 1, appuyer sur **Créer un plateau**.
+2. Saisir la **référence du produit**. Elle nomme le fichier de travail et reste affichée
+   en haut de l'écran, pour qu'on sache à tout moment sur quoi on travaille.
+3. Cadrer le plateau. Le flux en direct entoure chaque marqueur reconnu et affiche leur
+   liste sous l'image : c'est le moment de vérifier le cadrage, pas après.
+4. **Capturer**. Le logiciel analyse la photo et matérialise son diagnostic :
+
+   | Sur l'image | Signification |
+   |---|---|
+   | Rectangle **vert** avec `4/5` | Zone reconnue et exploitable |
+   | Rectangle **rouge** avec un libellé de défaut | Zone inutilisable — le défaut est nommé |
+   | Cercle **orange** autour d'un marqueur | Marqueur sans zone (partenaire absent ou format incohérent) |
+
+5. **Continuer** indique entre parenthèses le nombre de zones exploitables. Il reste
+   inactif s'il n'y en a aucune. **Reprendre** permet de refaire une photo, typiquement
+   après avoir rectifié le montage.
+
+### Les défauts signalés
+
+| Message | Cause probable | Que faire |
+|---|---|---|
+| `à l'envers` | Les deux marqueurs sont intervertis, ou la zone est posée retournée | Intervertir les deux marqueurs, ou retourner la zone |
+| `format différent` | La zone n'a pas les mêmes dimensions que les autres | Vérifier qu'il s'agit bien du même produit, et que les marqueurs sont bien aux coins |
+| `marqueurs ambigus` | Un marqueur est revendiqué par deux zones — impossible de trancher | Renuméroter les zones pour éviter les identifiants qui se suivent d'une zone à l'autre |
+| `trop inclinée` | La zone est vissée de travers de plus de 10° | Redresser la zone |
+| `format indéterminable` | Plus aucune zone n'est saine et à l'endroit, le logiciel n'a plus de référence | Remettre au moins deux zones correctement, puis reprendre une photo |
+| `Marqueurs du plateau insuffisants` | Moins de 2 coins du plateau visibles | Reculer ou recadrer la caméra |
+
+Une zone en défaut **n'empêche pas** de travailler sur les autres : le message indique
+combien de zones restent exploitables, et l'opérateur décide de continuer ou de rectifier
+son plateau.
+
+⚠️ Le message `Précision réduite` apparaît quand seuls 2 ou 3 coins du plateau sont
+visibles. **C'est la situation normale sur la Geeetech**, dont la caméra ne peut pas
+cadrer les quatre coins : ce n'est pas une panne, seulement un rappel que la conversion en
+millimètres est moins précise.
+
+### Deux points à connaître
+
+- Le rectangle tracé s'appuie sur le **centre** des marqueurs, il est donc légèrement en
+  retrait du contour physique du produit. C'est cette surface-là qui servira de zone de
+  tracé.
+- Le **format du produit** affiché est déduit de l'ensemble des zones. Avec une seule zone
+  saine, il vaut simplement les dimensions de cette zone et ne constitue aucun contrôle :
+  il faut au moins deux zones pour que la comparaison ait un sens.

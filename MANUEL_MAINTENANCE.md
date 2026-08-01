@@ -60,7 +60,7 @@ diagonale : c'est cette invariante qui fait tout fonctionner.
 |---|---|---|
 | 1 | Paires candidates `(n, n+1)` | Un tag peut apparaître dans deux paires — l'ambiguïté est levée plus loin |
 | 2 | Tri par signe des composantes | `(+,+)` = zone plausible · `(−,−)` = zone inversée · **signes mixtes = paire fantôme, écartée** |
-| 3 | Longueur de diagonale de référence | Groupe majoritaire à ± tolérance, puis médiane du groupe |
+| 3 | Longueur de diagonale de référence | Groupe majoritaire à ± tolérance, puis médiane. Vote sur les paires plausibles **ET** inversées |
 | 4 | Conflits | Un tag revendiqué par deux paires invalide les deux |
 | 5 | Format `(w, h)` du produit | Médiane des composantes de diagonale des zones saines |
 | 6 | Rectangle et rotation | `θ = angle(diagonale) − angle(w, h)` |
@@ -81,9 +81,24 @@ l'anomalie de montage passerait inaperçue. L'ambiguïté n'existe pas ici parce
 format déduit à l'étape 5 est **orienté** — la majorité des zones a déjà tranché quel
 côté est la largeur. Une zone réellement montée à 90° sort en zone inversée.
 
+**c) Le vote sur la longueur doit inclure les zones inversées.** Une zone montée à
+l'envers reste une zone, et sa diagonale a bien la longueur du produit. Si le vote ne
+portait que sur les paires d'orientation plausible, un plateau dont **toutes** les zones
+sont inversées les exclurait toutes du scrutin : les rares paires fantômes d'orientation
+plausible fixeraient alors seules la référence, les vraies zones seraient rejetées comme
+orphelines, et des fantômes seraient présentés comme des zones **valides**. Faux et
+silencieux (constaté en écrivant les tests du lot C1, corrigé en v0.4.0). Seules les
+paires à signes mixtes restent hors du vote.
+
 **Limite du dispositif** : avec une **seule** zone détectée, elle définit à elle seule la
 référence de format ; sa rotation ressort donc nulle même si elle est physiquement de
 travers. Ce n'est pas un bug (test `test_zone_unique_ne_permet_pas_de_detecter_un_mauvais_montage`).
+
+**Les cinq anomalies** (`modules/vision.py`) : `zone_inversee`, `diagonale_hors_norme`,
+`paire_en_conflit`, `angle_excessif`, et `format_indeterminable` — cette dernière quand
+plus aucune zone n'est saine et à l'endroit, donc qu'aucun format ne peut être déduit et
+qu'aucun rectangle ne peut être reconstruit. Elle est distincte de `diagonale_hors_norme`,
+qui signalerait à tort un problème de diagonale alors que celle-ci est correcte.
 
 Deux seuils de réglage, dans `modules/vision.py` : `ZONE_DIAGONAL_TOLERANCE_MM` (5 mm)
 et `ZONE_MAX_ROTATION_DEG` (10°).
