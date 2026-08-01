@@ -89,6 +89,24 @@ CHARUCO_DICT_NAME: str  = str(_local_cfg.get("charuco_dict", "DICT_4X4_50"))
 # des générateurs externes. Passer à false uniquement si la mire est générée par OpenCV 4.6+.
 CHARUCO_LEGACY_PATTERN: bool = bool(_local_cfg.get("charuco_legacy_pattern", True))
 
+# Préparations (plateaux enregistrés : zones + cordons + paramètres)
+# Dossier où sont écrits les fichiers JSON de travail, à la racine du projet.
+# Chemin absolu calculé depuis l'emplacement de ce fichier : le dossier doit être
+# trouvé quel que soit le répertoire courant depuis lequel l'application est lancée.
+PREPARATIONS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "preparations")
+)
+
+# Paramètres de dépose par défaut, repris dans chaque nouvelle préparation.
+# Ils déterminent ensemble la quantité de pâte déposée : plus la buse avance lentement
+# pour une vitesse d'extrusion donnée, plus le cordon est épais.
+DEFAULT_TRAVEL_SPEED_MM_MIN = float(
+    _local_cfg.get("default_travel_speed_mm_min", MACHINE_FEEDRATE_XY)
+)
+DEFAULT_EXTRUSION_SPEED_MM_MIN = float(
+    _local_cfg.get("default_extrusion_speed_mm_min", MACHINE_FEEDRATE_DISPENSE)
+)
+
 # Interface
 TOUCHSCREEN_WIDTH = 800
 TOUCHSCREEN_HEIGHT = 480

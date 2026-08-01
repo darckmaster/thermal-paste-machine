@@ -147,6 +147,46 @@ class DepositZone:
         ys = [c[1] for c in self.corners_mm]
         return (sum(xs) / 4.0, sum(ys) / 4.0)
 
+    # ------------------------------------------------------------------ repères
+    #
+    # Les cordons sont mémorisés en mm RELATIFS à la zone : origine au coin
+    # haut-gauche, X le long de la largeur, Y le long de la hauteur. C'est ce qui
+    # permet de tracer un cordon une seule fois et de l'appliquer à toutes les
+    # autres zones du plateau, qui accueillent le même produit — il suffit de
+    # rejouer les mêmes coordonnées dans le repère de chaque zone.
+    #
+    # Les deux méthodes ci-dessous sont exactement inverses l'une de l'autre.
+
+    def to_plateau_mm(self, point_zone_mm: tuple) -> tuple:
+        """Convertit un point exprimé dans le repère de la zone → repère du plateau.
+
+        Applique la rotation de la zone puis la translation vers son coin haut-gauche.
+        """
+        x, y = point_zone_mm
+        theta = math.radians(self.rotation_deg)
+        cos_t, sin_t = math.cos(theta), math.sin(theta)
+
+        origine = self.corners_mm[0]  # coin haut-gauche de la zone
+        return (
+            origine[0] + x * cos_t - y * sin_t,
+            origine[1] + x * sin_t + y * cos_t,
+        )
+
+    def to_zone_mm(self, point_plateau_mm: tuple) -> tuple:
+        """Convertit un point du repère du plateau → repère de la zone.
+
+        Opération inverse de to_plateau_mm : on translate d'abord vers l'origine de
+        la zone, puis on applique la rotation opposée (-θ).
+        """
+        origine = self.corners_mm[0]
+        dx = point_plateau_mm[0] - origine[0]
+        dy = point_plateau_mm[1] - origine[1]
+
+        theta = math.radians(-self.rotation_deg)
+        cos_t, sin_t = math.cos(theta), math.sin(theta)
+
+        return (dx * cos_t - dy * sin_t, dx * sin_t + dy * cos_t)
+
     def __repr__(self) -> str:
         etat = "OK" if self.is_valid else ",".join(self.anomalies)
         return (
