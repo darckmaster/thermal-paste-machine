@@ -659,6 +659,115 @@ def test_rectangle_from_diagonal_ne_reinterprete_pas_une_forte_rotation() -> Non
     assert taille == (PRODUIT_W, PRODUIT_H), "les côtés ne doivent pas être échangés"
 
 
+# ===========================================================================
+# Sur image réelle — chaîne complète, matériel branché
+# ===========================================================================
+#
+# Ces tests travaillent sur la PHOTO réellement prise par la caméra du projet (fixture
+# plateau_capture, voir tests/conftest.py). Ils ne remplacent pas les tests synthétiques
+# ci-dessus, qui restent la référence parce qu'ils sont déterministes : ils les
+# complètent en vérifiant que la chaîne tient sur des données bruitées — flou, reflets,
+# marqueurs vus de biais. Ils sont ignorés (`skip`) si le plateau n'est pas devant
+# l'objectif.
+
+def test_detection_reproductible_sur_image_reelle(
+    vision: VisionProcessor, plateau_capture
+) -> None:
+    """Deux détections sur la MÊME image doivent donner exactement le même résultat.
+
+    La détection ArUco est déterministe : si ce test échoue, c'est qu'un état est
+    conservé d'un appel à l'autre dans le détecteur, ce qui rendrait tout le reste
+    imprévisible.
+    """
+    premiere = vision.detect_markers(plateau_capture.image)
+    seconde = vision.detect_markers(plateau_capture.image)
+
+    assert set(premiere) == set(seconde)
+    assert set(premiere) == set(plateau_capture.marker_ids), (
+        "la détection doit retrouver les mêmes marqueurs que lors de la sélection"
+    )
+
+
+def test_coins_de_marqueur_bien_formes_sur_image_reelle(
+    vision: VisionProcessor, plateau_capture
+) -> None:
+    """Chaque marqueur détecté sur une vraie photo doit avoir 4 coins situés dans les
+    limites de l'image — un coin hors cadre signalerait une détection aberrante."""
+    hauteur, largeur = plateau_capture.image.shape[:2]
+
+    for marker_id, coins in vision.detect_markers(plateau_capture.image).items():
+        assert coins.shape == (4, 2), f"marqueur {marker_id} : forme {coins.shape}"
+        assert coins[:, 0].min() >= 0 and coins[:, 0].max() <= largeur
+        assert coins[:, 1].min() >= 0 and coins[:, 1].max() <= hauteur
+
+
+def test_homographie_sur_image_reelle(vision: VisionProcessor, plateau_capture) -> None:
+    """Si assez de marqueurs de plateau sont visibles, l'homographie doit se calculer et
+    convertir en millimètres plausibles.
+
+    « Plausible » se juge sur l'ordre de grandeur : un point de l'image doit retomber
+    dans une fourchette de quelques dizaines de centimètres autour du plateau. Une
+    homographie dégénérée produirait des valeurs immenses ou NaN.
+    """
+    marqueurs = vision.detect_markers(plateau_capture.image)
+    ids_plateau = {0, 1, 2, 3} & marqueurs.keys()
+
+    if len(ids_plateau) < 2:
+        pytest.skip(
+            f"moins de 2 marqueurs de plateau visibles ({sorted(ids_plateau)}) — "
+            f"impossible de calculer une homographie"
+        )
+
+    if len(ids_plateau) == 4:
+        H = vision.compute_homography(marqueurs)
+    else:
+        H = vision.compute_homography_approx(marqueurs)
+
+    # Convertir le centre de l'image, forcément situé sur le plateau ou tout près
+    hauteur, largeur = plateau_capture.image.shape[:2]
+    x_mm, y_mm = vision.pixel_to_mm(largeur / 2, hauteur / 2, H)
+
+    assert math.isfinite(x_mm) and math.isfinite(y_mm), "homographie dégénérée"
+    assert -500 < x_mm < 500 and -500 < y_mm < 500, (
+        f"centre de l'image converti en ({x_mm:.0f}, {y_mm:.0f}) mm — hors de toute "
+        f"plage plausible pour un plateau de 220 mm"
+    )
+
+
+def test_zones_de_depose_sur_image_reelle(
+    vision: VisionProcessor, plateau_capture
+) -> None:
+    """Si des marqueurs de zone sont visibles, la reconstruction doit aboutir sans
+    exception et produire des zones cohérentes avec le format déduit.
+
+    Ce test ne présume PAS du nombre de zones réellement posées sur le plateau : il
+    vérifie la cohérence interne du résultat, seule chose qui doive être vraie quelle
+    que soit la scène.
+    """
+    marqueurs = vision.detect_markers(plateau_capture.image)
+    ids_plateau = {0, 1, 2, 3} & marqueurs.keys()
+    ids_zone = {i for i in marqueurs if i >= 4}
+
+    if len(ids_plateau) < 2 or len(ids_zone) < 2:
+        pytest.skip(
+            f"pas de quoi reconstruire une zone (plateau {sorted(ids_plateau)}, "
+            f"zone {sorted(ids_zone)})"
+        )
+
+    H = (vision.compute_homography(marqueurs) if len(ids_plateau) == 4
+         else vision.compute_homography_approx(marqueurs))
+    layout = vision.detect_deposit_zones(marqueurs, H)
+
+    for zone in layout.zones:
+        assert zone.id_bottom_right == zone.id_top_left + 1, "convention d'appariement"
+        assert len(zone.corners_mm) == 4
+        assert all(math.isfinite(c) for coin in zone.corners_mm for c in coin)
+
+    if layout.product_size_mm is not None:
+        largeur, hauteur = layout.product_size_mm
+        assert largeur > 0 and hauteur > 0, "le format déduit doit être positif"
+
+
 # ------------------------------------------------------------------ intégration
 
 def test_detect_deposit_zones_depuis_des_marqueurs_pixels(vision: VisionProcessor) -> None:
