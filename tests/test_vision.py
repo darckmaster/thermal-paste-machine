@@ -562,6 +562,40 @@ def test_paire_fantome_de_meme_longueur_ne_casse_pas_le_plateau() -> None:
     assert not layout.has_anomalies
 
 
+def test_plateau_entierement_inverse_reste_identifie() -> None:
+    """Régression : si TOUTES les zones sont montées à l'envers, elles doivent quand
+    même être reconnues et signalées comme telles.
+
+    Le piège corrigé : la longueur de référence était calculée sur les seules paires
+    d'orientation plausible. Toutes les vraies zones étant inversées, elles sortaient du
+    vote, et les rares paires fantômes d'orientation plausible fixaient seules la
+    référence — les vraies zones étaient alors rejetées comme orphelines pendant que des
+    FANTÔMES étaient présentés comme des zones valides. Un résultat faux et silencieux.
+
+    Le vote porte désormais sur toutes les paires d'orientation cohérente, inversées
+    comprises : les vraies zones, qui partagent la même longueur, forment le groupe
+    majoritaire et l'emportent.
+    """
+    centres = {}
+    for id_tl, (x, y) in ((4, (10.0, 10.0)), (6, (130.0, 10.0)), (8, (10.0, 90.0))):
+        zone = _zone_centers(id_tl, x, y)
+        # Intervertir les deux marqueurs : la zone est montée à l'envers
+        centres[id_tl] = zone[id_tl + 1]
+        centres[id_tl + 1] = zone[id_tl]
+
+    layout = detect_deposit_zones_mm(centres)
+
+    paires = {(z.id_top_left, z.id_bottom_right) for z in layout.zones}
+    assert paires == {(4, 5), (6, 7), (8, 9)}, (
+        f"les 3 vraies zones doivent être identifiées, obtenu {paires} "
+        f"(orphelins : {layout.unpaired_ids})"
+    )
+    for zone in layout.zones:
+        assert ANOMALIE_INVERSEE in zone.anomalies
+    assert layout.valid_zones == [], "aucune zone inversée n'est exploitable"
+    assert layout.unpaired_ids == [], "aucun marqueur ne doit être déclaré orphelin"
+
+
 def test_paires_en_conflit_invalidees_toutes_les_deux() -> None:
     """Si deux paires à la bonne longueur se disputent un marqueur, aucune des deux
     n'est exploitable : impossible de savoir laquelle est la vraie zone."""

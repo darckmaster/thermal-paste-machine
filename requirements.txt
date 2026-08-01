@@ -3,4 +3,7 @@ pyserial>=3.5
 fpdf2>=2.7
 numpy>=1.24
 pytest>=7.0
+pytest-qt>=4.2          # pilotage des widgets PyQt5 dans les tests automatiques
+openpyxl>=3.1           # assets/generate_planning.py
+python-pptx>=0.6        # assets/generate_presentation.py
 # PyQt5 installé via apt sur Raspberry Pi OS

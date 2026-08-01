@@ -99,6 +99,10 @@ ANOMALIE_INVERSEE = "zone_inversee"
 ANOMALIE_DIAGONALE = "diagonale_hors_norme"
 ANOMALIE_CONFLIT = "paire_en_conflit"
 ANOMALIE_ANGLE = "angle_excessif"
+# Aucun format de produit n'a pu être déduit, donc aucun rectangle reconstruit. Arrive
+# quand plus aucune zone n'est à la fois saine et à l'endroit — typiquement un plateau
+# intégralement monté à l'envers.
+ANOMALIE_FORMAT_INCONNU = "format_indeterminable"
 
 
 class DepositZone:
@@ -385,12 +389,19 @@ def detect_deposit_zones_mm(
     inversees = {p: d for p, d in diagonales.items() if d[0] < 0 and d[1] < 0}
 
     # --- Étape 3 : longueur de référence et filtrage ------------------------
-    # La référence se calcule sur les seules zones plausibles. Repli sur les zones
-    # inversées si aucune n'est plausible : un plateau intégralement monté à l'envers
-    # doit être signalé comme tel, pas rester silencieusement vide.
-    base_reference = plausibles if plausibles else inversees
+    # La référence se calcule sur TOUTES les paires d'orientation cohérente, inversées
+    # comprises : une zone montée à l'envers reste une zone, et sa diagonale a bien la
+    # longueur du produit. Seules les paires à signes mixtes — les fantômes — sont
+    # exclues du vote.
+    #
+    # Ne voter que sur les paires plausibles serait un piège : si TOUTES les zones d'un
+    # plateau sont montées à l'envers, elles disparaissent du vote et les rares fantômes
+    # d'orientation plausible fixent seuls la référence. Les vraies zones sont alors
+    # rejetées comme orphelines pendant que des fantômes sont présentés comme des zones
+    # valides — un résultat faux et silencieux, constaté en écrivant les tests du lot C1.
+    pool_reference = list(plausibles) + list(inversees)
     reference = _reference_diagonal_mm(
-        [longueurs[p] for p in base_reference], diagonal_tolerance_mm
+        [longueurs[p] for p in pool_reference], diagonal_tolerance_mm
     )
 
     def _a_la_bonne_longueur(paire) -> bool:
@@ -460,15 +471,16 @@ def detect_deposit_zones_mm(
 
         if product_size_mm is None:
             # Aucune référence de format : impossible de reconstruire un rectangle.
-            # On dégrade proprement plutôt que de lever une exception — la zone
-            # reste listée pour que l'IHM puisse la signaler.
+            # On dégrade proprement plutôt que de lever une exception — la zone reste
+            # listée, avec ses deux marqueurs comme unique géométrie, pour que l'IHM
+            # puisse quand même la signaler à l'opérateur au bon endroit.
             zones.append(DepositZone(
                 id_tl, id_br,
-                corners_mm=(centers_mm[id_tl],) * 4,
+                corners_mm=(point_haut_gauche, point_bas_droit) * 2,
                 rotation_deg=0.0,
                 diagonal_mm=longueurs[paire],
                 size_mm=(0.0, 0.0),
-                anomalies=anomalies + [ANOMALIE_DIAGONALE],
+                anomalies=anomalies + [ANOMALIE_FORMAT_INCONNU],
             ))
             continue
 
@@ -764,6 +776,33 @@ class VisionProcessor:
         # min/max plutôt que "a puis b" : peu importe lequel des deux marqueurs
         # est physiquement en haut-gauche ou bas-droit de la zone
         return (min(x_a, x_b), min(y_a, y_b), max(x_a, x_b), max(y_a, y_b))
+
+    def mm_to_pixels(self, points_mm: list, homography: np.ndarray) -> list:
+        """Conversion INVERSE de pixel_to_mm : millimètres → pixels de l'image source.
+
+        Sert à dessiner sur la photo des éléments dont on ne connaît que la position en
+        millimètres — le contour d'une zone de dépose, un cordon reprojeté, une étiquette.
+
+        Prend une LISTE de points plutôt qu'un point isolé, car l'inversion de la matrice
+        d'homographie est le calcul coûteux : la faire une fois pour les 4 coins d'une
+        zone, plutôt que 4 fois de suite, évite un gaspillage inutile à chaque rafraîchissement.
+        """
+        # np.linalg.inv lève LinAlgError sur une matrice singulière — ce qui n'arrive pas
+        # avec une homographie valide, mais laissons l'erreur remonter plutôt que de la
+        # masquer : une homographie dégénérée est un problème à corriger, pas à ignorer
+        inverse = np.linalg.inv(homography)
+
+        # perspectiveTransform attend un tableau de forme (1, N, 2)
+        pts = np.array([points_mm], dtype=np.float32)
+        pts_px = cv2.perspectiveTransform(pts, inverse)
+
+        return [(float(x), float(y)) for x, y in pts_px[0]]
+
+    def mm_to_pixel(
+        self, x_mm: float, y_mm: float, homography: np.ndarray
+    ) -> tuple[float, float]:
+        """Version point unique de mm_to_pixels — pratique quand il n'y en a qu'un."""
+        return self.mm_to_pixels([(x_mm, y_mm)], homography)[0]
 
     def detect_deposit_zones(
         self,

@@ -64,6 +64,9 @@ class ScreenCapture(QWidget):
     # Signal émis quand l'opérateur veut accéder à l'écran de calibration caméra
     calibration_requested = pyqtSignal()
 
+    # Signal émis quand l'opérateur veut créer un plateau (nouveau processus, lot C)
+    plateau_requested = pyqtSignal()
+
     # Signaux de changement de matériel. L'écran ne remplace PAS lui-même la caméra ou
     # le port : les objets Camera et Machine appartiennent à MainApp (qui les partage
     # avec les autres écrans), donc seul MainApp peut les échanger proprement. L'écran
@@ -192,6 +195,14 @@ class ScreenCapture(QWidget):
         self._btn_calibration.setProperty("role", "secondary")
         self._btn_calibration.clicked.connect(self.calibration_requested)
         homing_layout.addWidget(self._btn_calibration)
+
+        # Accès au nouveau processus multi-zones. Cohabite volontairement avec le cycle
+        # historique (capture → tracé → dépose) tant que celui-ci reste le seul à mener
+        # jusqu'à la dépose réelle : on ne casse pas ce qui fonctionne pour une démo.
+        self._btn_plateau = QPushButton("Créer un plateau")
+        self._btn_plateau.setProperty("role", "secondary")
+        self._btn_plateau.clicked.connect(self.plateau_requested)
+        homing_layout.addWidget(self._btn_plateau)
 
         layout.addLayout(homing_layout)
 

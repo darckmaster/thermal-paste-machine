@@ -18,6 +18,7 @@ from gui.screen_zone import ScreenZone
 from gui.screen_run import ScreenRun
 from gui.screen_report import ScreenReport
 from gui.screen_calibration import ScreenCalibration
+from gui.screen_plateau import ScreenPlateau
 
 
 # Feuille de style globale appliquée à toute l'application
@@ -109,12 +110,13 @@ class MainApp(QMainWindow):
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
-        # Créer les 5 écrans dans l'ordre de navigation
+        # Créer les 6 écrans dans l'ordre de navigation
         self._screen_capture = ScreenCapture()
         self._screen_zone = ScreenZone()
         self._screen_run = ScreenRun()
         self._screen_report = ScreenReport()
         self._screen_calibration = ScreenCalibration()
+        self._screen_plateau = ScreenPlateau()
 
         # Ajouter les écrans à la pile — l'index correspond à l'ordre d'ajout
         self._stack.addWidget(self._screen_capture)     # index 0
@@ -122,6 +124,7 @@ class MainApp(QMainWindow):
         self._stack.addWidget(self._screen_run)         # index 2
         self._stack.addWidget(self._screen_report)      # index 3
         self._stack.addWidget(self._screen_calibration) # index 4
+        self._stack.addWidget(self._screen_plateau)     # index 5
 
         # Fournir la machine à screen_capture pour le bouton Homing
         self._screen_capture.set_machine(self._machine)
@@ -134,9 +137,10 @@ class MainApp(QMainWindow):
             print(f"[MainApp] Camera non disponible : {e}")
             self._camera = None
 
-        # Fournir la même référence caméra aux deux écrans qui en ont besoin
+        # Fournir la même référence caméra aux trois écrans qui en ont besoin
         self._screen_capture.set_camera(self._camera)
         self._screen_calibration.set_camera(self._camera)
+        self._screen_plateau.set_camera(self._camera)
 
         # Remplir les listes déroulantes de choix du matériel de l'écran 1. À faire APRÈS
         # set_machine() et set_camera() : les listes présélectionnent le port et la caméra
@@ -156,6 +160,8 @@ class MainApp(QMainWindow):
         self._screen_report.new_piece_requested.connect(self._go_to_capture)
         self._screen_capture.calibration_requested.connect(self._go_to_calibration)
         self._screen_calibration.back_requested.connect(self._go_from_calibration_to_capture)
+        self._screen_capture.plateau_requested.connect(self._go_to_plateau)
+        self._screen_plateau.back_requested.connect(self._go_from_plateau_to_capture)
 
         # Changements de matériel demandés depuis l'écran 1 — appliqués ici, car MainApp
         # est propriétaire de la Camera et de la Machine partagées par tous les écrans
@@ -211,6 +217,26 @@ class MainApp(QMainWindow):
         """Retourner vers l'écran de capture depuis la calibration."""
         # Arrêter la caméra de calibration avant de relancer celle de capture
         self._screen_calibration.stop_camera()
+        self._go_to_capture()
+
+    def _go_to_plateau(self) -> None:
+        """Basculer vers l'écran de création de plateau (nouveau processus multi-zones).
+
+        Le nom du produit est demandé AVANT d'afficher l'écran : si l'opérateur annule
+        la saisie, on reste où on est plutôt que d'ouvrir un écran sans identité.
+        """
+        if not self._screen_plateau.ask_product_name(self):
+            return
+
+        # Une seule caméra physique : couper l'aperçu de l'écran courant avant d'en
+        # démarrer un autre
+        self._screen_capture.stop_camera()
+        self._screen_plateau.start_camera()
+        self._stack.setCurrentIndex(5)
+
+    def _go_from_plateau_to_capture(self) -> None:
+        """Retourner vers l'écran de capture depuis la création de plateau."""
+        self._screen_plateau.stop_camera()
         self._go_to_capture()
 
     # ------------------------------------------------------------------ choix du matériel
@@ -276,9 +302,10 @@ class MainApp(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Nettoyer les ressources avant de fermer la fenêtre."""
-        # Arrêter les timers d'aperçu des deux écrans
+        # Arrêter les timers d'aperçu des trois écrans qui utilisent la caméra
         self._screen_capture.stop_camera()
         self._screen_calibration.stop_camera()
+        self._screen_plateau.stop_camera()
         # Libérer la caméra partagée (une seule fois, pas dans les écrans)
         if self._camera is not None:
             self._camera.release()
