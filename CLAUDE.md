@@ -74,8 +74,13 @@ Le logiciel suit ce déroulé, du point de vue de l'opérateur. **C'est la réf�
 2. Lire la section "Prochaine session" de ce fichier
 3. Vérifier le tableau d'avancement (section 9)
 4. Ouvrir CONCEPTION.md pour le contexte technique détaillé
-5. Commencer par un bref résumé oral de là où on en est
+5. RAPPELER LES ACTIONS EN ATTENTE (section 7 bis) — obligatoire
+6. Commencer par un bref résumé oral de là où on en est
 ```
+
+> **L'étape 5 n'est pas facultative.** Ces actions se perdent parce qu'elles sont petites,
+> pas parce qu'elles sont secondaires : plusieurs d'entre elles décalent physiquement la
+> dépose tant qu'elles ne sont pas faites. Voir section 7 bis pour la règle complète.
 
 ---
 
@@ -261,17 +266,74 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ---
 
+## 7 bis. Actions en attente — à rappeler à CHAQUE début de session
+
+> **Règle, demandée par l'étudiant le 2026-08-01.** Claude doit :
+> 1. **énoncer ce tableau au début de chaque session** (étape 5 de la checklist section 3) ;
+> 2. **signaler spontanément une ligne dès que le travail en cours la touche** — par exemple,
+>    ne pas laisser écrire une conversion vers le repère machine sans rappeler que `M2` et
+>    `M4` ne sont pas faites, donc que le résultat ne sera pas vérifiable sur la machine.
+>
+> Ces actions se perdent parce qu'elles sont **petites**, pas parce qu'elles sont
+> secondaires : `M1`, `M2` et `M4` décalent physiquement la dépose tant qu'elles ne sont pas
+> faites, et aucun test automatique ne peut les détecter — elles vivent hors du code.
+>
+> **Quand une action est faite** : la barrer ici avec sa date et sa valeur mesurée, et
+> reporter le résultat dans `CONCEPTION.md`. Ne pas supprimer la ligne — la valeur mesurée
+> et sa date font partie de l'historique du projet.
+
+### 🏭 À faire sur la machine (au boulot, matériel sous la main)
+
+| # | Action | Pourquoi ça compte / ce que ça bloque |
+|---|---|---|
+| **M1** | **Mesurer le plateau au mètre** : bord extérieur à bord extérieur des 4 tags (supposé 220×220 mm → 192 mm centre-à-centre) | Devient le paramètre `plateau_size_mm` (lot C2bis). En repli 2 tags — **le mode nominal sur la Geeetech** — l'origine est *extrapolée* à partir de cette valeur : toute erreur dessus décale toute la dépose |
+| **M2** | **`M114` buse au-dessus du marqueur 2** (bas-gauche) → origine machine | Les valeurs actuelles (20/50) datent de deux conventions en arrière. **Tant que ce n'est pas refait, la dépose réelle est décalée** |
+| **M3** | **Hauteur Z de la pointe de seringue après homing** | Le paramètre de position après homing devient **3D** `(x, y, z)` au lot D. M2 ne donne que X et Y |
+| **M4** | **Sens des axes machine vs axes plateau** (X, Y, Z) — à établir **en interactif**, machine sous tension | Décidé le 2026-08-01 : on ne le déduit pas sur le papier. Bloque la validation réelle du lot D |
+| **M5** | **Calibration ChArUco sur le RPi et la caméra Philips réels** (15 poses) | Le pipeline n'a été validé que sur le PC de dev. Cause connue de l'**écart résiduel de ~10 %** (distorsion de l'objectif) |
+| **M6** | **Q8 — volume de pâte de référence** (par mm de cordon) | Calibrage expérimental. Alimente la quantité déposée et le volume estimé du rapport PDF |
+| **M7** | **Créer `local_config.json` sur le RPi** (`camera_index: 0`, `serial_port: "/dev/ttyUSB0"`) | Fichier gitignoré, donc absent d'un dépôt fraîchement cloné : l'appli démarre sur la mauvaise caméra sans lui |
+| **M8** | **Tests tactiles** : vérifier que tous les boutons font ≥ 44×44 px sur l'écran 7" réel | Ne se teste pas au clic de souris sur le PC de dev |
+| **M9** | **CNC** : finir le câblage capteurs/moteurs, 1er power-on, puis commissioning (sens moteurs, Vref, `M92` steps/mm) | **Bloque les phases 10 et 11**, donc la contrainte « 2 machines fonctionnelles avant le 12/08 » |
+
+### 🏠 Dettes logicielles ouvertes (chez soi, sans matériel)
+
+| # | Action | Pourquoi ça compte |
+|---|---|---|
+| **L1** | **Collision d'IDs ArUco plateau ↔ mire ChArUco** : même `DICT_4X4_50` sans plage d'IDs séparée | Contournement actuel : masquer le plateau avec du papier pendant la calibration. Correction propre : plage d'IDs réservée ou dictionnaire distinct pour la mire. Détail en `MANUEL_MAINTENANCE.md` § 4.4b |
+| **L2** | **3 trous de gestion d'erreur** — audit déjà fait, à reprendre sans re-auditer (détail en section 8) : `app.py::closeEvent`, absence de verrou sur l'objet `Machine` partagé, messages d'erreur bruts | Le trou #1 est un point de **sécurité** : fermer l'appli pendant une dépose laisse le `RunWorker` tourner et retire à l'opérateur l'accès à l'arrêt d'urgence |
+| **L3** | **Afficher la résolution réelle de la caméra** sur l'écran 1, à côté de son nom | Rendrait visible un écart entre la configuration et le matériel réellement utilisé — c'est précisément ce défaut qui a coûté deux sessions de diagnostic ChArUco |
+| **L4** | **Persistance du choix matériel** (optionnel) : écrire la sélection des listes déroulantes dans `local_config.json` | Les clés `serial_port` / `camera_index` existent déjà, il ne manque que l'écriture |
+
+---
+
 ## 8. Prochaine session — agenda
 
 ---
 
-### 🚩 POINT DE REPRISE — dernière session close le 2026-08-01 (`v0.4.1`)
+### 🚩 POINT DE REPRISE — session de cadrage close le 2026-08-01 au soir (`v0.4.2`)
 
-**État du dépôt** : `master` = `d58ce9e`, working tree propre, tout est poussé sur GitHub.
-**Tests** : 155/155 (`pytest`). Ajouter `-m "not toutes_cameras"` pour éviter d'ouvrir la
-webcam intégrée du PC (~41 s au lieu de ~65 s).
+> **▶️ POUR DÉMARRER LA PROCHAINE SESSION, IL SUFFIT DE DIRE : « on lance le lot C2bis ».**
+> Tout est cadré ci-dessous, toutes les questions ont été tranchées, il n'y a **rien à
+> redemander à l'étudiant** avant d'écrire du code — sauf l'unique question de vocabulaire
+> signalée plus bas, qui a déjà une réponse retenue (on garde haut-gauche/bas-droit).
+> Ne pas refaire l'évaluation d'impact : elle est faite et détaillée en 5 étapes.
+>
+> Ordre de démarrage : checklist section 3 → **rappeler la section 7 bis** (actions en
+> attente) → attaquer l'étape 1 du lot C2bis.
 
-**Ce qui a été fait le 2026-08-01** — six releases dans la journée :
+**État du dépôt** : branche `v0.4.2` créée et mergée dans `master`, working tree propre, tout
+est poussé sur GitHub. La branche `v0.4.2` **reste ouverte** : le code du lot C2bis s'écrit
+dessus, le cadrage n'en est que le premier commit.
+**Tests** : 155/155 (`pytest`, 46 s). Ajouter `-m "not toutes_cameras"` pour éviter d'ouvrir
+la webcam intégrée du PC (~41 s).
+
+**Ce qui a été fait le 2026-08-01 au soir** — session de cadrage, **aucune ligne de code** :
+décision du changement de repère, évaluation de son impact sur le code réel, spécification du
+lot C2bis, trois décisions annexes (tag 0, fichiers v1, `BOITIER_X`), et création du registre
+des actions en attente (section 7 bis).
+
+**Ce qui a été fait le 2026-08-01 dans la journée** — six releases :
 
 | Version | Contenu |
 |---|---|
@@ -282,8 +344,137 @@ webcam intégrée du PC (~41 s au lieu de ~65 s).
 | `v0.4.0` | **Lot C1** — écran « Créer un plateau » : capture, détection, diagnostic |
 | `v0.4.1` | **Lot C2** — écran « Cordons » : zoom, tracé, report sur toutes les zones |
 
-**➡️ PROCHAINE ÉTAPE : lot C3 (`v0.4.2`)** — persistance et paramètres. Tout le modèle est
-déjà écrit et testé (lot B), il s'agit essentiellement de câblage :
+**➡️ PROCHAINE ÉTAPE : lot C2bis (`v0.4.2`) — repère plateau orthonormé.** Le lot C3 est
+décalé en `v0.4.3` : la convention de repère change, et tout ce qui serait écrit avant
+serait à réécrire après.
+
+---
+
+#### Lot C2bis — changement de convention du repère du plateau
+
+**Décidé le 2026-08-01 (soir).** Le repère du plateau devient **orthonormé et défini par
+trois tags** :
+
+```
+  3 ─────── 0            Y
+  │         │            ↑
+  2 ─────── 1            └──→ X   (origine sur le tag 2)
+```
+
+- origine = centre du tag **2** (bas-gauche)
+- axe des **ordonnées** = vers le centre du tag **3** (haut-gauche) → **Y vers le HAUT**
+- axe des **abscisses** = vers le centre du tag **1** (bas-droit)
+- le tag **0** devient redondant → **décidé : on s'en sert comme contrôle de cohérence.**
+  Sa position vue est comparée à sa position attendue ; l'écart est un indicateur de qualité
+  (calibration optique, plateau déformé, tag décollé ou mal collé) à remonter à l'opérateur
+
+C'est l'**inverse** de la convention posée en `v0.1.1` le matin même (origine tag 3, Y vers
+le bas). Le motif du changement : aligner le repère logiciel sur le repère physique dans
+lequel on raisonne devant la machine, avant d'écrire la construction des commandes machine
+(lot D). Mieux vaut payer ce retournement maintenant, sur 155 tests verts, que plus tard
+avec le G-code par-dessus.
+
+**⚠️ Ce n'est PAS un changement de 4 lignes.** Le repère actuel a été choisi *parce que* Y
+vers le bas est le sens des lignes d'une image. Détail de l'impact, dans l'ordre où il faut
+le traiter :
+
+> **🔍 Le point le plus subtil du lot — le miroir vertical.** Règle posée par l'étudiant :
+> *la convention sert à faciliter les calculs, elle ne doit RIEN changer pour l'opérateur —
+> ce qu'il voit à l'écran est ce qui se passe sur le plateau.* Le retournement Y décrit à
+> l'étape 1 est justement **ce qui garantit cette règle**, pas une entorse.
+>
+> Pourquoi : une image a son origine en haut à gauche et son Y qui **descend** (ligne 0 =
+> ligne du haut), et aucune convention de notre côté ne change ça. Aujourd'hui le Y en mm
+> descend lui aussi, donc `y = 0 mm` tombe sur la ligne 0 et le haut du plateau s'affiche en
+> haut — ça marche par coïncidence. Avec le nouveau repère, `y = 0 mm` est le **bas** du
+> plateau : sans rien d'autre, ce bas atterrirait sur la ligne 0, donc **en haut de
+> l'écran**, et l'opérateur verrait le plateau à l'envers. D'où la ligne à écrire dans les
+> trois `warp_*` : `y_pixel = (hauteur_mm − y_mm) × échelle`.
+>
+> Ce miroir a déjà existé dans ce projet, **de la Phase 2 jusqu'au 2026-08-01**, sans que
+> personne ne le voie à l'œil : il a été démasqué par le calcul. Un plateau à peu près
+> symétrique ne trahit pas son propre retournement — d'où le test de non-miroir.
+
+**Étape 1 — `modules/vision.py`, le repère lui-même**
+- `_plateau_corner_positions_mm()` : `2=(0,0)`, `1=(W,0)`, `0=(W,H)`, `3=(0,H)`.
+  `compute_homography()` et `compute_homography_approx()` suivent sans modification, elles
+  lisent cette table — seuls leurs docstrings sont à réécrire.
+- **Les trois `warp_*` doivent retourner Y explicitement.** `warp_image`, `warp_region` et
+  `warp_zone` composent mm → pixels avec une échelle positive : en repère Y montant, elles
+  produisent une image tête-en-bas. C'est le point le plus facile à rater.
+  `test_warp_image_orientation_non_miroir` est le garde-fou — ne pas l'affaiblir.
+
+**Étape 2 — `modules/vision.py`, la géométrie des zones (toute la logique de signe)**
+- filtre des paires plausibles : `d[0] > 0 and d[1] > 0` → `d[0] > 0 and d[1] < 0`
+- `_rectangle_from_diagonal()` : `atan2(hauteur, largeur)` → `atan2(-hauteur, largeur)`, et
+  le vecteur `v` (le côté « hauteur ») tourne d'un quart de tour dans l'autre sens
+- étape 5 de `detect_deposit_zones_mm()` : la médiane des composantes sort un `dy` négatif
+  → fixer la convention de signe de `product_size_mm` et s'y tenir
+- **le signe de `rotation_deg` change de sens** (positif = sens trigonométrique désormais) →
+  se propage à `to_plateau_mm`, `to_zone_mm` et `warp_zone`
+- `ANOMALIE_INVERSEE` repose entièrement sur ces signes : la vérifier en premier
+
+**Étape 3 — repère de zone et fichiers JSON**
+- Le repère relatif à la zone bascule lui aussi en Y montant, origine sur le coin
+  **bas-gauche** de la zone. Garder deux conventions opposées réintroduirait exactement la
+  confusion que ce lot supprime.
+- Conséquence : **les cordons déjà enregistrés changent de sens** → `FORMAT_VERSION` passe
+  à **2** dans `modules/preparation.py`. Aujourd'hui le chargeur ne refuse que les fichiers
+  *plus récents* que le logiciel : un fichier v1 serait relu **silencieusement à l'envers**.
+- **Décidé : conversion des fichiers v1 au chargement**, pas de refus. Un fichier v1 est
+  relu, ses coordonnées Y retournées (`y_v2 = hauteur_zone − y_v1`), et il est réenregistré
+  en v2. Deux précautions : la conversion a besoin de la **hauteur de la zone**, qui est dans
+  le fichier (`size_mm`) — donc convertir *après* avoir relu les zones, pas au fil de la
+  lecture ; et tracer la conversion pour l'opérateur, un cordon qui bouge tout seul sans
+  explication est plus inquiétant qu'un message.
+
+**Étape 4 — IHM (peu de points d'appel, c'est la bonne nouvelle)**
+- `screen_cordons.py` : clic → mm de zone devient `(px / échelle, (h_px - py) / échelle)`
+- `screen_run.py:164` : la conversion vers le repère machine. **Ne pas deviner le signe** —
+  il sera déterminé en interactif sur la machine au lot D. Laisser la formule cohérente avec
+  la nouvelle convention et le commentaire qui dit qu'elle reste à valider.
+- `screen_zone.py` : le clipping `0..WORK_AREA` reste valide, l'origine restant sur un coin.
+  L'argument « toutes les coordonnées du plateau restent positives » qui avait motivé Y-bas
+  est **préservé** par le choix du coin bas-gauche.
+
+**Étape 5 — deux ajouts décidés en même temps**
+- **Taille du plateau en paramètre** (surchargeable dans `local_config.json`, aujourd'hui
+  constante `WORK_AREA_*` calculée en dur `220 - 28`). Elle sert de **valeur de repli quand
+  les 4 tags ne sont pas détectés** — c'est-à-dire dans le mode nominal de la Geeetech, où
+  seuls 2 tags sont cadrés et où l'origine doit donc être extrapolée.
+- **Avertir l'opérateur quand l'origine est extrapolée** (barre d'état). Le choix
+  « 4 tags → `compute_homography`, sinon → `compute_homography_approx` » est aujourd'hui
+  **dupliqué** dans `screen_plateau.py:287` et `screen_zone.py:251`. Le regrouper dans une
+  seule méthode de `VisionProcessor` qui retourne la matrice **et** de quoi renseigner la
+  barre d'état (mode exact/approché, IDs utilisés, origine extrapolée oui/non).
+
+**Chiffrage : 2 sessions.** Session 1 = étapes 1 et 2 + tests de `test_vision.py`.
+Session 2 = étapes 3 à 5 + `test_screen_cordons`, `test_screen_plateau`,
+`test_preparation` + `CONCEPTION.md`, `MANUEL_MAINTENANCE.md` (sections 1 et 6.1),
+`MANUEL_UTILISATEUR.md`. Une release à la fin, pas une par session.
+
+**Tests et documentation = la moitié du travail, pas une finition.** ~25 tests de
+`test_vision.py` portent des valeurs attendues qui dépendent du sens de Y. Et `vision.py`
+est un fichier dont la moitié des docstrings **explique pourquoi Y descend** : les laisser
+en l'état donnerait du commentaire menteur, ce qui est pire que du code faux.
+
+**Reste à trancher en début de session** — une seule question :
+- Vocabulaire : les zones sont nommées « haut-gauche / bas-droit ». L'image affichée reste à
+  l'endroit, donc ces noms continuent de décrire ce que voit l'opérateur — proposition :
+  **on les garde**, et on précise dans les docstrings qu'ils désignent le rendu à l'écran,
+  pas le signe des coordonnées.
+
+*(Les deux autres questions ont été tranchées le 2026-08-01 : tag 0 = contrôle de cohérence,
+fichiers v1 = conversion au chargement. Voir ci-dessus.)*
+
+**Garde-fou proposé** : un test « boussole » qui épingle la convention en un seul endroit —
+tag 2 → `(0, 0)`, tag 3 → `(0, H)`, image redressée non miroir, diagonale d'une zone saine à
+`dy < 0`. Si la convention rebouge un jour, c'est ce test qui doit hurler en premier.
+
+---
+
+**➡️ ENSUITE : lot C3 (`v0.4.3`)** — persistance et paramètres. Tout le modèle est déjà
+écrit et testé (lot B), il s'agit essentiellement de câblage :
 
 1. Autosave toutes les 5 s via un `QTimer` → `preparation.save_autosave()`, **en excluant
    la polyline en cours** (`ScreenCordons.cordons` ne retourne déjà que les cordons
@@ -293,21 +484,37 @@ déjà écrit et testé (lot B), il s'agit essentiellement de câblage :
    interrompu
 4. Fenêtre de paramètres : 2 vitesses + 2 seuils, tous déjà dans `preparation.Settings`
 
-**⛔ À TRANCHER AVANT DE COMMENCER C3** : la saisie du nom de produit passe par une boîte
-de dialogue clavier (`ScreenPlateau.ask_product_name`). **Sur l'écran tactile du RPi, sans
-clavier physique, c'est inutilisable.** Deux pistes : un clavier virtuel système, ou une
-sélection dans la liste des produits déjà enregistrés (évite aussi les fautes de frappe
-sur une référence).
+**✅ Saisie du nom de produit — tranchée le 2026-08-01** : trois voies dans le même écran,
+puisque le clavier physique n'existe pas sur le RPi.
+- saisie libre (clavier virtuel), **ou**
+- choix dans la liste des produits déjà enregistrés (`preparation.list_preparations()`),
+  ce qui évite aussi les fautes de frappe sur une référence, **ou**
+- champ laissé vide à la validation → repli automatique **`BOITIER_X`**, où X est le
+  **premier numéro libre** parmi les préparations existantes (décidé le 2026-08-01). Motif :
+  aucun état à conserver ailleurs que dans le dossier des préparations lui-même, donc le
+  mécanisme fonctionne **tel quel sur un dépôt fraîchement cloné**, sans compteur à
+  initialiser ni fichier de séquence à sauvegarder.
 
-**Convention de numérotation** : le lot C est en `v0.4.x` — C1 = `.0`, C2 = `.1`,
-donc **C3 = `v0.4.2`**.
+**Convention de numérotation** : lot C en `v0.4.x` — C1 = `.0`, C2 = `.1`, **C2bis = `.2`**,
+**C3 = `.3`**.
 
-**Reste ouvert côté machine (🏭, à faire au boulot)** :
-- `MACHINE_ORIGIN_X/Y` (20/50) à **remesurer au `M114`**, buse au-dessus du **marqueur 3**
-  (haut-gauche). Tant que ce n'est pas fait, la dépose réelle sera décalée.
-- Calibration ChArUco à exécuter sur le RPi et la caméra réels.
-- Confirmer au mètre « plateau 220×220 mm bord extérieur à bord extérieur » → 192 mm
-  centre-à-centre.
+**Reste ouvert côté machine** → **voir la section 7 bis**, qui recense désormais TOUTES les
+actions en attente (`M1` à `M9` côté machine, `L1` à `L4` côté logiciel) et doit être
+rappelée au début de chaque session. Ne pas les redupliquer ici : deux listes finissent
+toujours par diverger, et c'est celle qu'on ne relit pas qui reste à jour.
+
+Les plus directement liées aux lots C2bis / D : **M1** (mesure du plateau, qui devient la
+valeur de repli quand l'origine est extrapolée), **M2** et **M3** (position de la seringue
+après homing, désormais en 3D et sur le marqueur **2**), **M4** (sens des axes, à établir en
+interactif machine sous tension).
+
+**Contexte acté pour le lot D (à préparer plus tard, pas dans C2bis)** :
+- Geeetech (PoC) : caméra **fixe sur le bâti** — elle ne constate que les déplacements en Y,
+  éventuellement en Z par la taille apparente des tags.
+- CNC : caméra **solidaire de la seringue** — elle constate les déplacements sur tous les
+  axes, mais son champ se déplace pendant le travail.
+- Après homing, la pointe de seringue est en `(x, y, z)` dans le repère plateau, valeurs
+  **configurables en paramètres globaux**.
 
 ---
 
@@ -389,7 +596,11 @@ Phase 7 ✅ :
   - Trou #2 : un seul objet `Machine` partagé sans verrou entre l'écran Homing (`screen_capture.py`) et l'écran Run (`screen_run.py`) (`app.py` lignes 90-91/122/160) — risque d'écriture série concurrente si un thread Homing traîne encore
   - Trou #3 (mineur) : messages d'erreur bruts (ex. `[Errno 2] could not open port /dev/ttyUSB0`) au lieu d'un message clair pour l'opérateur
 - [ ] Vérifier que `pytest` passe toujours après les modifications de cette session
-- [ ] Ajouter `openpyxl` et `python-pptx` à `requirements.txt` (utilisés par `assets/generate_planning.py` et `assets/generate_presentation.py`)
+- [x] ~~Ajouter `openpyxl` et `python-pptx` à `requirements.txt`~~ — fait le 2026-08-01 avec le lot C1 (`pytest-qt` ajouté au passage)
+
+> 📌 Les actions en attente qui vivaient dispersées dans cette section (mesures machine,
+> calibration réelle, dettes logicielles) sont désormais recensées **en section 7 bis** et
+> rappelées au début de chaque session.
 
 ---
 
@@ -497,7 +708,7 @@ Phase 7 ✅ :
 | 5 | `modules/path_planner.py` + zone polyline | ✅ Validé | 1 / 3 |
 | 6 | Intégration workflow complet (screen_run + offset machine) | ✅ Validé | 1 / 3 |
 | 7 | `modules/reporter.py` — rapport PDF | ✅ Validé | 1 / 2 |
-| 8 | Tests, robustesse, finitions (Geeetech) | 🔄 En cours | 4 / 3 (dépassement — ChArUco + zone de dépose + repère) |
+| 8 | Tests, robustesse, finitions (Geeetech) | 🔄 En cours | 5 / 3 (dépassement — ChArUco + zones de dépose + repère plateau, refait deux fois le 2026-08-01) |
 
 **Sous-total Partie A : 21 sessions × ~2h = ~42h** (+ ~5,5 sessions pour les fonctionnalités actées le 2026-07-11 : ChArUco, cordons multiples, JSON, temps rapport)  
 **Jalon A : Logiciel validé sur Geeetech ≈ 17 juillet 2026** (clôture Phase 8 + nouvelles fonctionnalités)
@@ -750,6 +961,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 | 2026-07-01 | **Fix test ArUco résiduel** — Confirmé au préalable que l'échec de `test_pixel_to_mm_coins_de_la_zone` était déterministe (2 essais identiques) et sans lien avec la caméra (test 100% synthétique, aucun `cv2.VideoCapture`). `tests/test_vision.py::_marqueurs_synthetiques()` remis dans l'ordre ID0=bas-gauche/ID1=haut-gauche/ID2=haut-droit/ID3=bas-droit (aligné sur la convention réelle de `vision.py`), assertions de coins ajustées en conséquence. | 45/45 tests passent ✅. |
 | 2026-07-11 | **Révision planning + cadrage fonctionnel** — Nouvelles contraintes calendaires : 3 soutenances blanches entreprise (22/07, 05/08, 12/08, partie en anglais), rapport final IUT le 17/08, soutenance finale IUT le 31/08 (démo Geeetech acceptée), MàJ rapport entreprise le 17/07. CNC déjà quasi assemblée (mécanique + carte + firmware Marlin dernière version flashés ; reste câblage capteurs/moteurs) → Q9 résolue, chemin critique dé-risqué. Cadrage du process de dépose complet et actage de 4 fonctionnalités : calibration **ChArUco**, **cordons multiples** avec quantité par cordon, **fichier de préparation JSON**, **temps de dépose** au rapport. Planning détaillé jour par jour (11/07→31/08) ajouté en section 9. | CLAUDE.md + CONCEPTION.md mis à jour. Planning validé. Aucune ligne de code produite ce jour. |
 | 2026-07-29 | **Session 🏠 — Détection ChArUco débloquée + fix OpenCV 5.0 + distance mire + manuels.** Deux causes cumulées trouvées et corrigées pour le blocage de `CharucoDetector.detectBoard()` constaté le 2026-07-25 : (1) `camera_index` de `local_config.json` pointait sur la webcam intégrée du PC, pas l'USB ; (2) `charuco_legacy_pattern: true` incompatible avec les mires générées par l'appli (`board.generateImage()` ignore ce réglage, `detectBoard()` non — corrigé à `false`). `cv2.aruco.calibrateCameraCharuco()` (supprimée en OpenCV 5.0) remplacée par `board.matchImagePoints()` + `cv2.calibrateCamera()` dans `modules/calibration.py::calibrate_charuco`. Ajout de `estimate_board_pose()` et `distance_to_board_normal_mm()` (solvePnP) affichant la distance caméra↔mire en direct dans l'écran calibration. Overlay de debug ArUco/ChArUco ajouté sur `screen_capture.py` et `screen_calibration.py` (`detect_charuco` retourne désormais aussi `marker_count`) — c'est cet overlay qui a permis d'isoler les deux causes ci-dessus. `assets/camera_calibration.npz` ajouté au `.gitignore` (spécifique à chaque caméra/objectif, ne doit pas être partagé entre machines). `MANUEL_UTILISATEUR.md` et `MANUEL_MAINTENANCE.md` créés (guide opérateur 5 écrans + guide technique installation/config/dépannage). Rituel de fin de session formalisé en section 15 de ce fichier. | 45/45 tests passés. Points ouverts identifiés cette session : collision d'IDs ArUco plateau/mire (même dictionnaire `DICT_4X4_50` sans plage séparée — contournement : masquer le plateau pendant la calibration), et IDs réels du plateau à confirmer (`{0,3,4,5}` suspecté au lieu de `{0,1,2,3}`). Calibration optique à refaire sur le Raspberry Pi/caméra réels (pipeline validé sur PC de dev cette session). |
+| 2026-08-01 (soir) | **Session 🏠 (v0.4.2) — Cadrage du lot C2bis : changement de convention du repère plateau. Aucune ligne de code.** Nouvelle convention posée par l'étudiant : repère **orthonormé** défini par trois tags — origine au centre du tag **2** (bas-gauche), ordonnées vers le tag **3**, abscisses vers le tag **1**, donc **Y vers le haut** ; le tag **0**, devenu redondant, sert de **contrôle de cohérence**. Motif : aligner le repère logiciel sur le repère physique dans lequel on raisonne devant la machine **avant** d'écrire les commandes machine du lot D. Évaluation d'impact conduite sur le code réel plutôt que de mémoire : le tableau des coins est trivial, mais le retournement de Y **ramène mécaniquement le miroir vertical** corrigé le matin même en `v0.1.1` — d'où un `y_pixel = (hauteur_mm − y_mm) × échelle` à écrire explicitement dans les trois `warp_*`. Point pédagogique tranché avec l'étudiant : cette ligne n'est pas une entorse à la règle « l'opérateur voit ce qui se passe sur le plateau », elle en est **la garantie**. Bascule également : toute la logique de signe de la géométrie des zones, le repère relatif des zones, et donc les cordons déjà enregistrés (`FORMAT_VERSION` → 2). Trois décisions annexes : contrôle de cohérence sur le tag 0, **conversion** des fichiers v1 au chargement (pas de refus), repli `BOITIER_X` au **premier numéro libre** (aucun état hors du dossier des préparations, donc fonctionne sur un dépôt fraîchement cloné). Lot C2bis spécifié en 5 étapes, chiffré à 2 sessions ; C3 décalé en `v0.4.3`. **Création de la section 7 bis** — registre des 13 actions en attente (`M1`-`M9` machine, `L1`-`L4` logiciel), à rappeler au début de chaque session et dès qu'un travail en cours en touche une, à la demande de l'étudiant. | 155/155 tests (inchangés). Manuels volontairement inchangés : rien de visible pour l'opérateur, et documenter maintenant un repère non encore implémenté induirait en erreur celui qui dépanne demain. Une seule question laissée ouverte, avec réponse retenue : garder le vocabulaire « haut-gauche / bas-droit » pour les coins de zone. |
 | 2026-08-01 | **Session 🏠 (v0.4.1) — Étape 2, lot C2 : tracé des cordons et report sur toutes les zones.** Brique préalable dans `vision.py` : `warp_zone()` redresse une zone même vissée de travers, en composant homographie + passage au repère de la zone + mise à l'échelle. Conséquence exploitée par tout l'éditeur : l'image obtenue a son origine sur le coin haut-gauche de la zone à échelle constante, donc un clic se convertit en millimètres par une simple division. Création de `gui/screen_cordons.py`, un écran à **deux modes** dans une pile (vue d'ensemble cliquable / zoom et tracé) plutôt que deux écrans, l'aller-retour entre les deux étant le geste central de cette étape. Trois règles d'interaction tranchées hors spécification : priorité au tracé en cours pour capter les clics, sélection d'un cordon par clic à proximité hors tracé, et « Valider » inactif tant qu'un cordon est ouvert pour ne pas le perdre en silence. Undo/redo de profondeur 1 sur les 3 actions convenues, la suppression restaurant le cordon **à sa place** dans la liste. **Piège rencontré** : `QTest.mouseDClick` n'envoie que l'événement de double-clic, sans le `press` qui le précède en usage réel — c'est le CODE qui a été corrigé, pas le test, en rendant le comportement indépendant de la séquence d'événements Qt. | 155/155 tests (25 nouveaux, dont 22 pilotant de vrais événements souris). Validé à la main par l'étudiant : deux cordons tracés sur la zone 4/5 se retrouvent au même endroit relatif sur la 6/7. **Observation reportée au lot D** : les deux zones n'ont pas exactement la même taille à l'écran, signature de l'homographie approchée sans correction de perspective — l'erreur de report croît avec l'éloignement des marqueurs de référence, à corriger par la calibration ChArUco puis le recul de caméra sur la CNC. |
 | 2026-08-01 | **Session 🏠 (v0.4.0) — Étape 2, lot C1 : écran de création de plateau.** Découpage du lot C en trois sous-lots (C1 vue globale et diagnostic, C2 zoom et tracé, C3 persistance et paramètres), un rituel par sous-lot. Décision de navigation : le nouvel écran **cohabite** avec le cycle historique via un bouton sur l'écran 1 (option a), la bascule en point d'entrée principal étant reportée au lot D — on ne casse pas le seul cycle qui va aujourd'hui jusqu'à la dépose. Création de `gui/screen_plateau.py` : saisie du produit avec bandeau permanent, flux caméra avec overlay des marqueurs, capture, analyse, restitution visuelle du diagnostic (rectangles verts/rouges étiquetés, cercles orange sur les marqueurs orphelins), message de statut borné à 2 zones détaillées pour ne pas manger la place de l'image en 800×480. Ajout de `mm_to_pixels()` dans `vision.py` pour la reprojection. **Défaut trouvé par les tests** : la longueur de diagonale de référence était votée sur les seules paires d'orientation plausible, si bien qu'un plateau intégralement monté à l'envers faisait élire des paires fantômes comme zones valides tandis que les vraies passaient pour orphelines — corrigé, le vote inclut désormais les paires inversées. Nouvelle anomalie `format_indeterminable`, distincte de `diagonale_hors_norme` qui était trompeuse dans ce cas. `pytest-qt`, `openpyxl` et `python-pptx` ajoutés à `requirements.txt`. | 130/130 tests (15 nouveaux, dont 13 `pytest-qt` qui pilotent réellement les widgets). Validé sur matériel réel par l'étudiant : les 2 zones de son plateau sont reconnues, format déduit 58 × 45 mm. Mesuré en 800×480 : 311 px restent pour l'image. **Point ouvert bloquant pour le lot C3** : la saisie du nom de produit passe par une boîte de dialogue clavier, inutilisable sur l'écran tactile du RPi sans clavier physique. |
 | 2026-08-01 | **Session 🏠 (v0.3.1) — Sélection de la caméra de test par détection ArUco.** L'étudiant constate que `pytest` sollicite toujours la webcam intégrée du PC. Deux causes : le seul test qui balaie tous les index le fait par construction, et surtout se fier à `CAMERA_INDEX` ne prouve rien puisque c'est précisément cet index qui peut être faux. Critère proposé par l'étudiant et retenu : **la bonne caméra est celle qui voit un marqueur ArUco**. Création de `tests/conftest.py` avec la fixture `plateau_capture` (scope session) : essai de la caméra configurée d'abord — donc aucune autre caméra n'est ouverte dans le cas nominal — puis repli sur les autres ; 5 captures tentées par caméra pour absorber le temps de stabilisation d'une webcam ; image copiée avant le `release()`. L'image ainsi capturée est réutilisée par toute la session, ce qui rend les tests plus rapides et surtout déterministes. Ajout de 4 tests de vision **sur image réelle** (reproductibilité de la détection, coins dans les limites de l'image, homographie plausible, cohérence des zones), qui complètent les tests synthétiques sans les remplacer. Le test de balayage complet reçoit le marqueur `toutes_cameras`, déclaré dans un nouveau `pytest.ini`. | 115/115 tests (7 nouveaux). Caméra retenue : index 1, 1280×960, marqueurs `[0, 3, 4, 5, 6, 7]` — le plateau porte donc désormais **3 zones** (4/5, 6/7 et deux coins). Durées : ~65 s pour la suite complète, ~41 s avec `-m "not toutes_cameras"`. |

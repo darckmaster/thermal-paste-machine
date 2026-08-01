@@ -296,6 +296,31 @@ class Camera:
 
 La conversion vers le repère machine se fait en **un seul endroit** du code, `gui/screen_run.py` : `machine_x = x_mm + MACHINE_ORIGIN_X`, `machine_y = MACHINE_ORIGIN_Y - y_mm`.
 
+> ### ⚠️ Ce repère change en `v0.4.2` (lot C2bis) — décidé le 2026-08-01 au soir
+>
+> **Tout ce qui précède décrit le code tel qu'il tourne aujourd'hui (`v0.4.1`) et reste vrai
+> jusqu'à la livraison du lot C2bis.** La décision, elle, est déjà prise :
+>
+> Le repère du plateau devient **orthonormé et défini par trois tags** — origine au centre du
+> tag **2** (bas-gauche), axe des ordonnées vers le tag **3**, axe des abscisses vers le tag
+> **1**, donc **Y vers le HAUT**. Le tag **0** devient redondant et sert de **contrôle de
+> cohérence** : l'écart entre sa position vue et sa position attendue mesure la qualité du
+> montage et de la calibration.
+>
+> **Motif** : aligner le repère logiciel sur le repère physique dans lequel on raisonne devant
+> la machine, **avant** d'écrire la construction des commandes machine (lot D). Ce retournement
+> se paie une fois ; l'écrire après le G-code coûterait beaucoup plus cher.
+>
+> **Conséquence à ne pas rater** — le point 2 du « choix du repère » ci-dessus s'inverse : en
+> repère Y montant, `y = 0 mm` est le **bas** du plateau alors que la ligne 0 d'une image en est
+> le **haut**. Les trois `warp_*` doivent donc appliquer explicitement `y_pixel = (hauteur_mm −
+> y_mm) × échelle`. Cette ligne n'est pas une entorse à la règle « l'opérateur voit ce qui se
+> passe sur le plateau », c'est **ce qui la garantit** : sans elle, le plateau s'afficherait à
+> l'envers. Le point 1 (coordonnées toutes positives), lui, est **préservé** — l'origine reste
+> sur un coin.
+>
+> Spécification complète du lot, découpage en 5 étapes et chiffrage : `CLAUDE.md` section 8.
+
 **Interface publique :**
 ```python
 class VisionProcessor:
@@ -1052,9 +1077,18 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 - [x] **Persistance des préparations** : ✅ Fichier **JSON** rechargeable/éditable (2026-07-11)
 - [ ] **Collision d'IDs ArUco plateau/mire** (2026-07-29) : plateau et mire ChArUco partagent `DICT_4X4_50` sans plage d'IDs séparée → confusion du détecteur quand les deux sont visibles ensemble. Contournement actuel : masquer le plateau pendant la calibration.
 - [x] **IDs réels des marqueurs du plateau** : ✅ **résolu le 2026-08-01** — fausse alerte. Le plateau utilise bien `{0,1,2,3}` ; la liste `{0,3,4,5}` observée en v0.1 se décomposait en 2 marqueurs de plateau cadrés (3 et 0, ceux du haut) + les 2 marqueurs de **zone de dépose** (4 et 5). Pas de collision plateau/zone.
-- [x] **Disposition et origine du repère plateau** : ✅ **arrêté le 2026-08-01** — `3`=haut-gauche (origine), `0`=haut-droit, `1`=bas-droit, `2`=bas-gauche ; X+ à droite, Y+ vers le bas (voir section 4.2).
-- [ ] **`MACHINE_ORIGIN_X/Y` à remesurer** (2026-08-01) : les valeurs actuelles (20/50 mm) datent du 2026-07-01 et correspondent à l'ancienne position du marqueur 0. Le `M114` doit être refait buse au-dessus du **marqueur 3** (haut-gauche). Tant que ce n'est pas fait, la dépose sur machine réelle sera décalée.
-- [ ] **Interprétation du plateau 220×220 mm** (2026-08-01) : mesure supposée prise bord extérieur à bord extérieur des marqueurs → 192 mm centre-à-centre après retrait des 28 mm d'un marqueur. À confirmer au mètre sur la machine.
+- [x] **Disposition des marqueurs du plateau** : ✅ **arrêté le 2026-08-01** — `3`=haut-gauche, `0`=haut-droit, `1`=bas-droit, `2`=bas-gauche (voir section 4.2).
+- [x] **Origine et sens du repère plateau** : ✅ **arrêté le 2026-08-01 au soir, à livrer en `v0.4.2`** — repère **orthonormé** : origine au centre du tag **2** (bas-gauche), ordonnées vers le tag **3**, abscisses vers le tag **1**, donc **Y vers le haut**. Remplace la convention du matin (origine tag 3, Y vers le bas), qui reste en vigueur dans le code jusqu'à la livraison du lot C2bis.
+- [x] **Rôle du 4ᵉ tag du plateau** : ✅ **arrêté le 2026-08-01** — le tag `0`, rendu redondant par le repère à trois tags, sert de **contrôle de cohérence** (écart position vue / position attendue = indicateur de qualité de montage et de calibration).
+- [x] **Conversion des préparations enregistrées** : ✅ **arrêté le 2026-08-01** — le changement de repère retourne les cordons stockés, donc `FORMAT_VERSION` passe à **2** : les fichiers v1 sont **convertis au chargement** (`y_v2 = hauteur_zone − y_v1`, après relecture des zones puisque la hauteur vient de `size_mm`) et la conversion est signalée à l'opérateur. Pas de refus sec.
+- [x] **Nom de produit sans clavier physique** : ✅ **arrêté le 2026-08-01** — saisie libre, ou choix dans la liste des produits déjà enregistrés, ou champ vide → repli `BOITIER_X` où X est le **premier numéro libre**. Ce choix ne conserve aucun état hors du dossier des préparations, donc il fonctionne sur un dépôt fraîchement cloné.
+- [ ] **Position de la seringue après homing** (2026-08-01) : remplace `MACHINE_ORIGIN_X/Y`. Devient un **paramètre global en 3D** `(x, y, z)` dans le repère plateau. Les valeurs actuelles (20/50 mm) datent du 2026-07-01 et de deux conventions en arrière ; le `M114` est à refaire buse au-dessus du **marqueur 2** (bas-gauche), et la hauteur Z reste entièrement à mesurer. Tant que ce n'est pas fait, la dépose sur machine réelle est décalée. → actions `M2` et `M3` de `CLAUDE.md` section 7 bis.
+- [ ] **Sens des axes machine par rapport aux axes plateau** (2026-08-01) : à établir **en interactif**, machine sous tension, pendant le lot D. Décision explicite de ne pas le déduire sur le papier. → action `M4`.
+- [ ] **Taille du plateau** (2026-08-01) : mesure supposée 220×220 mm bord extérieur à bord extérieur des marqueurs → 192 mm centre-à-centre après retrait des 28 mm d'un marqueur. Devient un **paramètre** (`local_config.json`) en `v0.4.2`, servant de valeur de repli quand les 4 tags ne sont pas détectés — c'est-à-dire dans le mode nominal de la Geeetech, où l'origine est donc **extrapolée**. À confirmer au mètre : toute erreur dessus décale directement toute la dépose. → action `M1`.
+
+> 📌 Les actions en attente qui demandent la machine (mesures, calibration réelle, commissioning
+> CNC) sont recensées et suivies dans `CLAUDE.md` **section 7 bis**, rappelée au début de chaque
+> session. Cette section-ci garde les **décisions** ; la 7 bis garde les **actions**.
 
 ---
 
@@ -1070,6 +1104,7 @@ La rédaction du rapport se fait **en parallèle** du développement, à raison 
 | 2026-06-11 | Phase 2 S2 | Ajout compute_homography, warp_image, pixel_to_mm. Démo côte à côte validée visuellement. 14/14 tests passés. |
 | 2026-06-12 | Phase 2 S3 | Validation métrologique : barrel distortion ~10 % identifiée. Re-mesure zone 151×104 mm, hauteur caméra 200 mm. Création `calibration.py`, `demo_calibration.py`, `demo_validation.py`, `chessboard_calibration.png`. Calibration à exécuter chez soi. |
 | 2026-07-11 | — | Révision planning (soutenances blanches 22/07·05/08·12/08, rapport IUT 17/08, soutenance 31/08). CNC quasi assemblée + Marlin confirmé. Cadrage du process de dépose + 4 décisions : calibration **ChArUco**, **cordons multiples** avec quantité/cordon, **fichier de préparation JSON**, **temps de dépose** au rapport. |
+| 2026-08-01 (soir) | Phase 8 | **Cadrage du lot C2bis — changement de convention du repère plateau. Aucune ligne de code produite.** Le repère devient orthonormé et défini par trois tags (origine au tag 2, Y vers le haut), le tag 0 passant au rôle de contrôle de cohérence. Motif : aligner le repère logiciel sur le repère physique **avant** d'écrire la construction des commandes machine (lot D), plutôt qu'après. Évaluation de l'impact menée sur le code réel : le tableau des coins est trivial, mais le retournement de Y ramène mécaniquement le miroir vertical corrigé le matin même — d'où un retournement explicite à écrire dans les trois `warp_*`, qui est justement ce qui garantit que l'opérateur continue de voir le plateau à l'endroit. Toute la logique de signe de la géométrie des zones bascule également, ainsi que le repère relatif des zones, ce qui retourne les cordons déjà enregistrés (`FORMAT_VERSION` → 2, conversion au chargement). Trois décisions annexes prises : contrôle de cohérence sur le tag 0, conversion des fichiers v1, repli `BOITIER_X` au premier numéro libre. Chiffrage : 2 sessions. Création d'une **section 7 bis** dans `CLAUDE.md` recensant les 13 actions en attente (9 machine, 4 logiciel), à rappeler au début de chaque session — plusieurs d'entre elles décalent physiquement la dépose et aucun test automatique ne peut les détecter. 155/155 tests (inchangés, aucun code touché). |
 | 2026-08-01 | Phase 8 | **v0.4.1 — Lot C2 : tracé des cordons et report sur toutes les zones.** `VisionProcessor.warp_zone()` redresse une zone même inclinée, en composant l'homographie, le passage au repère de la zone et la mise à l'échelle ; l'image obtenue ayant son origine sur le coin haut-gauche de la zone à échelle constante, un clic s'y convertit en millimètres par une simple division. `gui/screen_cordons.py` implémente un écran à deux modes — vue d'ensemble cliquable et zoom de tracé — avec undo/redo de profondeur 1, sélection et suppression d'un cordon, et report visuel des cordons sur toutes les zones du plateau. Le besoin central du projet est ainsi vérifiable à l'œil : un cordon tracé une fois apparaît au même endroit relatif dans chaque zone. Un piège de test a conduit à rendre le traitement du double-clic indépendant de la séquence d'événements de Qt. 155/155 tests, validation manuelle sur machine réelle. |
 | 2026-08-01 | Phase 8 | **v0.4.0 — Lot C1 : écran de création de plateau.** Découpage du lot C en trois sous-lots et choix de navigation : le nouvel écran cohabite avec le cycle historique plutôt que de le remplacer, ce dernier étant le seul à mener aujourd'hui jusqu'à la dépose réelle. `gui/screen_plateau.py` rend visible tout le travail des lots A et B : capture, détection des zones, diagnostic du montage matérialisé sur la photo. Un défaut de l'algorithme du lot A a été révélé par les tests de ce lot — le vote sur la longueur de diagonale excluait les paires inversées, ce qui faisait élire des paires fantômes comme zones valides sur un plateau entièrement mal monté ; corrigé, avec une anomalie `format_indeterminable` ajoutée. Premiers tests d'interface avec `pytest-qt`. 130/130 tests, validation sur le plateau réel de l'étudiant. |
 | 2026-08-01 | Phase 8 | **v0.3.1 — Stratégie de test du matériel caméra.** Constat de l'étudiant : `pytest` sollicitait la webcam intégrée du PC plutôt que la caméra USB du projet. Au-delà du symptôme, le problème de fond est qu'un index de configuration ne se vérifie pas : s'il est faux, les tests passent en validant le mauvais matériel, sans aucun signal. Critère retenu : **la bonne caméra est celle où l'on détecte un marqueur ArUco**, donc celle qui voit le plateau — objectif, vérifiable à l'exécution, indépendant de toute configuration. Fixture `plateau_capture` de portée session dans `tests/conftest.py` : caméra configurée essayée en premier, repli sur les autres ensuite, 5 captures par caméra, image capturée une seule fois puis réutilisée par toute la suite. Ajout de 4 tests de vision sur image réelle, complétant les tests synthétiques qui restent la référence déterministe. Marqueur `toutes_cameras` pour isoler le seul test qui doit ouvrir toutes les caméras. 115/115 tests. |
