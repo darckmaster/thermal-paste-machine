@@ -247,20 +247,53 @@ ouvert ailleurs dans le processus, même brièvement, même pour "juste tester".
 ## 5. Lancer les tests
 
 ```bash
-pytest              # suite complète — doit toujours passer avant un commit/push
-pytest tests/test_vision.py   # un module en particulier
-python tests/demo_camera.py   # démo manuelle avec caméra réelle (pas dans pytest)
+pytest                          # suite complète — doit passer avant tout commit/push
+pytest -m "not toutes_cameras"  # sans le seul test qui ouvre toutes les caméras
+pytest tests/test_vision.py     # un module en particulier
+python tests/demo_camera.py     # démo manuelle (hors pytest)
 ```
 
-**Les tests caméra utilisent la caméra CONFIGURÉE**, c'est-à-dire `CAMERA_INDEX` issu de
-`local_config.json`, et non l'index 0 en dur. Jusqu'au 2026-08-01 la fixture ouvrait
-l'index 0 : sur un PC de développement elle validait donc la webcam intégrée pendant que
-le projet travaillait avec la caméra USB, et un défaut propre à cette dernière serait
-passé inaperçu. Conséquence pratique : la suite est plus lente (~1 min contre ~30 s), la
-caméra USB étant plus longue à s'initialiser — c'est le prix de tester le bon matériel.
+### 5.1 Comment les tests choisissent leur caméra
 
-Si aucune caméra n'est branchée, les tests concernés se `skip` proprement, ils
-n'échouent pas.
+**La caméra n'est pas choisie par configuration, mais par vérification** : la fixture
+`plateau_capture` (`tests/conftest.py`) retient celle où des **marqueurs ArUco sont
+réellement détectés**, c'est-à-dire celle qui voit le plateau. La webcam intégrée d'un PC,
+qui filme la pièce ou l'opérateur, n'y répond jamais.
+
+Ce critère remplace la confiance faite à `CAMERA_INDEX`, qui ne prouvait rien : si cet
+index est faux, les tests passent en validant le **mauvais matériel** sans que rien ne le
+signale. Le projet s'est fait piéger deux fois par ce mécanisme — le blocage ChArUco du
+2026-07-29, puis une fixture codée en dur sur l'index 0 découverte le 2026-08-01.
+
+L'ordre d'essai est important :
+
+1. **la caméra configurée d'abord** — dans le cas nominal on s'arrête là, et aucune autre
+   caméra de la machine n'est ouverte (la webcam intégrée ne s'allume donc pas) ;
+2. les autres caméras détectées, **uniquement** si la configurée ne voit aucun marqueur.
+
+Cinq captures sont tentées par caméra avant de conclure : les premières trames d'une
+webcam sont souvent sombres ou floues (auto-exposition, autofocus).
+
+**Une seule capture pour toute la session** (`scope="session"`) : l'image est ensuite
+réutilisée par tous les tests qui n'ont besoin que de pixels. C'est plus rapide, et
+surtout **déterministe** — deux tests portent exactement sur les mêmes pixels.
+
+Si aucune caméra ne voit de marqueur (pas de caméra branchée, ou plateau hors champ),
+les tests concernés se `skip` proprement. Un échec serait trompeur : ce n'est pas le code
+qui est en cause.
+
+### 5.2 Le test qui ouvre toutes les caméras
+
+`test_list_devices_retourne_des_index_ouvrables` vérifie que la liste déroulante de
+l'écran 1 ne propose pas de caméras fantômes : il **doit** donc toutes les ouvrir, webcam
+intégrée comprise. C'est le seul du projet dans ce cas, et il porte le marqueur
+`toutes_cameras` (déclaré dans `pytest.ini`) pour pouvoir être écarté :
+
+```bash
+pytest -m "not toutes_cameras"
+```
+
+Ordre de grandeur observé sur PC de développement : ~65 s avec, ~41 s sans.
 
 ## 6. Où sont stockées les données
 
