@@ -7,6 +7,9 @@
     "serial_port": "COM3",
     "serial_baudrate": 250000,
 
+    "_comment_plateau": "plateau_size_mm : taille du plateau mesuree au metre, bord EXTERIEUR a bord exterieur des 4 marqueurs de coin (supposee 220 mm tant que la mesure M1 n'est pas faite). Cette valeur sert de repli quand les 4 tags ne sont pas detectes — le cas nominal sur la Geeetech, ou seuls 2 tags sont cadres : l'origine du repere (marqueur 2) est alors extrapolee a partir d'elle, et toute erreur decale TOUTE la depose. Pour un plateau non carre, utiliser plateau_width_mm et plateau_height_mm.",
+    "plateau_size_mm": 220.0,
+
     "calibration_min_images": 15,
 
     "charuco_cols": 4,

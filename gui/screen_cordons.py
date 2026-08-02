@@ -332,11 +332,18 @@ class CordonEditor(QLabel):
     def _position_mm(self, pos: QPoint) -> tuple:
         """Convertit une position du widget en mm relatifs à la zone.
 
-        L'image affichée étant redressée à échelle fixe (ZOOM_PX_PER_MM) avec son origine
-        au coin haut-gauche de la zone, la conversion se réduit à une division.
+        L'image affichée est redressée à échelle fixe (ZOOM_PX_PER_MM) par
+        VisionProcessor.warp_zone(). En X la conversion se réduit à une division ; en
+        Y il faut RETOURNER, parce que l'origine du repère de la zone est son coin
+        BAS-gauche (lot C2bis) alors que la ligne 0 de l'image est son coin haut.
+
+        C'est la réciproque exacte de _mm_vers_label() : les deux doivent être
+        modifiées ensemble, sans quoi les cordons s'afficheraient ailleurs qu'où on
+        les a posés.
         """
         px, py = _label_vers_image(self, self._image, pos.x(), pos.y())
-        return (px / ZOOM_PX_PER_MM, py / ZOOM_PX_PER_MM)
+        hauteur_px = self._image.shape[0]
+        return (px / ZOOM_PX_PER_MM, (hauteur_px - py) / ZOOM_PX_PER_MM)
 
     def mousePressEvent(self, event) -> None:
         if self._image is None or event.button() != Qt.LeftButton:
@@ -422,10 +429,15 @@ class CordonEditor(QLabel):
     # ------------------------------------------------------------------ rendu
 
     def _mm_vers_label(self, point_mm: tuple) -> tuple:
-        """mm relatifs à la zone → coordonnées du widget, pour le dessin."""
+        """mm relatifs à la zone → coordonnées du widget, pour le dessin.
+
+        Réciproque de _position_mm() : même retournement de Y, dans l'autre sens.
+        """
+        hauteur_px = self._image.shape[0]
         return _image_vers_label(
             self, self._image,
-            point_mm[0] * ZOOM_PX_PER_MM, point_mm[1] * ZOOM_PX_PER_MM,
+            point_mm[0] * ZOOM_PX_PER_MM,
+            hauteur_px - point_mm[1] * ZOOM_PX_PER_MM,
         )
 
     def _rafraichir(self) -> None:

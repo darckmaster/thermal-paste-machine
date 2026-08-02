@@ -42,35 +42,68 @@ MACHINE_FEEDRATE_XY = 3000         # mm/min, déplacements rapides XY (max Marli
 MACHINE_FEEDRATE_Z = 100           # mm/min, déplacement Z — limité à 120 mm/min par M203
 MACHINE_FEEDRATE_DISPENSE = 100    # mm/min, dépose pâte (axe E)
 
-# Zone de travail (à calibrer)
-# Redéfinie le 2026-07-30 : les 4 marqueurs du plateau sont désormais aux coins du bâti
-# complet (plateau carré 220×220 mm, mesuré bord EXTÉRIEUR à bord extérieur des marqueurs),
-# et non plus resserrés autour de la pièce comme avant cette date (151×104 mm, valeur
-# conservée dans l'historique CLAUDE.md/CONCEPTION.md). La distance centre-à-centre
-# utilisée par l'homographie se déduit en retranchant une largeur de marqueur
-# (ARUCO_MARKER_SIZE_MM) à la mesure bord-à-bord : 220 - 28 = 192 mm.
-# ⚠️ Conséquence à vérifier sur machine réelle : le marqueur 0 a physiquement changé de
-# position (coin du bâti au lieu du coin de la pièce) → MACHINE_ORIGIN_X/Y ci-dessous,
-# mesurés le 2026-07-01 pour l'ANCIENNE position du marqueur 0, sont probablement
-# obsolètes et doivent être remesurés (M114 au-dessus du nouveau marqueur 0).
-WORK_AREA_WIDTH_MM = 220.0 - ARUCO_MARKER_SIZE_MM   # 192.0 — plateau carré
-WORK_AREA_HEIGHT_MM = 220.0 - ARUCO_MARKER_SIZE_MM  # 192.0 — idem (carré, même valeur)
+# Taille du plateau — mesure bord EXTÉRIEUR à bord extérieur des 4 marqueurs de coin.
+# Redéfinie le 2026-07-30 : les 4 marqueurs sont aux coins du bâti complet (plateau carré
+# supposé 220×220 mm), et non plus resserrés autour de la pièce comme avant cette date
+# (151×104 mm, valeur conservée dans l'historique CLAUDE.md/CONCEPTION.md).
+#
+# ⚠️ ACTION M1 EN ATTENTE (voir CLAUDE.md § 7 bis) : les 220 mm ne sont PAS mesurés, ils
+# sont supposés. Cette valeur est devenue un paramètre au lot C2bis précisément parce
+# qu'elle sert de **repli quand les 4 tags ne sont pas détectés** — c'est-à-dire dans le
+# mode NOMINAL de la Geeetech, où la caméra ne cadre que 2 tags et où l'origine du repère
+# (marqueur 2) doit donc être extrapolée. Toute erreur ici décale alors TOUTE la dépose.
+# Surcharger dans local_config.json dès que la mesure est faite : {"plateau_size_mm": 218.5}
+PLATEAU_SIZE_MM: float = float(_local_cfg.get("plateau_size_mm", 220.0))
+# Deux surcharges séparées pour un plateau non carré (la CNC cible, peut-être). Elles
+# retombent par défaut sur la mesure carrée ci-dessus.
+PLATEAU_WIDTH_MM: float = float(_local_cfg.get("plateau_width_mm", PLATEAU_SIZE_MM))
+PLATEAU_HEIGHT_MM: float = float(_local_cfg.get("plateau_height_mm", PLATEAU_SIZE_MM))
+
+# Zone de travail = distance CENTRE-À-CENTRE des marqueurs, seule grandeur qu'utilise
+# l'homographie. Elle se déduit de la mesure bord-à-bord en retranchant une largeur de
+# marqueur : 220 - 28 = 192 mm.
+WORK_AREA_WIDTH_MM = PLATEAU_WIDTH_MM - ARUCO_MARKER_SIZE_MM   # 192.0 par défaut
+WORK_AREA_HEIGHT_MM = PLATEAU_HEIGHT_MM - ARUCO_MARKER_SIZE_MM  # 192.0 par défaut
 DISPENSE_Z_HEIGHT_MM = 1.0      # Hauteur buse au-dessus de la pièce pendant la dépose
 MACHINE_Z_TRAVEL_MM = 5.0      # Hauteur de transit entre les points (assez haut pour ne rien toucher)
 
-# Origine du repère ArUco dans le repère machine (mesuré le 2026-07-01 via M114)
-# = position machine (mm depuis G28) du marqueur 3, coin HAUT-GAUCHE de la zone de travail.
+# Origine du repère plateau dans le repère machine (mesuré le 2026-08-02 via M114)
+# = position machine (mm depuis G28) du marqueur **2**, coin BAS-GAUCHE du plateau.
 # La formule de conversion (appliquée dans gui/screen_run.py) est :
-#     machine_x = aruco_x + MACHINE_ORIGIN_X   ← addition : les deux X vont vers la droite
-#     machine_y = MACHINE_ORIGIN_Y - aruco_y   ← SOUSTRACTION : le Y ArUco descend (repère
-#                                                image), le Y machine monte vers le fond
-# ⚠️ À REMESURER, pour DEUX raisons cumulées :
-#   1. les marqueurs ont été déplacés aux coins du bâti (voir note WORK_AREA ci-dessus) ;
-#   2. la disposition des IDs relevée le 2026-08-01 place le marqueur **3** en haut-gauche
-#      (0=haut-droit, 1=bas-droit, 2=bas-gauche — voir _plateau_corner_positions_mm).
-# Le M114 doit donc être fait buse au-dessus du marqueur 3, plus du marqueur 0.
-MACHINE_ORIGIN_X = 20.0   # X machine du marqueur 3 (haut-gauche) — obsolète, à remesurer
-MACHINE_ORIGIN_Y = 50.0   # Y machine du marqueur 3 (haut-gauche) — obsolète, à remesurer
+#     machine_x = plateau_x + MACHINE_ORIGIN_X   ← addition, les deux X vont vers la droite
+#     machine_y = plateau_y + MACHINE_ORIGIN_Y   ← addition AUSSI depuis le lot C2bis : le
+#                                                  repère plateau monte comme l'axe machine
+# ✅ MESURÉ le 2026-08-02 sur la Geeetech (action M2) : `G28`, puis pointage manuel de la buse
+# au-dessus du centre du marqueur 2, puis `M114`. Remplace les valeurs 20/50 du 2026-07-01,
+# qui dataient de deux conventions de repère en arrière.
+#
+#   Relevé brut : X:5.00 Y:0.00 Z:0.00 — Count X:394 Y:0 Z:0
+#
+# Le repère de home a été vérifié le même jour : `G28` suivi d'un `M114` immédiat rend
+# X:0.00 Y:0.00 Count 0/0. Il n'y a donc ni `X_MIN_POS` non nul ni décalage `M206` en EEPROM,
+# et les 5 mm en X sont bien un déplacement réel (394 pas ÷ 78,74 pas/mm ≈ 5,00 mm). Cette
+# vérification compte : un `M206` en EEPROM, effacé un jour par un reset, décalerait toute la
+# dépose sans rien signaler.
+#
+# ⚠️ RÉSERVE SUR L'AXE Y — premier suspect si la dépose ressort décalée. Le relevé Y valait
+# 0.00 avec un compteur de pas à 0 EXACT : l'axe Y n'avait donc pas bougé d'un pas depuis le
+# homing. Deux lectures possibles, non départagées au moment d'enregistrer — soit le marqueur
+# 2 tombait déjà sous la buse en Y, soit le plateau butait sur la fin de course et 0 est une
+# LIMITE, pas une mesure. Le second cas est plausible : les marqueurs sont aux coins d'un
+# cadre de 220 mm depuis le 2026-07-30, pour une course utile de l'ordre de 200 mm. Si c'est
+# lui, le bord bas du plateau est hors course, `MACHINE_ORIGIN_Y` devrait être négatif, et
+# toute la dépose est décalée en Y. Le vérifier à l'œil : buse en X5/Y0, la pointe est-elle
+# au centre du marqueur 2, ou celui-ci est-il encore à distance ?
+#
+# ⚠️ Fragilité valable même si la mesure est juste : avec une origine à Y=0, le bord bas du
+# plateau tombe EXACTEMENT sur la fin de course. Aucune marge — un cordon tracé un peu bas,
+# ou une erreur de calibration d'un millimètre, sort de la course de la machine.
+#
+# ⚠️ Le SENS des axes machine (action M4) reste à établir en interactif, machine sous
+# tension : les deux additions ci-dessus sont cohérentes avec la nouvelle convention, mais
+# ne sont pas validées sur la machine. À trancher au lot D.
+MACHINE_ORIGIN_X = 5.0    # X machine du marqueur 2 (bas-gauche) — mesuré le 2026-08-02
+MACHINE_ORIGIN_Y = 0.0    # Y machine du marqueur 2 (bas-gauche) — mesuré le 2026-08-02, voir réserve
 
 # Calibration caméra
 # Nombre minimum d'images à capturer avant de pouvoir lancer la calibration

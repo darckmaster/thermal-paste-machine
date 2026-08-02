@@ -247,13 +247,13 @@ class ScreenZone(QWidget):
         markers = self._vision.detect_markers(image)
         plateau_ids_vus = {0, 1, 2, 3} & markers.keys()
 
-        if len(plateau_ids_vus) == 4:
-            self._homography = self._vision.compute_homography(markers)
-            self._homography_precise = True
-        elif len(plateau_ids_vus) >= 2:
-            self._homography = self._vision.compute_homography_approx(markers)
-            self._homography_precise = False
-        else:
+        # Un seul appel décide du mode ET de ce qu'il faut en dire à l'opérateur : la
+        # règle « 4 tags → exact, 2-3 → approché » vit désormais dans
+        # VisionProcessor.compute_plateau_reference() et nulle part ailleurs (elle
+        # était dupliquée ici et dans screen_plateau.py avant le lot C2bis).
+        try:
+            reference = self._vision.compute_plateau_reference(markers)
+        except ValueError:
             self._homography = None
             self._homography_precise = False
             self._zone_origin_mm = None
@@ -266,11 +266,15 @@ class ScreenZone(QWidget):
             self._display_image(self._display_source)
             return
 
-        # Avertissement permanent tant que l'homographie n'est qu'approximative —
-        # préfixé aux messages de statut ci-dessous pour rester visible à l'opérateur
+        self._homography = reference.homography
+        self._homography_precise = reference.exact
+
+        # Avertissement permanent tant que le repère n'est pas exact — préfixé aux
+        # messages de statut ci-dessous pour rester visible à l'opérateur. Le texte
+        # inclut désormais l'origine extrapolée et le contrôle par le marqueur 0.
         avertissement_precision = (
-            "" if self._homography_precise else
-            "⚠ Précision réduite (2-3 marqueurs plateau, pas de correction de perspective) — "
+            "" if (reference.exact and not reference.check_error_excessive)
+            else f"{reference.status_text} — "
         )
 
         zone_ok = {ZONE_MARKER_ID_A, ZONE_MARKER_ID_B}.issubset(markers.keys())
@@ -358,8 +362,10 @@ class ScreenZone(QWidget):
           - Zoom sur la zone de dépose (self._zone_origin_mm connu) : l'image
             affichée est une image redressée à échelle FIXE (ZONE_PX_PER_MM),
             donc pixel→mm est une simple division, pas besoin de repasser par
-            l'homographie point par point. On rajoute ensuite l'origine de la
-            zone pour obtenir des mm absolus plateau.
+            l'homographie point par point. En Y il faut RETOURNER : depuis le lot
+            C2bis warp_region() place le bas de la sous-région sur la DERNIÈRE
+            ligne de l'image, et self._zone_origin_mm est son coin bas-gauche.
+            On rajoute ensuite cette origine pour obtenir des mm absolus plateau.
           - Repli sur la photo brute (pas de zoom) : conversion par
             l'homographie comme avant, clippée à la zone de travail complète.
 
@@ -371,14 +377,19 @@ class ScreenZone(QWidget):
         ix, iy = self._label_to_image_coords(pt.x(), pt.y())
 
         if self._zone_origin_mm is not None:
+            hauteur_px = self._display_source.shape[0]
             zone_x_mm = ix / ZONE_PX_PER_MM
-            zone_y_mm = iy / ZONE_PX_PER_MM
+            zone_y_mm = (hauteur_px - iy) / ZONE_PX_PER_MM
             x_mm = self._zone_origin_mm[0] + zone_x_mm
             y_mm = self._zone_origin_mm[1] + zone_y_mm
         else:
             x_mm, y_mm = self._vision.pixel_to_mm(ix, iy, self._homography)
 
-        # Clipper à la zone de travail physique (garde-fou dans les deux modes)
+        # Clipper à la zone de travail physique (garde-fou dans les deux modes).
+        # Reste valide après le lot C2bis : l'origine du repère est toujours sur un
+        # COIN du plateau, donc toutes les coordonnées y restent positives — c'est
+        # l'argument qui avait motivé le Y descendant, et le choix du coin bas-gauche
+        # le préserve intégralement.
         x_mm = max(0.0, min(x_mm, WORK_AREA_WIDTH_MM))
         y_mm = max(0.0, min(y_mm, WORK_AREA_HEIGHT_MM))
 

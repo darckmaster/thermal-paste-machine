@@ -28,17 +28,21 @@ ZONE_W = 60.0
 ZONE_H = 40.0
 
 
-def _zone(id_tl: int = 4, x: float = 40.0, y: float = 40.0,
+def _zone(id_tl: int = 4, x: float = 40.0, y: float = 60.0,
           rotation_deg: float = 0.0) -> DepositZone:
-    """Une zone posée en (x, y), éventuellement inclinée."""
-    theta = math.radians(rotation_deg)
-    u = (math.cos(theta), math.sin(theta))
-    v = (-math.sin(theta), math.cos(theta))
+    """Une zone dont le coin BAS-GAUCHE — son origine — est en (x, y).
 
-    tl = (x, y)
-    tr = (x + ZONE_W * u[0], y + ZONE_W * u[1])
-    br = (tr[0] + ZONE_H * v[0], tr[1] + ZONE_H * v[1])
-    bl = (x + ZONE_H * v[0], y + ZONE_H * v[1])
+    Ancrée sur l'origine du repère de la zone depuis le lot C2bis (c'était le coin
+    haut-gauche avant) : c'est le point auquel se rapportent les cordons.
+    """
+    theta = math.radians(rotation_deg)
+    u = (math.cos(theta), math.sin(theta))       # le long de la largeur
+    n = (-math.sin(theta), math.cos(theta))      # le long de la hauteur, vers le HAUT
+
+    bl = (x, y)
+    br = (x + ZONE_W * u[0], y + ZONE_W * u[1])
+    tl = (x + ZONE_H * n[0], y + ZONE_H * n[1])
+    tr = (tl[0] + ZONE_W * u[0], tl[1] + ZONE_W * u[1])
 
     return DepositZone(id_tl, id_tl + 1, (tl, tr, br, bl), rotation_deg,
                        math.hypot(ZONE_W, ZONE_H), (ZONE_W, ZONE_H), [])
@@ -84,16 +88,29 @@ def editeur(qtbot) -> CordonEditor:
     return widget
 
 
+def _pixel_du_mm(x_mm: float, y_mm: float) -> QPoint:
+    """mm de zone → pixel du widget, avec le RETOURNEMENT de Y du lot C2bis.
+
+    L'origine du repère de la zone est son coin bas-gauche, alors que la ligne 0 de
+    l'image est son coin HAUT : un point à y = 0 mm se clique donc sur la dernière
+    ligne. Les tests conservent ainsi des coordonnées en millimètres lisibles, et
+    c'est ce helper — et lui seul — qui porte la conversion.
+
+    La fixture `editeur` dimensionne le widget à la taille exacte de l'image, donc
+    l'échelle vaut 1 et un millimètre vaut ZOOM_PX_PER_MM pixels.
+    """
+    hauteur_px = int(ZONE_H * ZOOM_PX_PER_MM)
+    return QPoint(int(x_mm * ZOOM_PX_PER_MM), int(hauteur_px - y_mm * ZOOM_PX_PER_MM))
+
+
 def _clic(qtbot, widget, x_mm: float, y_mm: float) -> None:
     """Simule un appui à la position donnée, exprimée en mm de zone."""
-    qtbot.mouseClick(widget, Qt.LeftButton,
-                     pos=QPoint(int(x_mm * ZOOM_PX_PER_MM), int(y_mm * ZOOM_PX_PER_MM)))
+    qtbot.mouseClick(widget, Qt.LeftButton, pos=_pixel_du_mm(x_mm, y_mm))
 
 
 def _double_clic(qtbot, widget, x_mm: float, y_mm: float) -> None:
     """Simule un double-appui, qui clôt le tracé en cours."""
-    qtbot.mouseDClick(widget, Qt.LeftButton,
-                      pos=QPoint(int(x_mm * ZOOM_PX_PER_MM), int(y_mm * ZOOM_PX_PER_MM)))
+    qtbot.mouseDClick(widget, Qt.LeftButton, pos=_pixel_du_mm(x_mm, y_mm))
 
 
 # ------------------------------------------------------------------ utilitaire
@@ -161,6 +178,58 @@ def test_plusieurs_cordons_sur_une_zone(editeur, qtbot) -> None:
     _double_clic(qtbot, editeur, 55.0, 35.0)
 
     assert len(editeur.cordons) == 2
+
+
+def test_appui_en_haut_de_l_ecran_donne_un_grand_y(editeur, qtbot) -> None:
+    """Un appui en HAUT du widget doit produire un grand y en mm, pas un petit.
+
+    C'est le trajet complet « ce que voit l'opérateur → ce que mémorise le logiciel »,
+    et le seul endroit où le retournement de Y du lot C2bis se vérifie côté IHM.
+    L'origine du repère de la zone est son coin bas-gauche, alors que la ligne 0 de
+    l'image en est le haut : sans retournement dans _position_mm(), un cordon tracé
+    en haut de la pièce serait mémorisé en bas — et déposé au mauvais endroit.
+
+    Volontairement écrit en PIXELS et non via le helper _clic() : ce dernier applique
+    déjà le retournement, il ne pourrait donc pas détecter son absence dans le code.
+    """
+    hauteur_px = int(ZONE_H * ZOOM_PX_PER_MM)
+
+    qtbot.mouseClick(editeur, Qt.LeftButton, pos=QPoint(100, 4))          # tout en haut
+    qtbot.mouseDClick(editeur, Qt.LeftButton, pos=QPoint(100, hauteur_px - 4))  # tout en bas
+
+    haut, bas = editeur.cordons[0]
+    assert haut[1] > bas[1], (
+        f"le point cliqué en haut de l'écran ({haut[1]:.1f} mm) doit avoir un y PLUS "
+        f"GRAND que celui cliqué en bas ({bas[1]:.1f} mm)"
+    )
+    assert haut[1] == pytest.approx(ZONE_H, abs=1.0), "le haut du widget = hauteur de la zone"
+    assert bas[1] == pytest.approx(0.0, abs=1.0), "le bas du widget = origine de la zone"
+
+
+def test_un_cordon_trace_en_haut_de_la_zone_est_en_haut_du_plateau(editeur, qtbot) -> None:
+    """Le report d'un cordon vers le repère du plateau doit conserver le haut en haut.
+
+    Le test précédent s'arrête au repère de la ZONE ; celui-ci franchit la frontière
+    vers le repère du PLATEAU, où l'origine de la zone a aussi changé de coin
+    (`origin_mm` = coin bas-gauche). Une erreur là ne se verrait pas en restant dans
+    le repère de la zone : le cordon serait cohérent avec lui-même et posé du mauvais
+    côté de la pièce.
+
+    (Le troisième endroit où le Y est retourné, `warp_zone()`, est couvert côté vision
+    par `test_warp_zone_origine_du_repere_au_coin_bas_gauche`.)
+    """
+    _clic(qtbot, editeur, 10.0, ZONE_H - 5.0)     # près du bord haut de la zone
+    _double_clic(qtbot, editeur, 50.0, 5.0)       # près du bord bas
+
+    zone = _zone(4, 40.0, 60.0)
+    haut_plateau = zone.to_plateau_mm(editeur.cordons[0][0])
+    bas_plateau = zone.to_plateau_mm(editeur.cordons[0][1])
+
+    assert haut_plateau[1] > bas_plateau[1], (
+        "le point tracé en haut de la zone doit ressortir plus haut sur le plateau"
+    )
+    # La zone occupe 60 → 100 mm en Y sur le plateau : les deux points doivent y tomber
+    assert 60.0 <= bas_plateau[1] <= 100.0 and 60.0 <= haut_plateau[1] <= 100.0
 
 
 # ------------------------------------------------------------------ undo / redo

@@ -123,13 +123,15 @@ def _marqueurs_synthetiques() -> dict:
     Les centres sont placés aux 4 coins d'un rectangle dans une image 600×400 px,
     en respectant la disposition physique relevée le 2026-08-01
     (voir modules/vision.py::_plateau_corner_positions_mm) :
-        ID 3 → centre (100, 50)   → coin haut-gauche (= origine du repère mm)
-        ID 0 → centre (500, 50)   → coin haut-droit
-        ID 1 → centre (500, 350)  → coin bas-droit
-        ID 2 → centre (100, 350)  → coin bas-gauche
+        ID 3 → centre (100, 50)   → coin haut-gauche → mm (0, HAUTEUR)
+        ID 0 → centre (500, 50)   → coin haut-droit  → mm (LARGEUR, HAUTEUR)
+        ID 1 → centre (500, 350)  → coin bas-droit   → mm (LARGEUR, 0)
+        ID 2 → centre (100, 350)  → coin bas-gauche  → mm (0, 0) = ORIGINE
 
-    Le repère mm ayant lui aussi son Y dirigé vers le bas, un y pixel petit (50)
-    correspond bien à un y mm petit (0) : pixels et mm vont dans le même sens.
+    ⚠️ Depuis le lot C2bis, pixels et millimètres vont en sens OPPOSÉS en Y : un y
+    pixel petit (50, le haut de l'image) correspond à un y mm grand (la hauteur du
+    plateau). C'est le fait central de ce lot, et c'est ce que les trois warp_*
+    compensent pour que l'opérateur voie quand même le plateau à l'endroit.
 
     Chaque marqueur est représenté par 4 coins autour de son centre (±10 px).
     """
@@ -166,22 +168,68 @@ def test_pixel_to_mm_coins_de_la_zone(vision: VisionProcessor) -> None:
     # Tolérance : 1 mm (les centres synthétiques sont exacts, l'erreur vient des flottants)
     tolerance = 1.0
 
-    x, y = vision.pixel_to_mm(100, 50, H)
-    assert abs(x - 0) < tolerance and abs(y - 0) < tolerance, \
-        f"ID 3 (haut-gauche, origine) attendu (0, 0), obtenu ({x:.1f}, {y:.1f})"
-
     x, y = vision.pixel_to_mm(100, 350, H)
-    assert abs(x - 0) < tolerance and abs(y - WORK_AREA_HEIGHT_MM) < tolerance, \
-        f"ID 2 (bas-gauche) attendu (0, {WORK_AREA_HEIGHT_MM}), obtenu ({x:.1f}, {y:.1f})"
+    assert abs(x - 0) < tolerance and abs(y - 0) < tolerance, \
+        f"ID 2 (bas-gauche, origine) attendu (0, 0), obtenu ({x:.1f}, {y:.1f})"
 
-    x, y = vision.pixel_to_mm(500, 350, H)
+    x, y = vision.pixel_to_mm(100, 50, H)
+    assert abs(x - 0) < tolerance and abs(y - WORK_AREA_HEIGHT_MM) < tolerance, \
+        f"ID 3 (haut-gauche) attendu (0, {WORK_AREA_HEIGHT_MM}), obtenu ({x:.1f}, {y:.1f})"
+
+    x, y = vision.pixel_to_mm(500, 50, H)
     assert abs(x - WORK_AREA_WIDTH_MM) < tolerance and abs(y - WORK_AREA_HEIGHT_MM) < tolerance, \
-        f"ID 1 (bas-droit) attendu ({WORK_AREA_WIDTH_MM}, {WORK_AREA_HEIGHT_MM}), " \
+        f"ID 0 (haut-droit) attendu ({WORK_AREA_WIDTH_MM}, {WORK_AREA_HEIGHT_MM}), " \
         f"obtenu ({x:.1f}, {y:.1f})"
 
     x, y = vision.pixel_to_mm(300, 200, H)
     assert abs(x - WORK_AREA_WIDTH_MM / 2) < tolerance and abs(y - WORK_AREA_HEIGHT_MM / 2) < tolerance, \
         f"Centre attendu ({WORK_AREA_WIDTH_MM/2}, {WORK_AREA_HEIGHT_MM/2}), obtenu ({x:.1f}, {y:.1f})"
+
+
+def test_boussole_de_la_convention_du_repere(vision: VisionProcessor) -> None:
+    """LE test qui épingle la convention du repère en un seul endroit.
+
+    Si quelqu'un remet un jour la convention en question — volontairement ou par
+    accident — c'est ce test qui doit hurler en premier, avant les vingt autres qui
+    ne feraient que constater les dégâts en aval. Il vérifie les quatre faits qui,
+    ensemble, DÉFINISSENT le repère du plateau arrêté au lot C2bis :
+
+        1. le marqueur 2 (bas-gauche) est l'origine        → (0, 0)
+        2. le marqueur 3 (haut-gauche) est sur l'axe Y     → (0, hauteur), Y MONTE
+        3. l'image redressée n'est pas en miroir           → l'opérateur voit juste
+        4. la diagonale d'une zone saine descend à l'écran → dy < 0
+
+    Les points 2 et 4 sont les deux faces d'une même pièce : retourner Y retourne le
+    signe des diagonales de zone, et c'est là que se cachait tout le travail du lot.
+    """
+    marqueurs = _marqueurs_synthetiques()
+    H = vision.compute_homography(marqueurs)
+
+    # 1. Origine sur le marqueur 2
+    x, y = vision.pixel_to_mm(100, 350, H)
+    assert (x, y) == pytest.approx((0.0, 0.0), abs=1.0), \
+        "l'origine du repère doit être le centre du marqueur 2 (bas-gauche)"
+
+    # 2. Y monte : le marqueur 3, physiquement AU-DESSUS du 2, a un y mm PLUS GRAND
+    _, y_haut = vision.pixel_to_mm(100, 50, H)
+    assert y_haut > y, "l'axe Y doit croître vers le HAUT de l'image"
+    assert y_haut == pytest.approx(WORK_AREA_HEIGHT_MM, abs=1.0)
+
+    # 3. Pas de miroir : une photo blanche en haut reste blanche en haut
+    photo = np.zeros((400, 600, 3), dtype=np.uint8)
+    photo[:200, :] = 255
+    redressee = vision.warp_image(photo, H, (192, 192))
+    assert redressee[:96].mean() > redressee[96:].mean(), \
+        "l'image redressée est en miroir vertical — l'opérateur verrait le plateau à l'envers"
+
+    # 4. La diagonale d'une zone bien montée va vers la droite et vers le BAS de
+    #    l'écran, donc dx > 0 et dy < 0 dans un repère dont le Y monte
+    layout = detect_deposit_zones_mm(_zone_centers(4, 40.0, 100.0))
+    zone = layout.zones[0]
+    haut_gauche, _, bas_droit, _ = zone.corners_mm
+    assert bas_droit[0] > haut_gauche[0], "le coin bas-droit est à droite du haut-gauche"
+    assert bas_droit[1] < haut_gauche[1], \
+        "le coin bas-droit doit avoir un y PLUS PETIT : c'est ce qui traduit Y montant"
 
 
 def test_warp_image_dimensions_correctes(vision: VisionProcessor) -> None:
@@ -202,11 +250,18 @@ def test_warp_image_dimensions_correctes(vision: VisionProcessor) -> None:
 def test_warp_image_orientation_non_miroir(vision: VisionProcessor) -> None:
     """L'image redressée ne doit PAS être retournée verticalement par rapport à la photo.
 
-    Régression du miroir vertical corrigé le 2026-08-01 : tant que le repère mm avait
-    son Y dirigé vers le HAUT alors que les lignes d'une image se numérotent vers le
-    BAS, warp_image() renvoyait le haut de la photo en bas de l'image redressée. Le bug
-    était invisible sur un plateau à peu près symétrique, d'où sa longévité (présent
-    depuis la Phase 2). Le repère mm descend désormais comme l'image, ce qui l'élimine.
+    Régression du miroir vertical présent de la Phase 2 au 2026-08-01 : le repère mm
+    avait alors son Y dirigé vers le HAUT alors que les lignes d'une image se numérotent
+    vers le BAS, et warp_image() renvoyait le haut de la photo en bas de l'image
+    redressée. Le bug était invisible sur un plateau à peu près symétrique, d'où sa
+    longévité — il a été démasqué par le calcul, pas à l'œil.
+
+    ⚠️ Le repère mm est REPASSÉ en Y montant au lot C2bis, pour aligner le logiciel sur
+    le repère physique de la machine. Le miroir ne revient pas pour autant : ce sont
+    désormais les trois warp_* qui retournent Y explicitement
+    (y_pixel = (hauteur_mm − y_mm) × échelle). Ce test est le garde-fou de cette ligne —
+    NE PAS L'AFFAIBLIR : c'est lui qui garantit que ce qu'on voit à l'écran est ce qui
+    se passe sur le plateau, la règle posée par l'étudiant.
 
     Principe du test : une photo blanche en haut / noire en bas doit rester blanche en
     haut / noire en bas une fois redressée.
@@ -235,18 +290,25 @@ def test_warp_image_orientation_non_miroir(vision: VisionProcessor) -> None:
 def test_compute_homography_approx_deux_marqueurs(vision: VisionProcessor) -> None:
     """Avec seulement 2 marqueurs (ID3 haut-gauche, ID0 haut-droit), leurs centres
     doivent mapper vers leurs positions mm connues (±1 mm), comme compute_homography()
-    mais sans les IDs du bas (1 et 2) — c'est le cas réel de la caméra Geeetech."""
+    mais sans les IDs du bas (1 et 2) — c'est le cas réel de la caméra Geeetech.
+
+    Noter que l'ORIGINE du repère (le marqueur 2) n'est ici pas visible : sa position
+    est extrapolée à partir de la taille de plateau configurée. C'est ce que signale
+    PlateauReference.origin_extrapolated, et ce qui rend l'action M1 (mesurer le
+    plateau) déterminante pour la précision réelle de la dépose.
+    """
     marqueurs = {3: _coins_autour(100, 70), 0: _coins_autour(500, 65)}
     H = vision.compute_homography_approx(marqueurs)
 
     tolerance = 1.0
     x, y = vision.pixel_to_mm(100, 70, H)
-    assert abs(x - 0) < tolerance and abs(y - 0) < tolerance, \
-        f"ID3 (haut-gauche, origine) attendu (0, 0), obtenu ({x:.1f}, {y:.1f})"
+    assert abs(x - 0) < tolerance and abs(y - WORK_AREA_HEIGHT_MM) < tolerance, \
+        f"ID3 (haut-gauche) attendu (0, {WORK_AREA_HEIGHT_MM}), obtenu ({x:.1f}, {y:.1f})"
 
     x, y = vision.pixel_to_mm(500, 65, H)
-    assert abs(x - WORK_AREA_WIDTH_MM) < tolerance and abs(y - 0) < tolerance, \
-        f"ID0 (haut-droit) attendu ({WORK_AREA_WIDTH_MM}, 0), obtenu ({x:.1f}, {y:.1f})"
+    assert abs(x - WORK_AREA_WIDTH_MM) < tolerance and abs(y - WORK_AREA_HEIGHT_MM) < tolerance, \
+        f"ID0 (haut-droit) attendu ({WORK_AREA_WIDTH_MM}, {WORK_AREA_HEIGHT_MM}), " \
+        f"obtenu ({x:.1f}, {y:.1f})"
 
 
 def test_compute_homography_approx_trois_marqueurs(vision: VisionProcessor) -> None:
@@ -256,11 +318,11 @@ def test_compute_homography_approx_trois_marqueurs(vision: VisionProcessor) -> N
     del marqueurs[1]  # n'en garder que 3 : IDs 0, 2, 3 (on retire le coin bas-droit)
 
     H = vision.compute_homography_approx(marqueurs)
-    x, y = vision.pixel_to_mm(100, 350, H)  # centre du marqueur ID2 (bas-gauche)
+    x, y = vision.pixel_to_mm(100, 350, H)  # centre du marqueur ID2 (bas-gauche, origine)
 
     tolerance = 1.0
-    assert abs(x - 0) < tolerance and abs(y - WORK_AREA_HEIGHT_MM) < tolerance, \
-        f"ID2 (bas-gauche) attendu (0, {WORK_AREA_HEIGHT_MM}), obtenu ({x:.1f}, {y:.1f})"
+    assert abs(x - 0) < tolerance and abs(y - 0) < tolerance, \
+        f"ID2 (bas-gauche, origine) attendu (0, 0), obtenu ({x:.1f}, {y:.1f})"
 
 
 def test_compute_homography_approx_un_seul_marqueur_leve_erreur(vision: VisionProcessor) -> None:
@@ -388,16 +450,22 @@ PRODUIT_H = 40.0
 def _zone_centers(id_tl: int, x: float, y: float,
                   w: float = PRODUIT_W, h: float = PRODUIT_H,
                   rotation_deg: float = 0.0) -> dict:
-    """Fabrique les 2 centres de marqueurs d'une zone posée en (x, y).
+    """Fabrique les 2 centres de marqueurs d'une zone dont le coin haut-gauche
+    est en (x, y), coordonnées mm du plateau (Y montant).
 
     Le marqueur haut-gauche porte l'ID id_tl, le bas-droit id_tl + 1.
     Le vecteur diagonale d'un rectangle tourné de θ est le vecteur diagonale non
     tourné, tourné de θ — c'est la relation utilisée à la reconstruction, appliquée
     ici dans l'autre sens pour fabriquer les données de test.
+
+    ⚠️ Le vecteur diagonale non tourné vaut (w, −h) et non (w, +h) : depuis le lot
+    C2bis l'axe Y du plateau monte, donc descendre le long de la hauteur fait
+    DÉCROÎTRE y. Toutes les positions de zone des tests ci-dessous ont été remontées
+    en conséquence, pour que les coins restent dans le plateau (0 → ~190 mm).
     """
     theta = math.radians(rotation_deg)
-    dx = w * math.cos(theta) - h * math.sin(theta)
-    dy = w * math.sin(theta) + h * math.cos(theta)
+    dx = w * math.cos(theta) + h * math.sin(theta)
+    dy = w * math.sin(theta) - h * math.cos(theta)
     return {id_tl: (x, y), id_tl + 1: (x + dx, y + dy)}
 
 
@@ -410,9 +478,9 @@ def _plateau_de_trois_zones() -> dict:
     suivante. C'est le cas d'ambiguïté réel que le filtrage par diagonale élimine.
     """
     centres = {}
-    centres.update(_zone_centers(4, 10.0, 10.0))    # zone A, en haut à gauche
-    centres.update(_zone_centers(6, 110.0, 10.0))   # zone B, en haut à droite
-    centres.update(_zone_centers(8, 10.0, 80.0))    # zone C, en bas à gauche
+    centres.update(_zone_centers(4, 10.0, 180.0))    # zone A, en haut à gauche
+    centres.update(_zone_centers(6, 110.0, 180.0))   # zone B, en haut à droite
+    centres.update(_zone_centers(8, 10.0, 110.0))    # zone C, en bas à gauche
     return centres
 
 
@@ -469,22 +537,25 @@ def test_format_du_produit_deduit_sans_saisie_operateur() -> None:
 def test_coins_reconstruits_dans_l_ordre_horaire() -> None:
     """Les 4 coins doivent sortir dans l'ordre haut-gauche, haut-droit, bas-droit,
     bas-gauche — l'ordre attendu pour tracer le contour sans croisement."""
-    layout = detect_deposit_zones_mm(_zone_centers(4, 10.0, 20.0))
+    layout = detect_deposit_zones_mm(_zone_centers(4, 10.0, 60.0))
     zone = layout.zones[0]
 
     haut_gauche, haut_droit, bas_droit, bas_gauche = zone.corners_mm
 
-    assert haut_gauche == pytest.approx((10.0, 20.0), abs=0.1)
-    assert haut_droit == pytest.approx((70.0, 20.0), abs=0.1)
-    assert bas_droit == pytest.approx((70.0, 60.0), abs=0.1)
-    assert bas_gauche == pytest.approx((10.0, 60.0), abs=0.1)
+    assert haut_gauche == pytest.approx((10.0, 60.0), abs=0.1)
+    assert haut_droit == pytest.approx((70.0, 60.0), abs=0.1)
+    assert bas_droit == pytest.approx((70.0, 20.0), abs=0.1)
+    assert bas_gauche == pytest.approx((10.0, 20.0), abs=0.1)
+
+    # L'origine du repère de la zone est son coin BAS-gauche depuis le lot C2bis
+    assert zone.origin_mm == pytest.approx((10.0, 20.0), abs=0.1)
 
 
 # ------------------------------------------------------------------ anomalies
 
 def test_zone_montee_a_l_envers_detectee() -> None:
     """Une zone dont les deux marqueurs sont intervertis pointe vers le haut-gauche
-    au lieu du bas-droit : ses deux composantes de diagonale sont négatives."""
+    au lieu du bas-droit : sa diagonale vaut (−, +) au lieu de (+, −)."""
     centres = _plateau_de_trois_zones()
     # Intervertir les positions des tags 8 et 9 — le montage est fait à l'envers
     centres[8], centres[9] = centres[9], centres[8]
@@ -504,9 +575,9 @@ def test_zone_montee_a_l_envers_detectee() -> None:
 def test_zone_trop_inclinee_signalee() -> None:
     """Au-delà du seuil (10° par défaut), une zone est signalée comme mal vissée."""
     centres = {}
-    centres.update(_zone_centers(4, 10.0, 10.0))
-    centres.update(_zone_centers(6, 110.0, 10.0))
-    centres.update(_zone_centers(8, 10.0, 80.0, rotation_deg=25.0))  # de travers
+    centres.update(_zone_centers(4, 10.0, 180.0))
+    centres.update(_zone_centers(6, 110.0, 180.0))
+    centres.update(_zone_centers(8, 10.0, 110.0, rotation_deg=25.0))  # de travers
 
     layout = detect_deposit_zones_mm(centres)
 
@@ -519,9 +590,9 @@ def test_legere_inclinaison_toleree() -> None:
     """Une rotation de montage de quelques degrés est normale et ne doit pas invalider
     la zone — c'est tout l'intérêt de gérer la rotation."""
     centres = {}
-    centres.update(_zone_centers(4, 10.0, 10.0))
-    centres.update(_zone_centers(6, 110.0, 10.0))
-    centres.update(_zone_centers(8, 10.0, 80.0, rotation_deg=4.0))
+    centres.update(_zone_centers(4, 10.0, 180.0))
+    centres.update(_zone_centers(6, 110.0, 180.0))
+    centres.update(_zone_centers(8, 10.0, 110.0, rotation_deg=4.0))
 
     layout = detect_deposit_zones_mm(centres)
 
@@ -536,16 +607,17 @@ def test_paire_fantome_de_meme_longueur_ne_casse_pas_le_plateau() -> None:
 
     Deux zones 60×40 côte à côte espacées de 60 mm : la paire (5,6), formée du coin
     bas-droit de la première et du coin haut-gauche de la seconde, a pour vecteur
-    (60, -40) contre (60, +40) pour les vraies zones — même longueur au millimètre
+    (60, +40) contre (60, −40) pour les vraies zones — même longueur au millimètre
     près. Elle empruntant leurs tags, elle invalidait les deux zones réelles par
     conflit : un plateau parfaitement monté devenait inexploitable.
 
-    Le tri par SIGNE des composantes l'écarte : une zone réelle a forcément ses deux
-    composantes positives, le Y du repère plateau étant dirigé vers le bas.
+    Le tri par SIGNE des composantes l'écarte : une zone réelle avance en X et
+    redescend en Y, le Y du repère plateau étant dirigé vers le haut depuis le lot
+    C2bis. Une paire dont les deux composantes ont le MÊME signe est un fantôme.
     """
     centres = {}
-    centres.update(_zone_centers(4, 10.0, 10.0))
-    centres.update(_zone_centers(6, 130.0, 10.0))
+    centres.update(_zone_centers(4, 10.0, 180.0))
+    centres.update(_zone_centers(6, 130.0, 180.0))
 
     # Prérequis du test : vérifier que le fantôme a bien la longueur de référence,
     # sinon le test passerait pour de mauvaises raisons
@@ -577,7 +649,7 @@ def test_plateau_entierement_inverse_reste_identifie() -> None:
     majoritaire et l'emportent.
     """
     centres = {}
-    for id_tl, (x, y) in ((4, (10.0, 10.0)), (6, (130.0, 10.0)), (8, (10.0, 90.0))):
+    for id_tl, (x, y) in ((4, (10.0, 180.0)), (6, (130.0, 180.0)), (8, (10.0, 100.0))):
         zone = _zone_centers(id_tl, x, y)
         # Intervertir les deux marqueurs : la zone est montée à l'envers
         centres[id_tl] = zone[id_tl + 1]
@@ -599,12 +671,12 @@ def test_plateau_entierement_inverse_reste_identifie() -> None:
 def test_paires_en_conflit_invalidees_toutes_les_deux() -> None:
     """Si deux paires à la bonne longueur se disputent un marqueur, aucune des deux
     n'est exploitable : impossible de savoir laquelle est la vraie zone."""
-    # (4,5) et (5,6) ont toutes deux une diagonale (60, 40) → le tag 5 est revendiqué
+    # (4,5) et (5,6) ont toutes deux une diagonale (60, −40) → le tag 5 est revendiqué
     # par les deux, ce qui est géométriquement impossible
     centres = {
-        4: (10.0, 10.0),
-        5: (70.0, 50.0),
-        6: (130.0, 90.0),
+        4: (10.0, 180.0),
+        5: (70.0, 140.0),
+        6: (130.0, 100.0),
     }
 
     layout = detect_deposit_zones_mm(centres)
@@ -621,7 +693,7 @@ def test_diagonale_hors_norme_ecarte_la_paire() -> None:
     centres = _plateau_de_trois_zones()
     # Ajouter une paire (20,21) au format manifestement différent (zone deux fois plus
     # grande) : elle ne doit pas être confondue avec les vraies zones
-    centres.update(_zone_centers(20, 10.0, 150.0, w=120.0, h=80.0))
+    centres.update(_zone_centers(20, 10.0, 100.0, w=120.0, h=80.0))
 
     layout = detect_deposit_zones_mm(centres)
 
@@ -650,7 +722,7 @@ def test_zone_unique_ne_permet_pas_de_detecter_un_mauvais_montage() -> None:
 
     Ce test fige ce comportement pour qu'il ne soit pas pris plus tard pour un bug.
     """
-    layout = detect_deposit_zones_mm(_zone_centers(4, 10.0, 10.0, rotation_deg=30.0))
+    layout = detect_deposit_zones_mm(_zone_centers(4, 10.0, 100.0, rotation_deg=30.0))
 
     assert len(layout.valid_zones) == 1
     assert layout.valid_zones[0].rotation_deg == pytest.approx(0.0, abs=0.01)
@@ -658,15 +730,19 @@ def test_zone_unique_ne_permet_pas_de_detecter_un_mauvais_montage() -> None:
 
 def test_rectangle_from_diagonal_solution_unique() -> None:
     """Le format de référence étant ORIENTÉ (issu de la médiane des zones), la
-    rotation se déduit sans ambiguïté : une diagonale (60, 40) pour un produit
-    60×40 donne exactement 0°."""
+    rotation se déduit sans ambiguïté : une diagonale (60, −40) pour un produit
+    60×40 donne exactement 0°.
+
+    Le signe moins sur la composante Y est la convention du lot C2bis : l'axe Y du
+    plateau monte, donc la diagonale d'une zone bien montée descend à l'écran.
+    """
     coins, rotation_deg, taille = _rectangle_from_diagonal(
-        (0.0, 0.0), (60.0, 40.0), PRODUIT_W, PRODUIT_H
+        (0.0, 40.0), (60.0, 0.0), PRODUIT_W, PRODUIT_H
     )
 
     assert rotation_deg == pytest.approx(0.0, abs=0.01)
     assert taille == (PRODUIT_W, PRODUIT_H)
-    assert coins[2] == pytest.approx((60.0, 40.0), abs=0.01), \
+    assert coins[2] == pytest.approx((60.0, 0.0), abs=0.01), \
         "le coin bas-droit doit retomber sur l'extrémité de la diagonale"
 
 
@@ -679,10 +755,10 @@ def test_rectangle_from_diagonal_ne_reinterprete_pas_une_forte_rotation() -> Non
     gardait la plus petite rotation, une zone vissée de travers ressortait à ~2° et
     l'anomalie de montage passait inaperçue.
     """
-    # Diagonale d'un 60×40 tourné de 25° : R(25°) appliqué au vecteur (60, 40)
+    # Diagonale d'un 60×40 tourné de 25° : R(25°) appliqué au vecteur (60, −40)
     theta = math.radians(25.0)
-    dx = PRODUIT_W * math.cos(theta) - PRODUIT_H * math.sin(theta)
-    dy = PRODUIT_W * math.sin(theta) + PRODUIT_H * math.cos(theta)
+    dx = PRODUIT_W * math.cos(theta) + PRODUIT_H * math.sin(theta)
+    dy = PRODUIT_W * math.sin(theta) - PRODUIT_H * math.cos(theta)
 
     _, rotation_deg, taille = _rectangle_from_diagonal(
         (0.0, 0.0), (dx, dy), PRODUIT_W, PRODUIT_H
@@ -705,8 +781,10 @@ def _zone_pour_warp(rotation_deg: float = 0.0) -> tuple:
     vision = VisionProcessor(ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM)
     H = vision.compute_homography(marqueurs)
 
-    # Une zone de 60 × 40 mm posée à 40 mm du bord, éventuellement tournée
-    centres = _zone_centers(4, 40.0, 40.0, rotation_deg=rotation_deg)
+    # Une zone de 60 × 40 mm dont le coin haut-gauche est à 100 mm du bas du plateau,
+    # éventuellement tournée. Position choisie pour que la zone tombe au milieu de
+    # l'image source une fois le repère retourné.
+    centres = _zone_centers(4, 40.0, 100.0, rotation_deg=rotation_deg)
     layout = detect_deposit_zones_mm(centres)
     return vision, H, layout.zones[0]
 
@@ -728,6 +806,9 @@ def test_warp_zone_redresse_une_zone_tournee() -> None:
     Méthode : on peint une bande dans l'image source le long d'un côté de la zone
     inclinée. Après redressement, cette bande doit border proprement l'image de sortie
     — ce qui ne serait pas le cas si la rotation n'était pas compensée.
+
+    ⚠️ La moitié « haute » de la zone est celle des grands y depuis le lot C2bis
+    (origine du repère de zone au coin BAS-gauche), d'où le découpage hauteur/2 → hauteur.
     """
     vision, H, zone = _zone_pour_warp(rotation_deg=20.0)
 
@@ -737,8 +818,8 @@ def test_warp_zone_redresse_une_zone_tournee() -> None:
     image = np.full((400, 600, 3), 255, dtype=np.uint8)
     largeur, hauteur = zone.size_mm
     coins_haut_mm = [
-        zone.to_plateau_mm((0.0, 0.0)),
-        zone.to_plateau_mm((largeur, 0.0)),
+        zone.to_plateau_mm((0.0, hauteur)),
+        zone.to_plateau_mm((largeur, hauteur)),
         zone.to_plateau_mm((largeur, hauteur / 2)),
         zone.to_plateau_mm((0.0, hauteur / 2)),
     ]
@@ -760,15 +841,21 @@ def test_warp_zone_redresse_une_zone_tournee() -> None:
     )
 
 
-def test_warp_zone_origine_au_coin_haut_gauche() -> None:
-    """Le pixel (0, 0) de l'image redressée doit être le coin haut-gauche de la zone.
+def test_warp_zone_origine_du_repere_au_coin_bas_gauche() -> None:
+    """Le point (0, 0) du repère de la zone doit être son coin BAS-gauche.
 
-    C'est ce qui permet de convertir un clic en millimètres par une simple division,
-    sans repasser par l'homographie point par point.
+    C'est la convention posée au lot C2bis, et c'est elle qui permet de convertir un
+    clic en millimètres par une simple division suivie d'un retournement de Y, sans
+    repasser par l'homographie point par point (gui/screen_cordons.py::_position_mm).
+
+    Le test pointe précisément le piège : avant le lot C2bis, un carré dessiné en
+    (0, 0) ressortait en HAUT à gauche de l'image redressée. Il doit désormais
+    ressortir en BAS à gauche — et surtout pas ailleurs, sinon les cordons d'un
+    opérateur atterriraient à l'autre bout de la pièce.
     """
     vision, H, zone = _zone_pour_warp(rotation_deg=12.0)
 
-    # Marquer un carré noir de 10 × 10 mm au coin haut-gauche de la zone
+    # Marquer un carré noir de 10 × 10 mm à l'ORIGINE du repère de la zone
     image = np.full((400, 600, 3), 255, dtype=np.uint8)
     coins_mm = [zone.to_plateau_mm(p) for p in
                 ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0))]
@@ -777,13 +864,20 @@ def test_warp_zone_origine_au_coin_haut_gauche() -> None:
 
     px_per_mm = 4.0
     resultat = vision.warp_zone(image, zone, H, px_per_mm)
+    hauteur_px = resultat.shape[0]
 
-    # Le carré doit se retrouver en haut à gauche de l'image redressée (10 mm × 4 = 40 px)
-    coin = resultat[5:35, 5:35].mean()
-    ailleurs = resultat[60:, 60:].mean()
+    # 10 mm × 4 px/mm = 40 px : le carré occupe les 40 dernières LIGNES, à gauche
+    coin_bas = resultat[hauteur_px - 35:hauteur_px - 5, 5:35].mean()
+    coin_haut = resultat[5:35, 5:35].mean()
 
-    assert coin < 40, f"le coin haut-gauche devrait être noir (moyenne {coin:.0f})"
-    assert ailleurs > 215, f"le reste devrait être blanc (moyenne {ailleurs:.0f})"
+    assert coin_bas < 40, (
+        f"l'origine (0, 0) de la zone doit ressortir en BAS à gauche de l'image "
+        f"(moyenne {coin_bas:.0f})"
+    )
+    assert coin_haut > 215, (
+        f"le haut de l'image doit rester blanc (moyenne {coin_haut:.0f}) — s'il est "
+        f"noir, le retournement de Y de warp_zone() n'a pas été appliqué"
+    )
 
 
 # ===========================================================================
@@ -909,8 +1003,8 @@ def test_detect_deposit_zones_depuis_des_marqueurs_pixels(vision: VisionProcesso
     # Deux zones côte à côte SUR LA MÊME LIGNE, comme sur le croquis du plateau réel.
     # C'est le cas piégeux : la paire fantôme (5,6), formée du coin bas-droit de la
     # première et du coin haut-gauche de la seconde, a exactement la même LONGUEUR de
-    # diagonale que les vraies zones — par symétrie, son vecteur est (100, -80) contre
-    # (100, +80). Seul le tri par signe des composantes permet de l'écarter ; sans lui
+    # diagonale que les vraies zones — par symétrie, son vecteur est (100, +80) contre
+    # (100, −80). Seul le tri par signe des composantes permet de l'écarter ; sans lui
     # elle invaliderait par conflit les deux zones réelles, dont elle emprunte les tags.
     marqueurs[4] = _coins_autour(150, 100)
     marqueurs[5] = _coins_autour(250, 180)

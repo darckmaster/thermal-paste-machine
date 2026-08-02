@@ -151,17 +151,25 @@ class ScreenRun(QWidget):
         """Démarrer l'exécution : générer la trajectoire et lancer le thread."""
         self._machine = machine
 
-        # Convertir les coordonnées ArUco (mm depuis le marqueur 3, coin haut-gauche du
+        # Convertir les coordonnées plateau (mm depuis le marqueur 2, coin BAS-gauche du
         # plateau) en coordonnées machine (mm depuis le home G28).
-        # MACHINE_ORIGIN_X/Y = position machine du marqueur 3, mesurée avec M114.
+        # MACHINE_ORIGIN_X/Y = position machine du marqueur 2, à mesurer avec M114.
         #
-        # X : simple addition — l'axe X ArUco et l'axe X machine vont tous deux vers la droite.
-        # Y : SOUSTRACTION — depuis le 2026-08-01 l'axe Y ArUco descend (comme les lignes
-        #     d'une image, voir modules/vision.py::_plateau_corner_positions_mm) alors que
-        #     l'axe Y machine monte vers le fond. C'est LE seul endroit du code où les deux
-        #     repères se rejoignent, donc le seul où cette inversion doit apparaître.
+        # Deux additions depuis le lot C2bis : le repère du plateau a désormais son Y
+        # dirigé vers le HAUT, comme l'axe Y machine qui croît vers le fond. La
+        # soustraction qui vivait ici — seul point du code où les deux repères se
+        # rejoignaient — disparaît donc : c'était précisément le but du changement de
+        # convention, faire porter l'alignement par le repère plutôt que par une
+        # inversion isolée qu'il fallait penser à écrire.
+        #
+        # ⚠️ NON VALIDÉ SUR LA MACHINE. Le sens réel des axes X, Y et Z est l'action M4
+        # (voir CLAUDE.md § 7 bis) : il sera établi en interactif, machine sous tension,
+        # au lot D. Décidé le 2026-08-01 de ne PAS le déduire sur le papier. Cette
+        # formule est cohérente avec la convention actuelle, rien de plus. Et tant que
+        # M2 n'est pas refait (M114 buse au-dessus du marqueur 2), MACHINE_ORIGIN_X/Y
+        # datent de deux conventions en arrière : la dépose réelle sera décalée.
         points_machine = [
-            (x + MACHINE_ORIGIN_X, MACHINE_ORIGIN_Y - y)
+            (x + MACHINE_ORIGIN_X, y + MACHINE_ORIGIN_Y)
             for x, y in points_mm
         ]
 

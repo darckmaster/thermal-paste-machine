@@ -27,25 +27,31 @@ from modules.preparation import (
     save_preparation,
 )
 from modules.vision import DepositZone
+from modules.config import WORK_AREA_HEIGHT_MM
 
 
 # ------------------------------------------------------------------ utilitaires
 
 def _zone(id_tl: int = 4, x: float = 10.0, y: float = 20.0,
           w: float = 60.0, h: float = 40.0, rotation_deg: float = 0.0) -> DepositZone:
-    """Fabrique une zone dont le coin haut-gauche est en (x, y).
+    """Fabrique une zone dont le coin BAS-GAUCHE — son origine — est en (x, y).
 
-    Les 4 coins sont calculés comme le fait _rectangle_from_diagonal : rotation
-    appliquée aux deux vecteurs de côté depuis le coin haut-gauche.
+    L'ancrage a suivi le lot C2bis : c'était le coin haut-gauche avant, c'est
+    désormais l'origine du repère de la zone (DepositZone.origin_mm), donc le point
+    auquel se rapportent tous les cordons. Ancrer les données de test sur autre chose
+    que l'origine obligerait chaque test à faire mentalement la translation.
+
+    Les 4 coins sont donnés dans l'ordre VU à l'écran (haut-gauche, haut-droit,
+    bas-droit, bas-gauche), comme le fait _rectangle_from_diagonal.
     """
     theta = math.radians(rotation_deg)
     u = (math.cos(theta), math.sin(theta))       # direction de la largeur
-    v = (-math.sin(theta), math.cos(theta))      # direction de la hauteur
+    n = (-math.sin(theta), math.cos(theta))      # direction de la hauteur, vers le HAUT
 
-    haut_gauche = (x, y)
-    haut_droit = (x + w * u[0], y + w * u[1])
-    bas_droit = (haut_droit[0] + h * v[0], haut_droit[1] + h * v[1])
-    bas_gauche = (x + h * v[0], y + h * v[1])
+    bas_gauche = (x, y)
+    bas_droit = (x + w * u[0], y + w * u[1])
+    haut_gauche = (x + h * n[0], y + h * n[1])
+    haut_droit = (haut_gauche[0] + w * u[0], haut_gauche[1] + w * u[1])
 
     return DepositZone(
         id_top_left=id_tl,
@@ -105,7 +111,7 @@ def test_cordon_serialisation_aller_retour() -> None:
 
 def test_cordon_applique_a_une_zone_non_tournee() -> None:
     """Sur une zone droite, appliquer un cordon revient à une simple translation
-    vers le coin haut-gauche de la zone."""
+    vers le coin BAS-gauche de la zone, qui en est l'origine."""
     zone = _zone(4, 100.0, 50.0)
     prep = Preparation("P", zones=[zone], cordons=[Cordon([(5.0, 5.0), (15.0, 5.0)])])
 
@@ -124,7 +130,8 @@ def test_cordon_applique_a_une_zone_tournee() -> None:
 
     point = prep.cordons_for_zone(zone)[0][0]
 
-    # Une rotation de 90° dans un repère dont le Y descend amène l'axe X sur l'axe Y
+    # Une rotation de 90° dans le sens trigonométrique (positif depuis le lot C2bis)
+    # amène l'axe X de la zone sur l'axe Y du plateau
     assert point == pytest.approx((0.0, 10.0), abs=0.01)
 
 
@@ -149,8 +156,9 @@ def test_meme_cordon_applique_a_toutes_les_zones() -> None:
 
     for zone in zones:
         polyline = prep.cordons_for_zone(zone)[0]
-        # Le premier point doit tomber à +5/+5 du coin haut-gauche de CHAQUE zone
-        coin = zone.corners_mm[0]
+        # Le premier point doit tomber à +5/+5 de l'ORIGINE (coin bas-gauche) de
+        # CHAQUE zone — c'est le point auquel se rapportent les coordonnées relatives
+        coin = zone.origin_mm
         assert polyline[0] == pytest.approx((coin[0] + 5.0, coin[1] + 5.0), abs=0.01)
 
 
@@ -193,7 +201,10 @@ def test_preparation_aller_retour_complet() -> None:
     assert len(reconstruit.zones) == 2
     assert len(reconstruit.cordons) == 2
     assert reconstruit.reference_zone_id == 4
-    assert reconstruit.zones[0].corners_mm[0] == pytest.approx((10.0, 20.0), abs=0.01)
+    assert reconstruit.zones[0].origin_mm == pytest.approx((10.0, 20.0), abs=0.01)
+    # Un aller-retour ne doit PAS déclencher de conversion : le format écrit est le
+    # format courant
+    assert reconstruit.converted_from_version is None
     assert reconstruit.cordons[1].length_mm == pytest.approx(
         original.cordons[1].length_mm, abs=0.01
     )
@@ -218,6 +229,132 @@ def test_format_version_future_refusee() -> None:
 
     with pytest.raises(ValueError):
         Preparation.from_dict(data)
+
+
+# ------------------------------------------------------ conversion des fichiers v1
+
+def _fichier_v1() -> dict:
+    """Un fichier tel que l'écrivait le logiciel AVANT le lot C2bis.
+
+    Repères à Y descendant des deux côtés : le coin haut-gauche de la zone est son
+    origine et porte le plus petit y, et les cordons sont mesurés depuis lui vers le
+    bas. Fabriqué à la main plutôt qu'en rejouant l'ancien code : c'est le FICHIER
+    qu'on doit savoir relire, pas une version passée du logiciel.
+    """
+    return {
+        "format_version": 1,
+        "product_name": "Ancien plateau",
+        "reference_zone_id": 4,
+        "settings": {},
+        "zones": [{
+            "id_top_left": 4,
+            "id_bottom_right": 5,
+            # Ordre vu à l'écran : haut-gauche, haut-droit, bas-droit, bas-gauche.
+            # En v1 le haut portait les PETITS y.
+            "corners_mm": [[10.0, 20.0], [70.0, 20.0], [70.0, 60.0], [10.0, 60.0]],
+            "rotation_deg": 0.0,
+            "diagonal_mm": 72.11,
+            "size_mm": [60.0, 40.0],
+            "anomalies": [],
+        }],
+        # Un cordon à 5 mm sous le bord HAUT de la zone, dans l'ancien repère
+        "cordons": [{"points_mm": [[5.0, 5.0], [55.0, 5.0]]}],
+    }
+
+
+def test_fichier_v1_converti_et_signale() -> None:
+    """Un fichier v1 doit être relu, converti, et la conversion doit être SIGNALÉE.
+
+    Sans conversion, il serait relu silencieusement à l'envers : le contrôle de
+    version ne refusait que les fichiers plus récents que le logiciel. Et sans
+    signalement, l'opérateur verrait ses cordons se déplacer tout seuls — plus
+    inquiétant qu'un message.
+    """
+    prep = Preparation.from_dict(_fichier_v1())
+
+    assert prep.converted_from_version == 1
+    assert "converti" in prep.conversion_message.lower()
+
+
+def test_fichier_v1_cordons_retournes_dans_le_repere_de_la_zone() -> None:
+    """Le cordon doit garder sa position PHYSIQUE sur la pièce, pas ses coordonnées.
+
+    Il était à 5 mm du bord haut d'une zone de 40 mm de haut. Dans le repère v2, dont
+    l'origine est le coin bas-gauche, ce même bord haut est à y = 40 : le cordon doit
+    donc ressortir à y = 35. Un cordon laissé à y = 5 se retrouverait à l'autre bout
+    de la pièce, et la buse déposerait au mauvais endroit.
+    """
+    prep = Preparation.from_dict(_fichier_v1())
+
+    points = prep.cordons[0].points_mm
+    assert points[0] == pytest.approx((5.0, 35.0), abs=0.01)
+    assert points[1] == pytest.approx((55.0, 35.0), abs=0.01)
+
+
+def test_fichier_v1_zone_retournee_dans_le_repere_du_plateau() -> None:
+    """Les coins de la zone basculent eux aussi, avec la hauteur du PLATEAU.
+
+    Deux repères sont retournés par le lot C2bis, et le fichier en contient les deux :
+    n'en convertir qu'un rendrait le fichier incohérent avec lui-même — pire que de
+    ne rien convertir. L'ordre des coins, lui, ne change pas : ce sont des positions
+    VUES par l'opérateur, et retourner une convention ne déplace rien physiquement.
+    """
+    prep = Preparation.from_dict(_fichier_v1())
+    zone = prep.zones[0]
+
+    haut_gauche, _, _, bas_gauche = zone.corners_mm
+    assert haut_gauche == pytest.approx((10.0, WORK_AREA_HEIGHT_MM - 20.0), abs=0.01)
+    assert bas_gauche == pytest.approx((10.0, WORK_AREA_HEIGHT_MM - 60.0), abs=0.01)
+    # Le haut de la zone a désormais le PLUS GRAND y — c'est tout le changement
+    assert haut_gauche[1] > bas_gauche[1]
+    # L'origine du repère de zone suit : c'est le coin bas-gauche
+    assert zone.origin_mm == pytest.approx(bas_gauche, abs=0.01)
+
+
+def test_fichier_v1_rotation_change_de_signe() -> None:
+    """Un angle mesuré dans un repère retourné change de sens.
+
+    En v1, une rotation positive était horaire à l'écran ; en v2 elle est
+    trigonométrique. La zone n'a pas bougé sur le plateau : c'est son NOMBRE qui doit
+    changer de signe pour continuer à la décrire.
+    """
+    data = _fichier_v1()
+    data["zones"][0]["rotation_deg"] = 7.5
+
+    prep = Preparation.from_dict(data)
+
+    assert prep.zones[0].rotation_deg == pytest.approx(-7.5, abs=0.001)
+
+
+def test_fichier_v1_sans_zone_mais_avec_cordons_refuse() -> None:
+    """Sans zone, la hauteur nécessaire à la conversion est introuvable : il faut
+    refuser franchement plutôt que de laisser passer des cordons à l'envers."""
+    data = _fichier_v1()
+    data["zones"] = []
+
+    with pytest.raises(ValueError):
+        Preparation.from_dict(data)
+
+
+def test_fichier_v1_reecrit_en_v2_au_chargement(tmp_path) -> None:
+    """load_preparation() réécrit le fichier converti : la migration n'a lieu qu'une
+    fois, et le fichier sur disque cesse d'être un piège pour la lecture suivante."""
+    chemin = os.path.join(str(tmp_path), "ancien.json")
+    with open(chemin, "w", encoding="utf-8") as f:
+        json.dump(_fichier_v1(), f)
+
+    prep = load_preparation(chemin)
+    assert prep.converted_from_version == 1
+
+    # Le fichier sur disque porte maintenant le format courant...
+    with open(chemin, encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["format_version"] == FORMAT_VERSION
+
+    # ...et une seconde lecture ne convertit plus rien, sans déplacer les cordons
+    relu = load_preparation(chemin)
+    assert relu.converted_from_version is None
+    assert relu.cordons[0].points_mm[0] == pytest.approx((5.0, 35.0), abs=0.01)
 
 
 # ------------------------------------------------------------------ noms de fichiers

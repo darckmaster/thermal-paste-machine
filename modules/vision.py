@@ -21,40 +21,76 @@ _ARUCO_DICTS = {
 
 
 def _plateau_corner_positions_mm() -> dict:
-    """Positions mm connues des 4 marqueurs de coin du plateau, dans son propre repère
-    (origine au marqueur 3, X vers ID0, Y vers ID2 — voir compute_homography).
+    """Positions mm connues des 4 marqueurs de coin du plateau, dans son propre repère.
 
-    Disposition physique constatée le 2026-08-01 (remplace l'ancienne, où le
-    marqueur 0 était en bas-gauche) :
+    Disposition physique constatée le 2026-08-01 :
 
-        3 ─────── 0
-        │         │
-        2 ─────── 1
+        3 ─────── 0            Y
+        │         │            ↑
+        2 ─────── 1            └──→ X   (origine sur le tag 2)
 
-    Le repère mm a son origine sur le marqueur 3 (HAUT-GAUCHE) et son axe Y
-    dirigé vers le BAS, exactement comme les lignes d'une image. Deux raisons :
-      1. toutes les coordonnées du plateau restent positives (0 → WORK_AREA),
-         ce qui évite les index négatifs et garde le clipping de screen_zone
-         simple ;
-      2. l'image produite par warp_image()/warp_region() s'affiche alors dans le
-         bon sens. Avec l'ancien repère (Y vers le haut), le haut de la photo
-         ressortait en bas de l'image redressée — miroir vertical présent depuis
-         la Phase 2 et corrigé le 2026-08-01.
+    Repère ORTHONORMÉ du plateau, arrêté au lot C2bis (2026-08-01 au soir) :
+      - origine       = centre du marqueur **2** (BAS-GAUCHE)
+      - axe X (abscisses) = vers le centre du marqueur 1 (bas-droit)
+      - axe Y (ordonnées) = vers le centre du marqueur 3 (haut-gauche),
+        donc **Y vers le HAUT**
+      - le marqueur 0 (haut-droit) devient redondant : il sert de **contrôle de
+        cohérence** (voir VisionProcessor.compute_plateau_reference)
 
-    Contrepartie : l'axe Y est désormais OPPOSÉ à l'axe Y machine (qui, lui,
-    croît vers le fond). La conversion se fait en un seul endroit, dans
-    gui/screen_run.py : machine_y = MACHINE_ORIGIN_Y - y_mm.
+    Pourquoi ce sens, alors que la v0.1.1 avait choisi l'inverse le matin même
+    ---------------------------------------------------------------------------
+    Pour aligner le repère logiciel sur le repère physique dans lequel on
+    raisonne devant la machine, avant d'écrire la construction des commandes
+    machine (lot D). L'axe Y machine monte vers le fond : le repère plateau monte
+    désormais lui aussi, ce qui supprime l'inversion de signe qui se cachait dans
+    gui/screen_run.py.
+
+    ⚠️ Ce que ce choix N'AUTORISE PAS à oublier — le miroir vertical
+    ---------------------------------------------------------------------------
+    Une image a son origine en haut à gauche et son Y qui **descend** (ligne 0 =
+    ligne du haut) ; aucune convention de notre côté ne change ça. Avec Y montant,
+    `y = 0 mm` est le BAS du plateau : sans précaution, ce bas atterrirait sur la
+    ligne 0, donc en HAUT de l'écran, et l'opérateur verrait le plateau à
+    l'envers. Les trois méthodes warp_* retournent donc Y explicitement :
+
+        y_pixel = (hauteur_mm − y_mm) × échelle
+
+    Règle posée par l'étudiant : la convention sert à faciliter les calculs, elle
+    ne doit RIEN changer pour l'opérateur — ce qu'il voit à l'écran est ce qui se
+    passe sur le plateau. Ce miroir a déjà existé dans le projet de la Phase 2 au
+    2026-08-01 sans que personne ne le voie à l'œil (un plateau à peu près
+    symétrique ne trahit pas son propre retournement) : il a été démasqué par le
+    calcul. D'où test_warp_image_orientation_non_miroir, à ne pas affaiblir.
+
+    L'argument « toutes les coordonnées du plateau restent positives », qui avait
+    motivé le Y descendant, est préservé : l'origine reste sur un COIN.
 
     Table partagée par compute_homography() (4 marqueurs, précis) et
     compute_homography_approx() (2-3 marqueurs, dégradé — repli caméra Geeetech,
     voir son docstring).
     """
     return {
-        3: (0.0,                  0.0),                  # haut-gauche = origine
-        0: (WORK_AREA_WIDTH_MM,   0.0),                  # haut-droit
-        1: (WORK_AREA_WIDTH_MM,   WORK_AREA_HEIGHT_MM),  # bas-droit
-        2: (0.0,                  WORK_AREA_HEIGHT_MM),  # bas-gauche
+        2: (0.0,                  0.0),                  # bas-gauche = origine
+        1: (WORK_AREA_WIDTH_MM,   0.0),                  # bas-droit
+        0: (WORK_AREA_WIDTH_MM,   WORK_AREA_HEIGHT_MM),  # haut-droit
+        3: (0.0,                  WORK_AREA_HEIGHT_MM),  # haut-gauche
     }
+
+
+# Marqueur qui porte l'origine du repère plateau. Nommé plutôt qu'écrit « 2 » un peu
+# partout : c'est LA valeur qui a changé au lot C2bis, et une constante rend visible
+# chaque endroit qui en dépend.
+PLATEAU_ORIGIN_MARKER_ID = 2
+
+# Marqueur redondant, utilisé comme contrôle de cohérence du montage optique.
+PLATEAU_CHECK_MARKER_ID = 0
+
+# Au-delà de cet écart (en mm) entre la position VUE du marqueur de contrôle et sa
+# position ATTENDUE, on prévient l'opérateur. Le seuil est volontairement large : cet
+# écart mêle l'inclinaison de la caméra, la distorsion de l'objectif (~10 % non encore
+# corrigés, action M5), une déformation du plateau et un tag mal collé. Il sert à
+# repérer une dérive franche, pas à mesurer une précision.
+PLATEAU_CHECK_TOLERANCE_MM = 5.0
 
 
 # ===========================================================================
@@ -69,6 +105,13 @@ def _plateau_corner_positions_mm() -> dict:
 # haut-gauche PLUS UN. Cette règle donne une orientation à la zone : si le
 # marqueur n se retrouve en bas à droite du n+1, la zone a été montée à
 # l'envers — c'est détectable (voir ANOMALIE_INVERSEE).
+#
+# ⚠️ « haut-gauche » et « bas-droit » décrivent CE QUE VOIT L'OPÉRATEUR à l'écran,
+# pas le signe des coordonnées. Depuis le lot C2bis l'axe Y du plateau monte : le
+# vecteur diagonale d'une zone bien montée va donc vers la droite et vers le BAS de
+# l'écran, soit dx > 0 et **dy < 0**. Vocabulaire conservé volontairement (décidé le
+# 2026-08-02) : l'image affichée restant à l'endroit, ces noms continuent de désigner
+# exactement ce que l'opérateur a sous les yeux.
 #
 # Les zones sont vissées à demeure et accueillent toutes le MÊME produit :
 # leurs diagonales ont donc la même longueur, à l'erreur de montage près.
@@ -109,7 +152,8 @@ class DepositZone:
     """Une zone de dépose reconstruite : son rectangle, son orientation, son état.
 
     Toutes les coordonnées sont en mm dans le repère du plateau (origine au
-    marqueur 3, X vers la droite, Y vers le bas — voir _plateau_corner_positions_mm).
+    marqueur 2, X vers la droite, **Y vers le haut** — voir
+    _plateau_corner_positions_mm).
     """
 
     def __init__(
@@ -126,11 +170,13 @@ class DepositZone:
         self.id_top_left = id_top_left
         self.id_bottom_right = id_bottom_right
         # Les 4 coins du rectangle reconstruit, dans l'ordre haut-gauche, haut-droit,
-        # bas-droit, bas-gauche — c'est l'ordre attendu par cv2.polylines pour tracer
-        # le contour de la zone sans croisement
+        # bas-droit, bas-gauche — l'ordre TEL QU'ON LE VOIT À L'ÉCRAN, et l'ordre
+        # attendu par cv2.polylines pour tracer le contour sans croisement.
+        # L'origine du repère de la zone est le coin BAS-GAUCHE, donc corners_mm[3].
         self.corners_mm = corners_mm
         # Rotation de la zone par rapport au repère du plateau, en degrés.
-        # Positive = sens horaire à l'écran (l'axe Y du repère descend).
+        # Positive = sens TRIGONOMÉTRIQUE, c'est-à-dire antihoraire à l'écran, depuis
+        # que l'axe Y du repère plateau monte (lot C2bis). C'était l'inverse avant.
         self.rotation_deg = rotation_deg
         # Longueur mesurée de la diagonale entre les deux centres de marqueurs
         self.diagonal_mm = diagonal_mm
@@ -154,23 +200,40 @@ class DepositZone:
     # ------------------------------------------------------------------ repères
     #
     # Les cordons sont mémorisés en mm RELATIFS à la zone : origine au coin
-    # haut-gauche, X le long de la largeur, Y le long de la hauteur. C'est ce qui
-    # permet de tracer un cordon une seule fois et de l'appliquer à toutes les
-    # autres zones du plateau, qui accueillent le même produit — il suffit de
-    # rejouer les mêmes coordonnées dans le repère de chaque zone.
+    # BAS-GAUCHE, X le long de la largeur, **Y le long de la hauteur vers le haut**.
+    # C'est ce qui permet de tracer un cordon une seule fois et de l'appliquer à
+    # toutes les autres zones du plateau, qui accueillent le même produit — il
+    # suffit de rejouer les mêmes coordonnées dans le repère de chaque zone.
     #
-    # Les deux méthodes ci-dessous sont exactement inverses l'une de l'autre.
+    # Le repère de la zone a basculé en Y montant au lot C2bis, en même temps que
+    # celui du plateau. Garder deux conventions opposées aurait réintroduit
+    # exactement la confusion que ce lot supprime — et les coordonnées de la zone
+    # restent positives, l'origine étant sur un coin, comme pour le plateau.
+    #
+    # Les deux méthodes ci-dessous sont exactement inverses l'une de l'autre. Leurs
+    # FORMULES n'ont pas changé au lot C2bis (une rotation directe s'écrit pareil
+    # dans les deux repères) : seule l'origine a changé de coin.
+
+    @property
+    def origin_mm(self) -> tuple:
+        """Origine du repère de la zone : son coin BAS-GAUCHE, en mm plateau.
+
+        Nommée plutôt qu'écrite `corners_mm[3]` aux trois endroits qui en dépendent :
+        c'est l'index qui a changé au lot C2bis (c'était `[0]`, le coin haut-gauche),
+        et le nommer rend le point de bascule visible d'un coup d'œil.
+        """
+        return self.corners_mm[3]
 
     def to_plateau_mm(self, point_zone_mm: tuple) -> tuple:
         """Convertit un point exprimé dans le repère de la zone → repère du plateau.
 
-        Applique la rotation de la zone puis la translation vers son coin haut-gauche.
+        Applique la rotation de la zone puis la translation vers son coin bas-gauche.
         """
         x, y = point_zone_mm
         theta = math.radians(self.rotation_deg)
         cos_t, sin_t = math.cos(theta), math.sin(theta)
 
-        origine = self.corners_mm[0]  # coin haut-gauche de la zone
+        origine = self.origin_mm
         return (
             origine[0] + x * cos_t - y * sin_t,
             origine[1] + x * sin_t + y * cos_t,
@@ -182,7 +245,7 @@ class DepositZone:
         Opération inverse de to_plateau_mm : on translate d'abord vers l'origine de
         la zone, puis on applique la rotation opposée (-θ).
         """
-        origine = self.corners_mm[0]
+        origine = self.origin_mm
         dx = point_plateau_mm[0] - origine[0]
         dy = point_plateau_mm[1] - origine[1]
 
@@ -278,7 +341,12 @@ def _rectangle_from_diagonal(p_tl: tuple, p_br: tuple, w_mm: float, h_mm: float)
     en existe une infinité, un par angle. Connaître le format du produit lève cette
     indétermination, et le calcul devient direct : faire tourner un rectangle de θ
     fait tourner sa diagonale de θ aussi. L'angle de la diagonale mesurée vaut donc
-    θ + angle(w, h), d'où **θ = angle(diagonale) − angle(w, h)**.
+    θ + angle(w, −h), d'où **θ = angle(diagonale) − angle(w, −h)**.
+
+    ⚠️ Le signe MOINS sur la hauteur est un point de bascule du lot C2bis : l'axe Y
+    du plateau monte désormais, donc la diagonale d'une zone bien montée descend à
+    l'écran et vaut (largeur, −hauteur), pas (largeur, +hauteur). Les paramètres
+    w_mm et h_mm, eux, restent des LONGUEURS, donc positifs.
 
     Pourquoi une SEULE solution, et pas les deux solutions symétriques
     ------------------------------------------------------------------
@@ -300,7 +368,8 @@ def _rectangle_from_diagonal(p_tl: tuple, p_br: tuple, w_mm: float, h_mm: float)
     zone inversée (ANOMALIE_INVERSEE).
 
     Retourne (coins, rotation_deg, (largeur, hauteur)) où coins est le tuple
-    (haut-gauche, haut-droit, bas-droit, bas-gauche) en mm.
+    (haut-gauche, haut-droit, bas-droit, bas-gauche) en mm — l'ordre tel qu'on le
+    VOIT à l'écran. rotation_deg est positif dans le sens trigonométrique.
 
     ⚠️ Le coin bas-droit reconstruit peut différer de quelques dixièmes de p_br : le
     rectangle est bâti sur le format de RÉFÉRENCE du produit, pas sur la longueur
@@ -309,15 +378,17 @@ def _rectangle_from_diagonal(p_tl: tuple, p_br: tuple, w_mm: float, h_mm: float)
     angle_diagonale = math.atan2(p_br[1] - p_tl[1], p_br[0] - p_tl[0])
     largeur, hauteur = w_mm, h_mm
 
-    theta = angle_diagonale - math.atan2(hauteur, largeur)
+    theta = angle_diagonale - math.atan2(-hauteur, largeur)
     # Ramener dans [-pi, pi] — sans ça un angle de -179° passerait pour « plus grand »
     # que +181°, alors que c'est le même écart au repère du plateau
     theta = math.atan2(math.sin(theta), math.cos(theta))
 
     # Vecteurs unitaires des deux côtés du rectangle, tournés de theta.
-    # u longe la largeur, v longe la hauteur ; v est u tourné d'un quart de tour.
+    # u longe la largeur (vers la droite de l'écran), v longe la hauteur ; v est u
+    # tourné d'un quart de tour DANS LE SENS HORAIRE, car « descendre le long de la
+    # hauteur » à l'écran, c'est faire décroître y depuis que l'axe Y monte.
     u = (math.cos(theta), math.sin(theta))
-    v = (-math.sin(theta), math.cos(theta))
+    v = (math.sin(theta), -math.cos(theta))
 
     haut_gauche = p_tl
     haut_droit = (p_tl[0] + largeur * u[0], p_tl[1] + largeur * u[1])
@@ -372,12 +443,16 @@ def detect_deposit_zones_mm(
     }
 
     # --- Étape 2 : trier les paires par plausibilité d'orientation ----------
-    # Le repère du plateau ayant son Y dirigé vers le BAS, une zone correctement
-    # montée va du haut-gauche vers le bas-droit : ses deux composantes de diagonale
-    # sont POSITIVES. Trois cas se présentent donc :
-    #   - deux composantes positives  → zone plausible
-    #   - deux composantes négatives  → zone montée à l'envers, à signaler
-    #   - composantes de signes mixtes → paire FANTÔME, à écarter sans bruit
+    # Le repère du plateau ayant son Y dirigé vers le HAUT (lot C2bis), une zone
+    # correctement montée va du haut-gauche vers le bas-droit de l'ÉCRAN : elle avance
+    # en X et redescend en Y, donc **dx > 0 et dy < 0**. Trois cas se présentent :
+    #   - (+, −) → zone plausible
+    #   - (−, +) → zone montée à l'envers, à signaler
+    #   - signes identiques (+,+) ou (−,−) → paire FANTÔME, à écarter sans bruit
+    #
+    # ⚠️ C'est l'exact opposé du test d'avant le lot C2bis (`d[0] > 0 and d[1] > 0`) :
+    # retourner l'axe Y retourne aussi ce filtre, et ANOMALIE_INVERSEE repose
+    # entièrement dessus.
     #
     # Ce tri n'est pas un raffinement : sur un plateau en grille régulière, la paire
     # fantôme formée du coin bas-droit d'une zone et du coin haut-gauche de sa voisine
@@ -385,8 +460,8 @@ def detect_deposit_zones_mm(
     # symétrie. Sans ce tri elle passerait le filtre de longueur, puis invaliderait par
     # conflit les deux zones réelles avec lesquelles elle partage ses tags — un plateau
     # parfaitement monté deviendrait inexploitable.
-    plausibles = {p: d for p, d in diagonales.items() if d[0] > 0 and d[1] > 0}
-    inversees = {p: d for p, d in diagonales.items() if d[0] < 0 and d[1] < 0}
+    plausibles = {p: d for p, d in diagonales.items() if d[0] > 0 and d[1] < 0}
+    inversees = {p: d for p, d in diagonales.items() if d[0] < 0 and d[1] > 0}
 
     # --- Étape 3 : longueur de référence et filtrage ------------------------
     # La référence se calcule sur TOUTES les paires d'orientation cohérente, inversées
@@ -432,11 +507,18 @@ def detect_deposit_zones_mm(
 
     # --- Étape 5 : format du produit ---------------------------------------
     # Une zone bien montée est quasiment droite : son vecteur diagonale vaut donc
-    # directement (largeur, hauteur). En prenant la médiane sur toutes les zones
+    # directement (largeur, −hauteur). En prenant la médiane sur toutes les zones
     # saines, on obtient le format du produit sans rien demander à l'opérateur, et
     # une zone isolée montée de travers ne fausse pas le résultat.
     # Seules les paires « retenues » entrent ici : les inversées sont exclues, leur
-    # diagonale pointant à l'opposé tirerait la médiane vers des valeurs négatives.
+    # diagonale pointant à l'opposé tirerait la médiane vers des valeurs aberrantes.
+    #
+    # CONVENTION DE SIGNE, à tenir dans tout le projet (lot C2bis) : product_size_mm
+    # est un couple de LONGUEURS, donc les deux composantes sont POSITIVES. Le repère
+    # plateau ayant son Y montant, la médiane des dy est négative — d'où le signe moins
+    # ci-dessous, seul endroit du code où la conversion « composante → longueur » se
+    # fait. Le reste du fichier (size_mm, _rectangle_from_diagonal, warp_zone) peut
+    # donc supposer partout largeur > 0 et hauteur > 0.
     diagonales_saines = [
         diagonales[paire] for paire in retenues
         if paire not in paires_en_conflit
@@ -444,7 +526,7 @@ def detect_deposit_zones_mm(
     if diagonales_saines:
         product_size_mm = (
             statistics.median(d[0] for d in diagonales_saines),
-            statistics.median(d[1] for d in diagonales_saines),
+            -statistics.median(d[1] for d in diagonales_saines),
         )
     else:
         product_size_mm = None
@@ -474,9 +556,16 @@ def detect_deposit_zones_mm(
             # On dégrade proprement plutôt que de lever une exception — la zone reste
             # listée, avec ses deux marqueurs comme unique géométrie, pour que l'IHM
             # puisse quand même la signaler à l'opérateur au bon endroit.
+            # Les 4 « coins » se réduisent aux 2 marqueurs, répétés pour garder un
+            # tuple de longueur 4 : l'IHM lit corners_mm[0] pour poser son étiquette
+            # et trace le contour tel quel. Le repère de zone (origin_mm =
+            # corners_mm[3]) n'a lui aucun sens ici — sans format connu il n'y a pas
+            # de rectangle, donc pas de repère : la zone est de toute façon marquée
+            # ANOMALIE_FORMAT_INCONNU, donc jamais exploitée pour un tracé.
             zones.append(DepositZone(
                 id_tl, id_br,
-                corners_mm=(point_haut_gauche, point_bas_droit) * 2,
+                corners_mm=(point_haut_gauche, point_bas_droit,
+                            point_bas_droit, point_haut_gauche),
                 rotation_deg=0.0,
                 diagonal_mm=longueurs[paire],
                 size_mm=(0.0, 0.0),
@@ -504,6 +593,92 @@ def detect_deposit_zones_mm(
     )
 
     return PlateauLayout(zones, unpaired_ids, reference, product_size_mm)
+
+
+class PlateauReference:
+    """Le repère du plateau tel qu'il a pu être établi sur une photo — et sa qualité.
+
+    Transporte la matrice d'homographie ET de quoi renseigner la barre de statut.
+    Les deux voyagent ensemble volontairement : l'opérateur doit pouvoir savoir, en
+    regardant l'écran, si le logiciel travaille en mode précis ou dégradé. Une
+    matrice seule ne le dit pas, et c'est exactement l'information qui manquait
+    avant le lot C2bis.
+    """
+
+    def __init__(
+        self,
+        homography: np.ndarray,
+        marker_ids: list,
+        exact: bool,
+        check_error_mm=None,
+    ) -> None:
+        # Matrice 3×3 pixel → mm, utilisable telle quelle par pixel_to_mm/warp_*
+        self.homography = homography
+        # IDs des marqueurs de plateau (0-3) réellement vus et utilisés
+        self.marker_ids = list(marker_ids)
+        # True = 4 marqueurs, vraie correction de perspective (compute_homography).
+        # False = 2 ou 3 marqueurs, similitude approchée (compute_homography_approx).
+        self.exact = exact
+        # Écart du marqueur de contrôle, en mm, ou None s'il n'était pas visible
+        self.check_error_mm = check_error_mm
+
+    @property
+    def origin_extrapolated(self) -> bool:
+        """L'origine du repère est-elle DÉDUITE plutôt que vue ?
+
+        L'origine est le centre du marqueur 2. S'il n'est pas dans le champ, sa
+        position est extrapolée à partir des marqueurs vus et de la taille du plateau
+        (WORK_AREA_*, issue de PLATEAU_SIZE_MM). C'est le mode NOMINAL sur la
+        Geeetech, dont la caméra ne cadre que les deux tags du haut : toute erreur sur
+        la taille du plateau décale alors la totalité de la dépose. D'où l'action M1
+        (mesurer le plateau au mètre) — tant qu'elle n'est pas faite, ce mode repose
+        sur une valeur supposée.
+        """
+        return PLATEAU_ORIGIN_MARKER_ID not in self.marker_ids
+
+    @property
+    def check_error_excessive(self) -> bool:
+        """Le marqueur de contrôle est-il trop loin de sa position attendue ?"""
+        return (
+            self.check_error_mm is not None
+            and self.check_error_mm > PLATEAU_CHECK_TOLERANCE_MM
+        )
+
+    @property
+    def status_text(self) -> str:
+        """Résumé destiné à la barre de statut de l'IHM, en une ligne.
+
+        Volontairement TERSE. Sur l'écran tactile 800×480, la barre de statut
+        partage sa place avec l'image du plateau : chaque caractère de trop est pris
+        sur ce que l'opérateur peut voir. Le détail vit dans les manuels, pas ici.
+        """
+        parties = []
+
+        if self.exact:
+            parties.append(f"Repère exact ({len(self.marker_ids)} marqueurs)")
+        else:
+            parties.append(
+                f"⚠ Précision réduite ({len(self.marker_ids)} marqueurs "
+                f"{self.marker_ids}, pas de correction de perspective)"
+            )
+
+        if self.origin_extrapolated:
+            parties.append(
+                f"origine extrapolée (marqueur {PLATEAU_ORIGIN_MARKER_ID} hors champ)"
+            )
+
+        if self.check_error_mm is not None:
+            marque = " ⚠" if self.check_error_excessive else ""
+            parties.append(
+                f"tag {PLATEAU_CHECK_MARKER_ID} : "
+                f"{self.check_error_mm:.1f} mm d'écart{marque}"
+            )
+
+        return " · ".join(parties)
+
+    def __repr__(self) -> str:
+        mode = "exact" if self.exact else "approché"
+        return f"PlateauReference({mode}, marqueurs={self.marker_ids})"
 
 
 class VisionProcessor:
@@ -566,11 +741,14 @@ class VisionProcessor:
         Les 4 marqueurs IDs 0, 1, 2, 3 doivent être présents.
 
         Convention de placement des marqueurs dans la zone de travail
-        (mise à jour le 2026-08-01 — voir _plateau_corner_positions_mm) :
-            ID 3 → coin haut-gauche  (  0 mm,            0 mm              )
-            ID 0 → coin haut-droit   (  WORK_AREA_WIDTH, 0 mm              )
-            ID 1 → coin bas-droit    (  WORK_AREA_WIDTH, WORK_AREA_HEIGHT  )
-            ID 2 → coin bas-gauche   (  0 mm,            WORK_AREA_HEIGHT  )
+        (lot C2bis — voir _plateau_corner_positions_mm, qui est la seule table) :
+            ID 2 → coin bas-gauche   (  0 mm,            0 mm              )  ← origine
+            ID 1 → coin bas-droit    (  WORK_AREA_WIDTH, 0 mm              )
+            ID 0 → coin haut-droit   (  WORK_AREA_WIDTH, WORK_AREA_HEIGHT  )
+            ID 3 → coin haut-gauche  (  0 mm,            WORK_AREA_HEIGHT  )
+
+        Cette méthode lit la table et ne l'interprète pas : c'est pour cela que le
+        changement de repère du lot C2bis ne l'a pas modifiée, seulement son docstring.
         """
         ids_requis = {0, 1, 2, 3}
         ids_manquants = ids_requis - set(detected_markers.keys())
@@ -589,11 +767,12 @@ class VisionProcessor:
         ], dtype=np.float32)
 
         # Positions réelles des 4 marqueurs dans la zone de travail (en mm)
-        # Repère ArUco : origine (0,0) au marqueur 3 (haut-gauche de l'image)
-        #   X croît vers la droite (vers ID 0, haut-droit)
-        #   Y croît vers le bas   (vers ID 2, bas-gauche) — comme les lignes d'une image
-        # ⚠️ X est aligné avec l'axe X machine, mais Y est INVERSÉ par rapport à l'axe Y
-        # machine (qui croît vers le fond) — l'inversion est faite dans gui/screen_run.py.
+        # Repère plateau : origine (0,0) au marqueur 2 (bas-gauche de l'image)
+        #   X croît vers la droite (vers ID 1, bas-droit)
+        #   Y croît vers le HAUT  (vers ID 3, haut-gauche) — à l'inverse des lignes
+        #   d'une image, d'où le retournement explicite dans les trois warp_*
+        # X et Y vont désormais tous deux dans le même sens que les axes machine, ce
+        # qui supprime l'inversion de signe qui vivait dans gui/screen_run.py.
         corners = _plateau_corner_positions_mm()
         dst_pts = np.array([corners[0], corners[1], corners[2], corners[3]], dtype=np.float32)
 
@@ -663,6 +842,89 @@ class VisionProcessor:
         # qui acceptent une matrice purement affine sans terme de perspective
         return np.vstack([matrix_2x3, [0.0, 0.0, 1.0]])
 
+    def compute_plateau_reference(self, detected_markers: dict) -> "PlateauReference":
+        """Établit le repère du plateau à partir des marqueurs vus, et dit COMMENT.
+
+        Pourquoi cette méthode existe (lot C2bis)
+        ------------------------------------------
+        Le choix « 4 tags → compute_homography, 2 ou 3 tags → compute_homography_approx »
+        était écrit DEUX fois, dans screen_plateau.py et screen_zone.py. Deux copies
+        d'une même règle finissent toujours par diverger, et c'est celle qu'on ne
+        relit pas qui reste juste. Elle est donc regroupée ici — et comme l'appelant a
+        besoin de savoir dans quel mode il travaille pour en informer l'opérateur, la
+        méthode ne retourne pas qu'une matrice mais un PlateauReference complet.
+
+        Lève ValueError si moins de 2 marqueurs de plateau sont visibles : sans deux
+        points, aucune conversion pixels → mm n'est possible.
+        """
+        positions = _plateau_corner_positions_mm()
+        ids_vus = sorted(set(detected_markers) & positions.keys())
+
+        if len(ids_vus) >= 4:
+            homography = self.compute_homography(detected_markers)
+            exact = True
+        else:
+            # Lève elle-même si moins de 2 marqueurs — message déjà explicite
+            homography = self.compute_homography_approx(detected_markers)
+            exact = False
+
+        return PlateauReference(
+            homography=homography,
+            marker_ids=ids_vus,
+            exact=exact,
+            check_error_mm=self._ecart_marqueur_de_controle(detected_markers),
+        )
+
+    @staticmethod
+    def _ecart_marqueur_de_controle(detected_markers: dict):
+        """Écart, en mm, entre la position VUE du marqueur 0 et sa position ATTENDUE.
+
+        Le repère est défini par trois marqueurs — 2 (origine), 1 (axe X) et 3
+        (axe Y). Le quatrième, le 0, est donc redondant : c'est ce qui permet de s'en
+        servir comme témoin. On ajuste une SIMILITUDE (rotation + échelle + translation)
+        sur les trois marqueurs qui définissent le repère, on y projette le centre vu
+        du marqueur 0, et on le compare au coin (largeur, hauteur) où il devrait tomber.
+
+        Ce que l'écart mesure, et ce qu'il ne mesure pas
+        ------------------------------------------------
+        Sur un plateau plan photographié par une caméra parfaitement perpendiculaire
+        avec un objectif sans distorsion, l'écart serait nul. Il agrège donc, sans
+        savoir les distinguer : l'inclinaison de la caméra, la distorsion de
+        l'objectif (~10 % encore non corrigés — action M5), une déformation du
+        plateau, et un tag décollé ou mal collé. C'est un **indicateur de qualité du
+        montage optique**, à remonter à l'opérateur, pas une mesure d'incertitude.
+
+        On ne peut PAS obtenir cet écart à partir de la matrice de compute_homography() :
+        avec exactement 4 points, getPerspectiveTransform ajuste sans résidu, et l'écart
+        y serait nul par construction quelle que soit la réalité du plateau.
+
+        Retourne None si les 4 marqueurs ne sont pas tous visibles — c'est le cas
+        nominal sur la Geeetech, où seuls 2 tags sont cadrés.
+        """
+        positions = _plateau_corner_positions_mm()
+        ids_reference = [2, 1, 3]   # origine, axe X, axe Y
+
+        requis = set(ids_reference) | {PLATEAU_CHECK_MARKER_ID}
+        if not requis.issubset(detected_markers.keys()):
+            return None
+
+        src = np.array(
+            [detected_markers[i].mean(axis=0) for i in ids_reference], dtype=np.float32
+        )
+        dst = np.array([positions[i] for i in ids_reference], dtype=np.float32)
+
+        similitude, _inliers = cv2.estimateAffinePartial2D(src, dst)
+        if similitude is None:
+            return None
+
+        # Projeter le centre vu du marqueur de contrôle dans ce repère nominal
+        centre_px = detected_markers[PLATEAU_CHECK_MARKER_ID].mean(axis=0)
+        point = np.array([[centre_px]], dtype=np.float32)
+        vu_x, vu_y = cv2.transform(point, similitude)[0][0]
+
+        attendu_x, attendu_y = positions[PLATEAU_CHECK_MARKER_ID]
+        return float(math.hypot(vu_x - attendu_x, vu_y - attendu_y))
+
     def warp_image(
         self, image: np.ndarray, homography: np.ndarray, output_size: tuple
     ) -> np.ndarray:
@@ -674,6 +936,11 @@ class VisionProcessor:
 
         L'image retournée représente la zone de travail vue du dessus,
         où chaque pixel correspond à output_size / WORK_AREA mm.
+
+        ⚠️ L'axe Y est RETOURNÉ ici (lot C2bis) : voir le bloc « miroir vertical »
+        du docstring de _plateau_corner_positions_mm(). Le repère plateau monte, les
+        lignes d'une image descendent — sans ce retournement l'opérateur verrait le
+        plateau à l'envers. test_warp_image_orientation_non_miroir le garde.
         """
         output_width, output_height = output_size
 
@@ -681,11 +948,14 @@ class VisionProcessor:
         scale_x = output_width  / WORK_AREA_WIDTH_MM
         scale_y = output_height / WORK_AREA_HEIGHT_MM
 
-        # Matrice d'échelle 3×3 pour passer de l'espace mm vers les pixels de sortie
+        # Matrice d'échelle 3×3 pour passer de l'espace mm vers les pixels de sortie.
+        # La 2e ligne se lit : y_pixel = (WORK_AREA_HEIGHT_MM − y_mm) × scale_y.
+        # Le terme constant vaut exactement output_height — c'est-à-dire que
+        # y_mm = 0 (le BAS du plateau) tombe sur la dernière ligne de l'image.
         scale_matrix = np.array([
-            [scale_x, 0,       0],
-            [0,       scale_y, 0],
-            [0,       0,       1],
+            [scale_x,  0,        0],
+            [0,       -scale_y,  scale_y * WORK_AREA_HEIGHT_MM],
+            [0,        0,        1],
         ], dtype=np.float64)
 
         # H_warp = scale_matrix @ H mappe pixels source → pixels de sortie
@@ -721,18 +991,28 @@ class VisionProcessor:
 
         Paramètres :
             origin_mm  : (x_min, y_min) du coin de la sous-région, dans le
-                         repère du plateau (ex. le retour de deposit_zone_bounds_mm)
+                         repère du plateau (ex. le retour de deposit_zone_bounds_mm).
+                         Depuis le lot C2bis, l'axe Y montant fait de ce coin le
+                         BAS-GAUCHE de la sous-région, plus son haut-gauche.
             px_per_mm  : échelle de sortie, identique en X et en Y
             output_size: (largeur_px, hauteur_px) de l'image de sortie
+
+        ⚠️ L'axe Y est RETOURNÉ ici, comme dans warp_image() et warp_zone() — même
+        raison, voir _plateau_corner_positions_mm().
         """
         x0_mm, y0_mm = origin_mm
+        # La hauteur de sortie sert au retournement : elle dit où retombe le bas de
+        # la sous-région. C'est elle, et pas WORK_AREA, qui borne l'image ici.
+        hauteur_px = output_size[1]
 
         # mm(plateau) → pixel(sous-région) : translater à l'origine de la zone
-        # puis mettre à l'échelle — pas besoin de connaître WORK_AREA ici
+        # puis mettre à l'échelle — pas besoin de connaître WORK_AREA ici.
+        # La 2e ligne se lit : y_pixel = hauteur_px − (y_mm − y0_mm) × px_per_mm,
+        # donc y_mm = y0_mm (le bas de la sous-région) tombe sur la dernière ligne.
         zone_matrix = np.array([
-            [px_per_mm, 0,          -x0_mm * px_per_mm],
-            [0,         px_per_mm,  -y0_mm * px_per_mm],
-            [0,         0,          1                  ],
+            [px_per_mm,  0,          -x0_mm * px_per_mm            ],
+            [0,         -px_per_mm,   y0_mm * px_per_mm + hauteur_px],
+            [0,          0,           1                            ],
         ], dtype=np.float64)
 
         # H_zone = zone_matrix @ homography mappe pixels source → pixels de la sous-région
@@ -755,19 +1035,27 @@ class VisionProcessor:
         tracerait ses cordons sur une image penchée, et le repère relatif de la zone ne
         correspondrait pas à ce qu'il voit.
 
-        L'image retournée montre la zone bien droite, à l'échelle px_per_mm, et son coin
-        (0, 0) est le coin haut-gauche de la zone. Un clic à (px, py) dans cette image
-        correspond donc simplement à (px / px_per_mm, py / px_per_mm) en mm relatifs à la
-        zone — la conversion devient une division, sans repasser par l'homographie.
+        L'image retournée montre la zone bien droite, à l'échelle px_per_mm. Son
+        pixel (0, 0) — coin haut-gauche de l'IMAGE — correspond au coin haut-gauche
+        de la zone tel que l'opérateur le voit, c'est-à-dire au point (0, hauteur) du
+        repère de la zone, dont l'origine est le coin BAS-gauche depuis le lot C2bis.
+        Un clic à (px, py) vaut donc :
+
+            x_mm = px / px_per_mm
+            y_mm = (hauteur_px − py) / px_per_mm
+
+        soit toujours une simple division, sans repasser par l'homographie — c'est
+        cette conversion qu'applique gui/screen_cordons.py::_position_mm.
 
         Le transport se compose de trois étapes, appliquées de droite à gauche :
             pixel source → mm plateau      : l'homographie
             mm plateau   → mm zone         : translation vers le coin, puis rotation -θ
-            mm zone      → pixel de sortie : mise à l'échelle px_per_mm
+            mm zone      → pixel de sortie : mise à l'échelle px_per_mm ET retournement
+                                             de Y (3e warp_* concerné, même raison)
         """
         theta = math.radians(zone.rotation_deg)
         cos_t, sin_t = math.cos(theta), math.sin(theta)
-        origine_x, origine_y = zone.corners_mm[0]
+        origine_x, origine_y = zone.origin_mm
 
         # mm plateau → mm zone. C'est la forme matricielle de DepositZone.to_zone_mm() :
         # translation de -origine, puis rotation de -θ. Les deux sont fusionnées ici en
@@ -778,13 +1066,17 @@ class VisionProcessor:
             [0.0,    0.0,    1.0],
         ], dtype=np.float64)
 
+        largeur_mm, hauteur_mm = zone.size_mm
+
+        # mm zone → pixel de sortie. La 2e ligne se lit :
+        # y_pixel = (hauteur_mm − y_mm) × px_per_mm — le retournement de Y du lot
+        # C2bis, ici avec la hauteur de la ZONE et non celle du plateau.
         echelle = np.array([
-            [px_per_mm, 0.0,       0.0],
-            [0.0,       px_per_mm, 0.0],
-            [0.0,       0.0,       1.0],
+            [px_per_mm, 0.0,        0.0],
+            [0.0,      -px_per_mm,  hauteur_mm * px_per_mm],
+            [0.0,       0.0,        1.0],
         ], dtype=np.float64)
 
-        largeur_mm, hauteur_mm = zone.size_mm
         taille = (max(1, int(round(largeur_mm * px_per_mm))),
                   max(1, int(round(hauteur_mm * px_per_mm))))
 
@@ -805,7 +1097,9 @@ class VisionProcessor:
         recalculer une seconde homographie dédiée à la zone.
 
         Retourne (x_min, y_min, x_max, y_max) en mm, dans le repère du plateau
-        (celui de compute_homography — origine au marqueur 0).
+        (celui de compute_homography — origine au marqueur 2, Y montant). Avec l'axe
+        Y montant, (x_min, y_min) est le coin BAS-gauche de la zone : c'est bien ce
+        qu'attend warp_region() comme origin_mm.
 
         Lève ValueError si l'un des deux marqueurs est absent.
         """
@@ -888,7 +1182,8 @@ class VisionProcessor:
         """Convertit des coordonnées pixel (image source) en coordonnées réelles (mm).
 
         Utilise la matrice H issue de compute_homography() qui mappe pixel→mm.
-        Retourne (x_mm, y_mm) dans le repère de la zone de travail.
+        Retourne (x_mm, y_mm) dans le repère du plateau — origine au marqueur 2
+        (bas-gauche), X vers la droite, Y vers le haut.
         """
         # perspectiveTransform attend un tableau de forme (1, N, 2)
         # on enveloppe le point unique dans les deux niveaux de tableau requis

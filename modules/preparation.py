@@ -24,6 +24,7 @@ from modules.config import (
     PREPARATIONS_DIR,
     DEFAULT_TRAVEL_SPEED_MM_MIN,
     DEFAULT_EXTRUSION_SPEED_MM_MIN,
+    WORK_AREA_HEIGHT_MM,
 )
 from modules.vision import (
     DepositZone,
@@ -35,7 +36,21 @@ from modules.vision import (
 # Version du format de fichier. À incrémenter dès qu'un changement rend les anciens
 # fichiers illisibles — sans ce numéro, un fichier écrit par une version antérieure du
 # logiciel serait relu de travers, en silence, avec des cordons faux à la clé.
-FORMAT_VERSION = 1
+#
+# Historique :
+#   1 → format initial (lot B, v0.3.0). Repère plateau ET repère de zone à Y DESCENDANT,
+#       origine du plateau au marqueur 3 (haut-gauche), origine de zone au coin
+#       haut-gauche.
+#   2 → lot C2bis. Les deux repères passent à Y MONTANT : origine du plateau au
+#       marqueur 2 (bas-gauche), origine de zone au coin bas-gauche. Toutes les
+#       ordonnées enregistrées changent donc de sens.
+FORMAT_VERSION = 2
+
+# Dernière version dont ce logiciel sait convertir les fichiers au chargement.
+# Sans conversion, un fichier v1 serait relu SILENCIEUSEMENT à l'envers : le contrôle
+# de version n'interdisait que les fichiers plus RÉCENTS que le logiciel, jamais les
+# plus anciens. Sur des coordonnées de dépose, c'est la buse qui part au mauvais endroit.
+OLDEST_CONVERTIBLE_VERSION = 1
 
 # Suffixe des fichiers de sauvegarde automatique. Un fichier portant ce suffixe signale
 # un travail interrompu (plantage, coupure) : l'application propose de le reprendre.
@@ -70,7 +85,8 @@ class Cordon:
     """
 
     def __init__(self, points_mm: list) -> None:
-        # Liste de (x_mm, y_mm) dans le repère de la zone — origine au coin haut-gauche
+        # Liste de (x_mm, y_mm) dans le repère de la zone — origine au coin BAS-gauche,
+        # Y vers le haut depuis le lot C2bis (format de fichier version 2)
         self.points_mm = [tuple(p) for p in points_mm]
 
     @property
@@ -169,10 +185,11 @@ def _zone_to_dict(zone: DepositZone) -> dict:
     les IDs des marqueurs : cela permet de rouvrir un fichier et d'afficher le plateau
     sans reprendre de photo.
 
-    ⚠️ Les positions sont en mm ABSOLUS dans le repère du plateau, donc dépendantes de
-    la position de la caméra au moment de la détection. Si la caméra a bougé depuis, ces
-    coordonnées ne correspondent plus exactement — d'où l'intérêt d'avoir gardé les
-    cordons en coordonnées RELATIVES, qui, elles, restent valides.
+    ⚠️ Les positions sont en mm ABSOLUS dans le repère du plateau (origine au marqueur
+    2, Y montant), donc dépendantes de la position de la caméra au moment de la
+    détection. Si la caméra a bougé depuis, ces coordonnées ne correspondent plus
+    exactement — d'où l'intérêt d'avoir gardé les cordons en coordonnées RELATIVES,
+    qui, elles, restent valides.
     """
     return {
         "id_top_left": zone.id_top_left,
@@ -198,6 +215,77 @@ def _zone_from_dict(data: dict) -> DepositZone:
     )
 
 
+def _hauteur_zone_de_reference(preparation) -> float:
+    """Hauteur en mm de la zone dans le repère de laquelle les cordons sont exprimés.
+
+    La zone de référence d'abord, puisque c'est elle qui définit le repère des
+    cordons ; à défaut la première zone du fichier, toutes les zones portant le même
+    produit et ayant donc la même hauteur. Retourne None si aucune zone n'a de
+    hauteur exploitable.
+    """
+    candidates = []
+    if preparation.reference_zone is not None:
+        candidates.append(preparation.reference_zone)
+    candidates.extend(preparation.zones)
+
+    for zone in candidates:
+        if zone.size_mm and zone.size_mm[1] > 0:
+            return float(zone.size_mm[1])
+    return None
+
+
+def _convertir_v1_vers_v2(preparation) -> None:
+    """Retourne l'axe Y d'une préparation enregistrée avant le lot C2bis, EN PLACE.
+
+    Le lot C2bis retourne DEUX repères d'un coup, et un fichier v1 contient des
+    coordonnées dans les deux — les convertir à moitié serait pire que ne rien
+    convertir, puisque le fichier deviendrait incohérent avec lui-même :
+
+      - repère du PLATEAU (les coins des zones) : y_v2 = WORK_AREA_HEIGHT_MM − y_v1
+      - repère de la ZONE (les points des cordons) : y_v2 = hauteur_zone − y_v1
+
+    La rotation des zones change de signe par la même occasion : mesurée dans un
+    repère retourné, un angle change de sens (v1 comptait positivement le sens
+    horaire à l'écran, v2 compte le sens trigonométrique).
+
+    Ce qui NE change pas : l'ordre des coins reste (haut-gauche, haut-droit,
+    bas-droit, bas-gauche). Ce sont des positions VUES par l'opérateur, et retourner
+    une convention de coordonnées ne déplace rien physiquement — seule leur valeur y
+    change. Les longueurs (size_mm, diagonal_mm) ne changent pas non plus.
+
+    ⚠️ Limite assumée : la hauteur du plateau utilisée est WORK_AREA_HEIGHT_MM, la
+    valeur configurée AUJOURD'HUI, alors que le fichier a pu être écrit avec une autre
+    (PLATEAU_SIZE_MM est devenu configurable au même lot). Un décalage constant sur
+    les coins de zone en découlerait. C'est sans conséquence en pratique : ces
+    coordonnées absolues dépendent déjà de la position de la caméra au moment de la
+    photo, et sont redétectées à la capture suivante. Les cordons, eux, sont convertis
+    avec la hauteur de LEUR zone, qui est dans le fichier — donc exactement.
+    """
+    for zone in preparation.zones:
+        zone.corners_mm = tuple(
+            (x, WORK_AREA_HEIGHT_MM - y) for x, y in zone.corners_mm
+        )
+        zone.rotation_deg = -zone.rotation_deg
+
+    if not preparation.cordons:
+        return
+
+    hauteur_zone = _hauteur_zone_de_reference(preparation)
+    if hauteur_zone is None:
+        # Refuser franchement plutôt que de laisser des cordons à l'envers : sans la
+        # hauteur de la zone, la conversion est impossible et un tracé non converti
+        # enverrait la buse au mauvais endroit, en silence.
+        raise ValueError(
+            "Fichier de préparation en version 1 impossible à convertir : il contient "
+            "des cordons mais aucune zone dont on puisse lire la hauteur. Les "
+            "coordonnées des cordons y sont relatives à une zone — sans elle, leur "
+            "sens ne peut pas être rétabli."
+        )
+
+    for cordon in preparation.cordons:
+        cordon.points_mm = [(x, hauteur_zone - y) for x, y in cordon.points_mm]
+
+
 class Preparation:
     """Le travail complet sur un plateau : produit, zones, cordons et paramètres."""
 
@@ -210,6 +298,7 @@ class Preparation:
         reference_zone_id: int = None,
         created_at: str = None,
         updated_at: str = None,
+        converted_from_version: int = None,
     ) -> None:
         # Référence du produit, telle que saisie par l'opérateur. Reste affichée en
         # permanence dans l'IHM pour qu'on sache toujours sur quoi on travaille.
@@ -227,6 +316,24 @@ class Preparation:
         maintenant = datetime.now().isoformat(timespec="seconds")
         self.created_at = created_at or maintenant
         self.updated_at = updated_at or maintenant
+        # Version d'origine si ce fichier a été converti au chargement, sinon None.
+        # Volontairement HORS to_dict() : c'est un fait sur la lecture qu'on vient de
+        # faire, pas un attribut de la préparation. L'IHM s'en sert pour prévenir
+        # l'opérateur — un cordon qui bouge tout seul sans explication est plus
+        # inquiétant qu'un message.
+        self.converted_from_version = converted_from_version
+
+    @property
+    def conversion_message(self) -> str:
+        """Message à afficher si le fichier a été converti, sinon chaîne vide."""
+        if self.converted_from_version is None:
+            return ""
+        return (
+            f"Fichier converti du format v{self.converted_from_version} vers "
+            f"v{FORMAT_VERSION} : la convention du repère a changé (lot C2bis), les "
+            f"ordonnées des cordons et des zones ont été retournées. Vérifier le tracé "
+            f"avant de lancer une dépose."
+        )
 
     # ------------------------------------------------------------------ requêtes
 
@@ -290,6 +397,10 @@ class Preparation:
         Lève ValueError si le fichier vient d'une version de format plus récente que
         celle que ce logiciel sait lire — mieux vaut refuser franchement que
         d'interpréter de travers des coordonnées de dépose.
+
+        Un fichier PLUS ANCIEN, lui, est converti (voir _convertir_v1_vers_v2) et non
+        refusé : décidé le 2026-08-01, un opérateur ne doit pas perdre un plateau
+        déjà tracé parce que la convention interne du logiciel a changé.
         """
         version = data.get("format_version", 0)
         if version > FORMAT_VERSION:
@@ -298,8 +409,14 @@ class Preparation:
                 f"ne sait lire que jusqu'à la version {FORMAT_VERSION}. "
                 f"Mettre à jour l'application."
             )
+        if version < OLDEST_CONVERTIBLE_VERSION:
+            raise ValueError(
+                f"Fichier de préparation en version {version} — trop ancien pour être "
+                f"converti (plus ancienne version convertible : "
+                f"{OLDEST_CONVERTIBLE_VERSION}). Refaire le plateau."
+            )
 
-        return Preparation(
+        preparation = Preparation(
             product_name=data["product_name"],
             zones=[_zone_from_dict(z) for z in data.get("zones", [])],
             cordons=[Cordon.from_dict(c) for c in data.get("cordons", [])],
@@ -308,6 +425,16 @@ class Preparation:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
+
+        # Conversion APRÈS reconstruction, et pas au fil de la lecture : retourner un
+        # cordon demande la HAUTEUR de sa zone, qui n'est connue qu'une fois les zones
+        # relues. Lire dans l'ordre du fichier obligerait à espérer que les zones y
+        # précèdent les cordons — une dépendance invisible et fragile.
+        if version < FORMAT_VERSION:
+            _convertir_v1_vers_v2(preparation)
+            preparation.converted_from_version = version
+
+        return preparation
 
     def touch(self) -> None:
         """Met à jour l'horodatage de dernière modification."""
@@ -448,9 +575,26 @@ def save_autosave(preparation: Preparation, directory: str = None) -> str:
 
 
 def load_preparation(chemin: str) -> Preparation:
-    """Relit une préparation depuis un fichier JSON (définitif ou automatique)."""
+    """Relit une préparation depuis un fichier JSON (définitif ou automatique).
+
+    Si le fichier était dans un format antérieur, il est converti (voir
+    Preparation.from_dict) puis **réenregistré sur place au format courant**. La
+    conversion n'a ainsi lieu qu'une fois, et le fichier sur disque cesse d'être un
+    piège pour la prochaine lecture.
+
+    C'est cette fonction, et non from_dict(), qui réécrit : from_dict ne touche pas
+    au disque et doit rester utilisable sur des données en mémoire (tests compris).
+    """
     with open(chemin, "r", encoding="utf-8") as f:
-        return Preparation.from_dict(json.load(f))
+        preparation = Preparation.from_dict(json.load(f))
+
+    if preparation.converted_from_version is not None:
+        # touch() n'est pas appelé : la préparation n'a pas été modifiée par
+        # l'opérateur, seulement transcrite. Écraser updated_at ferait passer une
+        # migration technique pour un travail récent.
+        _write_json_atomic(chemin, preparation.to_dict())
+
+    return preparation
 
 
 def has_autosave(product_name: str, directory: str = None) -> bool:

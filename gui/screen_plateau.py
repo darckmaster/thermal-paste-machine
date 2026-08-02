@@ -91,6 +91,9 @@ class ScreenPlateau(QWidget):
         self._captured_image: np.ndarray | None = None
         # Résultats de la dernière analyse
         self._homography: np.ndarray | None = None
+        # Repère du plateau et sa qualité (PlateauReference) — porte de quoi renseigner
+        # la barre de statut, pas seulement la matrice
+        self._reference = None
         self._layout = None
 
         # Timer d'aperçu — 10 fps, suffisant pour cadrer sans charger le RPi
@@ -211,6 +214,7 @@ class ScreenPlateau(QWidget):
         """Reprendre l'aperçu vidéo en direct."""
         self._captured_image = None
         self._layout = None
+        self._reference = None
         self._btn_retake.setEnabled(False)
         self._btn_continue.setEnabled(False)
 
@@ -282,14 +286,13 @@ class ScreenPlateau(QWidget):
         ids_plateau = {0, 1, 2, 3} & marqueurs.keys()
 
         # Sans au moins 2 coins de plateau, aucune conversion pixels → mm n'est possible :
-        # on ne peut donc rien dire des zones, même si leurs marqueurs sont bien vus
-        if len(ids_plateau) < 4 and len(ids_plateau) >= 2:
-            self._homography = self._vision.compute_homography_approx(marqueurs)
-            precision_reduite = True
-        elif len(ids_plateau) == 4:
-            self._homography = self._vision.compute_homography(marqueurs)
-            precision_reduite = False
-        else:
+        # on ne peut donc rien dire des zones, même si leurs marqueurs sont bien vus.
+        # Le choix « 4 tags → exact, 2-3 → approché » est dans compute_plateau_reference(),
+        # partagé avec screen_zone.py (lot C2bis — il y était dupliqué avant).
+        try:
+            self._reference = self._vision.compute_plateau_reference(marqueurs)
+        except ValueError:
+            self._reference = None
             self._homography = None
             self._layout = None
             self._btn_continue.setEnabled(False)
@@ -300,11 +303,12 @@ class ScreenPlateau(QWidget):
             self._display_image(image)
             return
 
+        self._homography = self._reference.homography
         self._layout = self._vision.detect_deposit_zones(marqueurs, self._homography)
 
         apercu = self._dessiner_diagnostic(image, marqueurs)
         self._display_image(apercu)
-        self._status_label.setText(self._texte_diagnostic(precision_reduite))
+        self._status_label.setText(self._texte_diagnostic())
 
         # « Continuer » n'a de sens que s'il reste au moins une zone exploitable
         self._btn_continue.setEnabled(bool(self._layout.valid_zones))
@@ -364,15 +368,19 @@ class ScreenPlateau(QWidget):
         cv2.putText(image, texte, position, cv2.FONT_HERSHEY_SIMPLEX, 0.6, _BLANC, 4)
         cv2.putText(image, texte, position, cv2.FONT_HERSHEY_SIMPLEX, 0.6, couleur, 2)
 
-    def _texte_diagnostic(self, precision_reduite: bool) -> str:
-        """Compose le message de la barre de statut à partir du résultat d'analyse."""
-        parties = []
+    def _texte_diagnostic(self) -> str:
+        """Compose le message de la barre de statut à partir du résultat d'analyse.
 
-        if precision_reduite:
-            parties.append(
-                "⚠ Précision réduite (2-3 marqueurs plateau, pas de correction de "
-                "perspective)"
-            )
+        La première partie décrit le REPÈRE (mode exact ou approché, marqueurs
+        utilisés, origine extrapolée, contrôle par le marqueur 0) et vient telle
+        quelle de PlateauReference.status_text. Le reste décrit les ZONES.
+
+        Pourquoi afficher l'origine extrapolée : dans le mode nominal de la Geeetech,
+        seuls 2 tags sont cadrés et l'origine du repère est DÉDUITE de la taille de
+        plateau configurée. L'opérateur doit pouvoir voir que la précision de sa
+        dépose repose alors sur un paramètre, pas sur une mesure (action M1).
+        """
+        parties = [self._reference.status_text]
 
         valides = len(self._layout.valid_zones)
         total = len(self._layout.zones)
