@@ -27,23 +27,108 @@ caméra ni la machine lui-même. Les listes déroulantes de l'écran 1 émettent
 changement puis redistribue la nouvelle référence aux écrans. Sans cette règle, deux
 endroits différents ouvriraient la caméra et l'un des deux handles finirait non libéré.
 
-### Repère géométrique du plateau (⚠ mis à jour le 2026-08-01)
+### Repère géométrique du plateau (⚠ mis à jour le 2026-08-02, lot C2bis)
 
 Disposition physique des marqueurs de coin, **telle qu'elle apparaît à l'écran** :
 
 ```
-3 ─────── 0        origine mm = marqueur 3 (haut-gauche)
-│         │        X+ vers la droite
-│         │        Y+ vers le BAS (comme les lignes d'une image)
-2 ─────── 1
+3 ─────── 0        origine mm = marqueur 2 (bas-gauche)        Y
+│         │        X+ vers la droite, vers le tag 1            ↑
+│         │        Y+ vers le HAUT, vers le tag 3              └──→ X
+2 ─────── 1        tag 0 = redondant → contrôle de cohérence
 ```
 
-L'axe Y du repère mm est donc **opposé** à l'axe Y machine (qui croît vers le fond).
-L'inversion se fait à **un seul endroit** du code, `gui/screen_run.py` :
-`machine_y = MACHINE_ORIGIN_Y - y_mm`. Ne pas la dupliquer ailleurs.
+Les axes X et Y du repère mm vont désormais dans le **même sens** que les axes machine.
+La conversion, dans `gui/screen_run.py`, est donc devenue deux additions :
+`machine_x = x_mm + MACHINE_ORIGIN_X`, `machine_y = y_mm + MACHINE_ORIGIN_Y`.
+⚠️ Le sens réel des axes machine n'est **pas encore validé** (action `M4`) : ces deux
+additions sont cohérentes avec la convention, rien de plus. À trancher au lot D, en
+interactif, machine sous tension.
 
-`MACHINE_ORIGIN_X/Y` (`modules/config.py`) est la position machine du **marqueur 3** :
+`MACHINE_ORIGIN_X/Y` (`modules/config.py`) est la position machine du **marqueur 2** :
 c'est au-dessus de lui, et pas d'un autre, qu'il faut faire le `M114` de mesure.
+
+#### Mesure de l'origine machine — procédure et relevé du 2026-08-02
+
+```gcode
+G28                  ; obligatoire : Marlin démarre à 0 où que soit le chariot
+G1 Z10 F300          ; lever Z avant de balader le chariot
+G91                  ; déplacements RELATIFS pour approcher
+G1 X10 F3000         ; ... répéter jusqu'à viser le centre du marqueur 2
+G90                  ; RETOUR EN ABSOLU — l'oublier fausse toute la suite
+G1 Z1 F100           ; descendre près du plateau : de haut, la parallaxe fausse le visé
+M114                 ; X et Y = MACHINE_ORIGIN_X / MACHINE_ORIGIN_Y
+```
+
+**Relevé du 2026-08-02** : `X:5.00 Y:0.00 Z:0.00 · Count X:394 Y:0 Z:0`
+→ `MACHINE_ORIGIN_X = 5.0`, `MACHINE_ORIGIN_Y = 0.0`.
+
+**Vérifier aussi le repère de home**, une fois, et le noter : `G28` suivi d'un `M114`
+immédiat doit rendre `X:0.00 Y:0.00 Count 0/0`. C'est ce qui prouve qu'il n'y a ni
+`X_MIN_POS` non nul ni décalage `M206` en EEPROM. Ça compte : un `M206` effacé un jour par
+un reset EEPROM décalerait toute la dépose **sans rien signaler**. Vérifié conforme le
+2026-08-02.
+
+> ⚠️ **Réserve non levée sur l'axe Y** (action `M2 bis`). Le relevé Y valait `0.00` avec un
+> compteur de pas à **0 exact** : l'axe Y n'avait donc pas bougé depuis le homing. Soit le
+> marqueur 2 tombait déjà sous la buse, soit le plateau **butait sur la fin de course** et
+> `0` est une limite et non une mesure. Non départagé.
+>
+> Le second cas est plausible : les marqueurs sont aux coins d'un cadre de 220 mm depuis le
+> 2026-07-30, pour une course utile de l'ordre de 200 mm. S'il se confirme, le bord bas du
+> plateau est **hors course**, `MACHINE_ORIGIN_Y` devrait être négatif, et toute la dépose
+> est décalée en Y. **C'est le premier suspect en cas de décalage constaté.**
+>
+> Comment trancher, en 30 secondes : amener la buse en `X5 / Y0` et regarder — la pointe
+> est-elle au centre du marqueur 2, ou celui-ci est-il encore à distance ?
+>
+> ⚠️ Même si la mesure est juste, une origine à `Y = 0` ne laisse **aucune marge** avant la
+> fin de course : un cordon tracé un peu bas sort de la course de la machine.
+
+**Pas/mm** : le rapport `Count / position` donne les pas/mm de l'axe — ici 394 pas pour
+5,00 mm, soit ≈ 78,74 pas/mm (courroie MXL, valeur Geeetech classique). Utile comme
+recoupement rapide ; la valeur officielle se lit avec `M503` ou `M92`.
+
+#### ⚠️ Si vous touchez au sens de Y — la règle à ne pas casser
+
+Une image a son origine en haut à gauche et son Y qui **descend**. Le repère mm, lui,
+monte. Les trois méthodes `warp_*` compensent cet écart par une ligne explicite :
+
+```
+y_pixel = (hauteur_mm − y_mm) × échelle
+```
+
+C'est elle qui garantit que **ce que l'opérateur voit à l'écran est ce qui se passe sur
+le plateau**. Sans elle, le plateau s'affiche à l'envers — et un plateau à peu près
+symétrique ne trahit pas son propre retournement : le projet a vécu avec ce miroir de la
+Phase 2 au 2026-08-01 sans que personne ne le voie. Il a été démasqué par le calcul.
+
+`test_warp_image_orientation_non_miroir` et `test_boussole_de_la_convention_du_repere`
+sont les garde-fous. **Ne pas les affaiblir.** Le second est fait pour échouer en premier
+si la convention rebouge : il épingle en un seul endroit les quatre faits qui la
+définissent (tag 2 à l'origine, Y montant, image non miroir, diagonale de zone à `dy < 0`).
+
+#### Choix de l'homographie et qualité du repère
+
+`VisionProcessor.compute_plateau_reference()` est le **seul** endroit qui décide entre
+homographie exacte (4 tags, perspective) et approchée (2-3 tags, similitude). La règle
+était dupliquée dans `screen_plateau.py` et `screen_zone.py` avant le lot C2bis — ne pas
+la réintroduire ailleurs. La méthode retourne un `PlateauReference` qui porte, en plus de
+la matrice :
+
+- `exact` — mode précis ou dégradé ;
+- `origin_extrapolated` — vrai quand le tag 2 (l'origine) n'est pas dans le champ. C'est
+  le cas **nominal** sur la Geeetech : l'origine est alors déduite de `plateau_size_mm`,
+  et toute erreur sur ce paramètre décale toute la dépose (action `M1`) ;
+- `check_error_mm` — écart entre la position vue du tag 0 et sa position attendue,
+  mesuré contre une similitude ajustée sur les tags 2/1/3. Indicateur de qualité du
+  montage optique : il agrège inclinaison de caméra, distorsion d'objectif, plateau
+  déformé et tag mal collé, sans savoir les distinguer. Au-delà de
+  `PLATEAU_CHECK_TOLERANCE_MM` (5 mm), l'IHM le signale.
+
+> Cet écart ne peut pas se lire sur la matrice de `compute_homography()` : avec exactement
+> 4 points, `getPerspectiveTransform` ajuste sans résidu et le donnerait nul quelle que
+> soit la réalité du plateau. D'où la similitude sur 3 tags.
 
 ### Zones de dépose — règles de reconstruction
 
@@ -59,18 +144,27 @@ diagonale : c'est cette invariante qui fait tout fonctionner.
 | # | Étape | Rôle |
 |---|---|---|
 | 1 | Paires candidates `(n, n+1)` | Un tag peut apparaître dans deux paires — l'ambiguïté est levée plus loin |
-| 2 | Tri par signe des composantes | `(+,+)` = zone plausible · `(−,−)` = zone inversée · **signes mixtes = paire fantôme, écartée** |
+| 2 | Tri par signe des composantes | `(+,−)` = zone plausible · `(−,+)` = zone inversée · **signes identiques = paire fantôme, écartée** |
 | 3 | Longueur de diagonale de référence | Groupe majoritaire à ± tolérance, puis médiane. Vote sur les paires plausibles **ET** inversées |
 | 4 | Conflits | Un tag revendiqué par deux paires invalide les deux |
-| 5 | Format `(w, h)` du produit | Médiane des composantes de diagonale des zones saines |
-| 6 | Rectangle et rotation | `θ = angle(diagonale) − angle(w, h)` |
+| 5 | Format `(w, h)` du produit | Médiane des composantes de diagonale des zones saines, **hauteur ramenée en positif** |
+| 6 | Rectangle et rotation | `θ = angle(diagonale) − angle(w, −h)`, positif dans le sens trigonométrique |
+
+> ⚠️ **Les signes de l'étape 2 ont été inversés au lot C2bis** (ils étaient `(+,+)` pour une
+> zone plausible). Le repère du plateau ayant son Y montant, une zone bien montée avance en
+> X et **redescend** en Y. C'est le premier filtre à basculer quand l'axe Y change de sens,
+> et `ANOMALIE_INVERSEE` repose entièrement dessus : le vérifier avant tout le reste.
+>
+> **Convention de signe de `product_size_mm`** : deux **longueurs**, donc toujours positives.
+> La médiane des `dy` étant négative, la conversion se fait à l'étape 5 et nulle part
+> ailleurs — le reste du fichier peut supposer partout `largeur > 0` et `hauteur > 0`.
 
 **Deux pièges déjà rencontrés, à ne pas réintroduire :**
 
 **a) Le filtrage par longueur ne suffit pas sur un plateau en grille.** Deux zones
 voisines sur une même ligne engendrent une paire fantôme (coin bas-droit de l'une, coin
-haut-gauche de l'autre) dont le vecteur est le symétrique du vrai : `(60, −40)` contre
-`(60, +40)`, donc **exactement la même longueur**. Elle empruntant leurs tags aux deux
+haut-gauche de l'autre) dont le vecteur est le symétrique du vrai : `(60, +40)` contre
+`(60, −40)`, donc **exactement la même longueur**. Elle empruntant leurs tags aux deux
 zones réelles, elle les invalidait par conflit et rendait un plateau parfaitement monté
 inexploitable. C'est le tri par signe de l'étape 2 qui l'élimine.
 
@@ -378,8 +472,9 @@ signale donc un travail interrompu, et rien d'autre.
 Une coupure en pleine écriture laisserait sinon un fichier tronqué — particulièrement
 absurde pour une sauvegarde dont le rôle est justement de protéger des plantages.
 
-**Coordonnées** : les cordons sont enregistrés en **mm relatifs à la zone** (origine au
-coin haut-gauche, axes le long des côtés). C'est ce qui permet de rejouer un même cordon
+**Coordonnées** : les cordons sont enregistrés en **mm relatifs à la zone** — origine au
+coin **bas-gauche** (`DepositZone.origin_mm`), X le long de la largeur, **Y le long de la
+hauteur vers le haut** depuis le lot C2bis. C'est ce qui permet de rejouer un même cordon
 dans toutes les zones, et ça les rend insensibles à un léger déplacement de la caméra.
 Les positions des zones, elles, sont en mm **absolus** dans le repère du plateau : elles
 ne valent donc que pour la position de caméra du jour où la photo a été prise.
@@ -390,6 +485,29 @@ dépose, une lecture silencieusement fausse enverrait la buse au mauvais endroit
 l'inverse une clé *manquante* reprend sa valeur par défaut, donc un fichier ancien reste
 lisible. Incrémenter `FORMAT_VERSION` dès qu'un changement rend les anciens fichiers
 inexploitables.
+
+**Version 2 (lot C2bis) et conversion des fichiers v1.** Le changement de repère a
+retourné l'axe Y du plateau **et** celui des zones : toutes les ordonnées enregistrées ont
+changé de sens. Le contrôle de version ne protégeait pas de ce cas — il ne refusait que
+les fichiers plus récents — donc un v1 aurait été relu silencieusement à l'envers. Les
+fichiers v1 sont désormais **convertis au chargement** puis **réécrits en v2**, et la
+conversion est signalée à l'opérateur (`Preparation.conversion_message`) : un cordon qui
+bouge tout seul sans explication est plus inquiétant qu'un message.
+
+Trois points à connaître si vous ajoutez un jour une version 3 :
+
+- **Convertir après avoir reconstruit, pas au fil de la lecture.** Retourner un cordon
+  demande la hauteur de sa zone (`size_mm`), connue seulement une fois les zones relues.
+  Lire dans l'ordre du fichier reviendrait à espérer que les zones y précèdent les
+  cordons — dépendance invisible et fragile.
+- **Convertir tout ce qui bascule, ou rien.** Un fichier à moitié converti est incohérent
+  avec lui-même, ce qui est pire que pas de conversion du tout.
+- **C'est `load_preparation()` qui réécrit, pas `from_dict()`.** Cette dernière ne doit
+  pas toucher au disque : elle sert aussi sur des données en mémoire, tests compris.
+
+Un fichier v1 contenant des cordons **mais aucune zone** est refusé : la hauteur
+nécessaire est introuvable, et laisser passer des cordons à l'envers enverrait la buse au
+mauvais endroit.
 
 **Nom de fichier** : le nom du produit est saisi librement par l'opérateur et sert de nom
 de fichier. Les caractères interdits (`< > : " / \ | ? *`) sont remplacés par `_`, sinon

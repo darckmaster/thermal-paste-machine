@@ -208,10 +208,21 @@ Une zone en défaut **n'empêche pas** de travailler sur les autres : le message
 combien de zones restent exploitables, et l'opérateur décide de continuer ou de rectifier
 son plateau.
 
-⚠️ Le message `Précision réduite` apparaît quand seuls 2 ou 3 coins du plateau sont
-visibles. **C'est la situation normale sur la Geeetech**, dont la caméra ne peut pas
-cadrer les quatre coins : ce n'est pas une panne, seulement un rappel que la conversion en
-millimètres est moins précise.
+### Ce que dit la barre de statut sur le repère
+
+Le début du message décrit la façon dont le logiciel s'est repéré sur le plateau. Trois
+mentions peuvent y apparaître :
+
+| Mention | Ce que ça veut dire | Que faire |
+|---|---|---|
+| `Repère exact (4 marqueurs)` | Les quatre coins sont vus, la perspective est corrigée. C'est le meilleur cas | Rien |
+| `⚠ Précision réduite` | Seuls 2 ou 3 coins sont visibles. **C'est la situation normale sur la Geeetech**, dont la caméra ne peut pas cadrer les quatre coins : ce n'est pas une panne, seulement un rappel que la conversion en millimètres est moins précise | Rien sur la Geeetech. Sur la CNC, reculer la caméra pour voir les 4 coins |
+| `origine extrapolée` | Le marqueur **2** (coin bas-gauche), qui sert d'origine, n'est pas dans le champ. Sa position est **déduite** de la taille de plateau réglée dans les paramètres | Vérifier que cette taille correspond bien au plateau **mesuré au mètre** : une erreur dessus décale toute la dépose |
+| `tag 0 : X mm d'écart` | Le marqueur 0 sert de témoin : le logiciel compare où il le voit et où il devrait être. C'est un indicateur de la qualité du montage | Un petit écart est normal. S'il grandit (⚠ au-delà de 5 mm), vérifier qu'aucun marqueur ne se décolle et que le plateau n'est pas déformé |
+
+> L'écart du tag 0 mélange plusieurs causes sans savoir les distinguer : inclinaison de la
+> caméra, déformation de l'objectif, plateau voilé, marqueur mal collé. Il sert à repérer
+> une dérive, pas à mesurer une précision.
 
 ### Deux points à connaître
 
@@ -277,3 +288,13 @@ terminer par un double-appui, sinon il serait perdu sans avertissement.
   donc rien à déposer.
 - Ouvrir une **autre** zone que celle de référence y affiche les mêmes cordons, mais ne
   change pas le repère de travail. Changer de repère déplacerait les cordons déjà tracés.
+
+### Si un ancien plateau est signalé « converti »
+
+Un message peut apparaître à l'ouverture d'un plateau enregistré avec une version
+antérieure du logiciel : la façon dont les coordonnées sont mesurées a changé, et le
+fichier a été **converti automatiquement**. Rien n'est perdu, et le fichier est
+réenregistré au nouveau format — le message n'apparaîtra donc qu'une fois.
+
+⚠️ **Vérifier le tracé avant de lancer une dépose sur un plateau converti.** La conversion
+est vérifiée par des tests, mais un coup d'œil coûte moins cher qu'une pièce ratée.
