@@ -345,6 +345,20 @@ class VisionProcessor:
 **Principe de l'homographie :**
 `cv2.getPerspectiveTransform` calcule une matrice H (3×3) à partir de 4 paires de points (centres des marqueurs en pixels → positions réelles en mm). Pour tout point `p` dans l'image source, `H·p` donne ses coordonnées en mm dans le repère de la zone de travail.
 
+#### ⚠️ Le repli 2-3 marqueurs et le miroir — défaut corrigé le 2026-08-02
+
+Constaté **sur la machine**, après la livraison du lot C2bis : plus aucune zone de dépose n'était détectée, les quatre marqueurs de zone ressortant « orphelins ».
+
+`cv2.estimateAffinePartial2D` ajuste une **similitude** (rotation + échelle uniforme + translation), dont le déterminant est toujours **positif** : elle ne peut pas produire de miroir. Or passer du repère image (Y vers le bas) au repère plateau (Y vers le haut) *est* un retournement. La matrice rendue faisait donc croître `y_mm` vers le bas — l'ancienne convention — pendant que tout le reste du code supposait l'inverse. Les diagonales de zone sortaient en `(+,+)` au lieu de `(+,−)`, et le filtre des paires plausibles les écartait comme fantômes.
+
+**Correction** : ajuster la similitude vers un repère intermédiaire retourné en Y — de même « main » que l'image, le seul qu'elle sache atteindre — puis composer avec une matrice de retournement de déterminant −1. La partie rotation + échelle reste ajustée exactement comme avant.
+
+**Ce que cet épisode enseigne, et c'est le plus utile pour le rapport** : les tests du repli existaient, mais ne vérifiaient que les points **ayant servi à l'ajustement**. Or ceux-là retombent juste quelle que soit l'orientation — c'est la définition d'un ajustement. Le test « boussole » du lot C2bis, lui, travaillait avec 4 marqueurs, donc sur une vraie homographie, qui sait mirroiter. Personne ne convertissait un **troisième** point pour regarder dans quel sens il partait. Le défaut portait ainsi sur le chemin le plus emprunté du logiciel — le repli 2 marqueurs est le mode *nominal* sur la Geeetech — tout en restant invisible à une suite de 193 tests verts.
+
+> **Règle qui en découle : vérifier une transformation géométrique sur un point qui n'a pas servi à l'ajuster.** Un ajustement qui retombe sur ses propres points d'appui ne prouve rien.
+
+Deux tests le gardent désormais : `test_compute_homography_approx_conserve_le_sens_de_y` (la cause, le sens de l'axe) et `test_zones_detectees_avec_deux_marqueurs_de_plateau` (l'effet, reproduisant la géométrie exacte de la capture d'écran du défaut).
+
 **Repli à 2-3 marqueurs — mode nominal sur la Geeetech.** La caméra fixe de la Geeetech ne peut pas cadrer les 4 coins d'un plateau pleine taille : en pratique seuls les 2 marqueurs du haut (IDs 3 et 0) sont visibles, confirmé par observation directe le 2026-08-01. `compute_homography_approx()` calcule alors une **similitude** (rotation + échelle + translation, 4 degrés de liberté, `cv2.estimateAffinePartial2D`) au lieu d'une perspective complète (8 degrés de liberté). La correction de l'effet trapèze est impossible à déterminer avec 2 points, donc la précision est moindre et l'erreur croît avec l'inclinaison réelle de la caméra. L'interface affiche en permanence « ⚠ Précision réduite » dans ce mode. La CNC cible, qui a la place de reculer la caméra, devra utiliser `compute_homography()`.
 
 **Résultats sessions 1 & 2 (2026-06-11) :** 14/14 tests passés. Détection 4 marqueurs simultanée confirmée. Image redressée validée visuellement (le miroir vertical n'a été détecté que le 2026-08-01, par le calcul et non à l'œil).
@@ -624,6 +638,66 @@ Trois points de mise en œuvre méritent d'être notés :
 Les paires de coordonnées sont volontairement maintenues sur une seule ligne : `json.dumps(indent=2)` les éclaterait sur six lignes chacune, et un plateau réaliste ferait plusieurs centaines de lignes de crochets quasi vides. Le fichier étant un livrable qu'on doit pouvoir ouvrir et corriger dans un éditeur, la lisibilité compte. Le résultat reste du JSON strictement standard.
 
 **Résultat** : 30 tests dédiés, 108/108 pour la suite complète.
+
+### 6.1 Câblage de la persistance dans l'IHM (lot C3, `v0.4.3`)
+
+Le modèle et sa persistance étant écrits depuis le lot B, ce lot est essentiellement du **câblage** — mais quatre décisions y méritent d'être justifiées.
+
+#### La sauvegarde automatique n'écrit que si quelque chose a changé
+
+Un `QTimer` bat toutes les 5 s tant que l'écran de tracé est ouvert. Il ne déclenche une écriture que si un drapeau `_modifie`, levé par le signal `cordons_modified`, est actif — et ce drapeau n'est abaissé qu'**après** une écriture réussie, pour qu'un échec passager ne fasse pas perdre définitivement les modifications de la période.
+
+Sans ce drapeau, le fichier serait réécrit toutes les 5 s indéfiniment, y compris pendant que l'opérateur réfléchit sans rien toucher. Sur le Raspberry Pi, dont le disque est une **carte SD**, c'est de l'usure gratuite sur un support qui la supporte mal. Le coût du filet anti-plantage doit rester proportionnel au risque qu'il couvre.
+
+Le **tracé en cours est exclu** par construction : `ScreenCordons.cordons` ne retourne que les cordons terminés. Un polyline inachevé rechargé après une reprise donnerait un tracé arbitrairement coupé, que l'opérateur croirait volontaire — rien ne le distinguerait d'un cordon réellement court.
+
+#### Reprendre un travail interrompu ne restaure pas la photo
+
+Le fichier de préparation ne contient **pas** l'image du plateau. Reprendre consiste donc à : recharger les cordons, les paramètres et la zone de référence, puis **reprendre une photo**. Aucun tracé n'est perdu pour autant, et c'est exactement ce que rend possible la décision du lot B de mémoriser les cordons en **mm relatifs à la zone** — une photo différente, voire une caméra déplacée, ne les invalide pas. Les zones du fichier, elles, sont des positions absolues périmées dès que la caméra bouge : elles sont remplacées par celles de la nouvelle capture.
+
+Persister l'image aurait ajouté une gestion de fichiers annexes (nommage, nettoyage, cohérence avec le JSON) pour restaurer une donnée que le dispositif sait déjà reconstruire.
+
+> ⚠️ **Le point à ne pas rater** : la zone de **référence** doit être restaurée avant tout affichage. Les cordons sont exprimés dans son repère ; si la première zone rouverte par l'opérateur devenait la nouvelle référence, ils seraient réinterprétés dans un repère qui n'est pas le leur et se retrouveraient décalés — **sans que rien ne le signale**. C'est le même genre de faute silencieuse que le miroir vertical du lot C2bis, et elle est verrouillée par `test_reprise_restaure_la_zone_de_reference`.
+
+La proposition de reprise est faite par `MainApp.propose_resume()`, appelée depuis `main.py` **après** `show()` : une boîte modale pendant la construction laisserait l'opérateur devant un dialogue flottant, sans la fenêtre qui lui donne son contexte. Répondre « Non » **conserve** le fichier — la question est reposée au démarrage suivant, plutôt que de détruire un travail sur une réponse hâtive.
+
+#### La référence produit : trois voies dans le même dialogue
+
+Il n'y a **pas de clavier physique sur le RPi**. Une simple boîte de saisie texte rendrait l'écran inutilisable au doigt. `ProductNameDialog` offre donc trois façons d'arriver au même résultat, sans mode à choisir :
+
+| Voie | Intérêt |
+|---|---|
+| Saisie libre | Référence nouvelle, clavier virtuel ou BT |
+| Choix dans la liste des produits enregistrés | Évite les fautes de frappe sur une référence — coûteuses ici |
+| Champ vide à la validation → `BOITIER_X` | Le geste minimal : ouvrir, valider, travailler |
+
+`next_default_product_name()` retourne le **premier numéro libre**, pas « le plus grand + 1 ». Après suppression de `BOITIER_2`, le numéro est réutilisé : la numérotation sert à distinguer des plateaux de travail, pas à tracer un historique. Les travaux interrompus comptent comme occupés, sinon un `BOITIER_3` inachevé verrait son numéro réattribué et le second plateau écraserait le premier.
+
+L'intérêt de fond de ce choix, décidé le 2026-08-01 : **aucun état n'est conservé hors du dossier des préparations lui-même**. Le mécanisme fonctionne tel quel sur un dépôt fraîchement cloné, sans compteur à initialiser, et survit à la copie du dossier sur une autre machine. Le numéro n'est calculé qu'à la lecture de `product_name`, jamais à l'ouverture du dialogue : une ouverture annulée ne doit consommer aucun numéro.
+
+#### Recharger un plateau enregistré — ajouté le 2026-08-02, après usage réel
+
+Le lot C3 tel que spécifié ne couvrait que la **récupération après plantage** (`list_autosaves()`). Il manquait la **réutilisation** — point 7 du processus cible en section 1 : *« un fichier de plateau existant peut être rechargé et rejoué autant de fois que nécessaire, sans rien retracer »*. Elle n'avait été affectée à aucun lot, et le manque n'est apparu qu'en essayant le logiciel : après un enregistrement définitif, l'autosave est supprimé — à raison — et plus rien dans l'interface ne menait au fichier validé.
+
+Ajout d'un bouton **« Charger un plateau »** sur l'écran d'accueil, distinct de « Créer un plateau » : créer et recharger sont deux intentions différentes, et les confondre ferait risquer d'écraser un plateau en croyant en ouvrir un nouveau. Le sélecteur (`PreparationPickerDialog`) affiche nom, nombre de cordons et date — de quoi identifier un plateau sans ouvrir le fichier. Un fichier illisible reste **listé et signalé** plutôt que masqué : le faire disparaître laisserait croire que le travail s'est évaporé.
+
+Le chargement et la reprise après plantage partagent le même tronc (`MainApp._charger_preparation`) : ils ne diffèrent que par la façon dont le fichier est choisi, et factoriser évite que le pré-remplissage du nom, la navigation ou la gestion d'erreur divergent entre les deux chemins.
+
+**Capture automatique au rechargement.** La caméra est fixe sur le bâti et les zones sont vissées à demeure : le cadrage est toujours le même, donc demander un appui sur « Capturer » ne fait prendre aucune décision à l'opérateur — c'est un geste de plus sur un écran tactile, et rien d'autre. La photo se déclenche donc seule.
+
+Le déclenchement attend que **les marqueurs du plateau soient effectivement vus** (≥ 2 des 4 coins, le minimum de `compute_plateau_reference`), et non l'écoulement d'un délai : une temporisation aveugle déclencherait sur la première image venue — main encore dans le champ, exposition pas stabilisée — et produirait un diagnostic raté qu'il faudrait de toute façon reprendre. Un garde-temps de 5 s rend la main avec un message explicite, plutôt que de laisser un écran qui attend sans fin.
+
+L'automatisme est délibérément **limité au rechargement**. À la création d'un plateau, l'opérateur est en train d'y poser les boîtiers ; après un « Reprendre », il vient de constater un défaut de montage et s'apprête à le rectifier. Dans les deux cas, lui seul sait quand la scène est prête — automatiser reviendrait à décider à sa place.
+
+**Garde-fou associé** : le nom du produit servant de nom de fichier, réutiliser le nom d'un plateau existant pour un autre travail l'écraserait en silence — d'autant que le dialogue de création propose justement la liste des produits enregistrés. L'enregistrement demande donc confirmation, avec **« Non » par défaut**. Il ne demande **rien** quand il s'agit du même travail, reconnu à sa date de création : une question posée à chaque enregistrement deviendrait un réflexe qu'on valide sans lire, donc une protection qui ne protège plus.
+
+#### Les paramètres : un objet neuf, pas une modification en place
+
+`SettingsDialog` rend un **nouveau** `Settings` au lieu de modifier celui qu'on lui confie. C'est ce qui rend le bouton « Annuler » réellement sans effet — tant que l'opérateur n'a pas validé, la préparation n'a pas bougé. Les bornes des quatre compteurs ne sont pas cosmétiques : une vitesse aberrante partirait telle quelle en G-code vers la machine.
+
+Rappel affiché dans le dialogue, parce qu'il n'est pas devinable : l'épaisseur du cordon dépend du **rapport** entre les deux vitesses, pas de l'une d'elles. C'est aussi pourquoi il y a deux vitesses plutôt qu'un curseur « quantité », qui masquerait ce lien.
+
+**Résultat** : 32 tests dédiés (`test_dialogs.py` créé, `test_screen_cordons.py` et `test_preparation.py` enrichis), 193/193 pour la suite complète.
 
 ---
 
