@@ -289,6 +289,107 @@ terminer par un double-appui, sinon il serait perdu sans avertissement.
 - Ouvrir une **autre** zone que celle de référence y affiche les mêmes cordons, mais ne
   change pas le repère de travail. Changer de repère déplacerait les cordons déjà tracés.
 
+### Enregistrer son travail
+
+| Bouton | Rôle |
+|---|---|
+| **Paramètres** | Règle les 2 vitesses et les 2 seuils de contrôle du montage |
+| **Enregistrer** | Enregistre définitivement le plateau. Inactif tant qu'aucun cordon n'est tracé — un plateau sans cordon ne permet de rien déposer |
+
+**Le travail est sauvegardé tout seul toutes les 5 secondes.** Il n'y a donc rien à faire
+pour se protéger d'une coupure de courant ou d'un plantage : au prochain démarrage,
+l'application proposera de reprendre là où vous en étiez.
+
+Cette sauvegarde automatique **n'inclut jamais un cordon en cours de tracé** : tant que
+vous n'avez pas fait le double-appui qui le termine, il n'existe pas pour elle. C'est
+voulu — un cordon coupé au milieu, rechargé plus tard, ressemblerait à un cordon que vous
+auriez voulu court.
+
+Le bouton **Enregistrer** reste utile : il valide le travail, et c'est lui qui supprime la
+sauvegarde automatique. Tant que vous n'avez pas enregistré, l'application continuera de
+vous proposer de reprendre ce plateau à chaque démarrage.
+
+### Reprendre un travail interrompu
+
+Au démarrage, si un travail n'a pas été enregistré, l'application le propose :
+
+> *Un travail non enregistré a été trouvé pour « BOITIER_3 ». Le reprendre ?*
+
+- **Oui** → les cordons déjà tracés sont restaurés, et vous arrivez directement sur
+  l'écran de création de plateau pour **reprendre une photo**.
+- **Non** → l'application démarre normalement. Le fichier est **conservé** : la question
+  sera reposée au prochain démarrage.
+
+⚠️ **Reprendre une photo ne fait perdre aucun tracé.** Les cordons sont mémorisés par
+rapport à la zone, pas par rapport à la photo : même si la caméra a bougé entre-temps, ils
+se replacent au bon endroit. C'est aussi pour ça que la photo elle-même n'est pas
+enregistrée — elle se refait en un appui.
+
+### Recharger un plateau déjà enregistré
+
+Les zones étant vissées à demeure, un plateau enregistré se rejoue autant de fois que
+nécessaire — **sans rien retracer**.
+
+Sur l'écran d'accueil, appuyer sur **« Charger un plateau »**. La liste affiche, pour
+chaque plateau enregistré, son nom, son nombre de cordons et la date du dernier
+enregistrement — de quoi répondre à « est-ce bien celui d'hier ? » sans ouvrir le fichier.
+
+Après le chargement, une photo du plateau est reprise — **automatiquement**. Vous n'avez
+rien à appuyer : dès que les marqueurs de coin du plateau sont vus, la photo se déclenche
+seule et le diagnostic s'affiche. La barre de statut indique l'attente en cours :
+
+> *Capture automatique — recherche du plateau… (1/2 marqueurs de coin)*
+
+Cette nouvelle photo ne fait perdre aucun tracé : les cordons se replacent tout seuls sur
+les zones détectées.
+
+Si le plateau n'est pas reconnu au bout de quelques secondes, l'application rend la main :
+
+> *Plateau non reconnu automatiquement — vérifier le cadrage, puis appuyer sur Capturer*
+
+Vérifiez alors qu'au moins deux marqueurs de coin sont dans le champ — rien ne doit les
+masquer, votre main comprise — et appuyez sur **Capturer**.
+
+> La capture automatique ne concerne que le **rechargement**. À la création d'un plateau,
+> c'est toujours vous qui déclenchez : vous êtes en train d'y poser les boîtiers, et c'est
+> vous qui savez quand c'est prêt. De même après un **« Reprendre »** : vous venez de voir
+> un défaut de montage, redéclencher tout seul vous renverrait au même diagnostic avant
+> que vous ayez pu rectifier quoi que ce soit.
+
+> ⚠️ **« Charger un plateau » et « Reprendre un travail interrompu » ne sont pas la même
+> chose.** La reprise proposée au démarrage concerne un travail **jamais enregistré**,
+> interrompu par un plantage. Le chargement concerne un plateau que vous avez **validé**
+> avec le bouton « Enregistrer ».
+
+### Attention à ne pas écraser un plateau
+
+Le nom du produit sert de nom de fichier. Si vous créez un **nouveau** plateau en
+reprenant le nom d'un plateau existant, l'enregistrement remplacerait l'ancien.
+
+L'application vous prévient dans ce cas :
+
+> *Un plateau « AIVC » est déjà enregistré. Il contient 2 cordon(s)… L'enregistrer
+> maintenant le remplacera définitivement.*
+
+Le bouton par défaut est **Non** : un appui distrait n'écrase rien. Pour repartir d'un
+plateau existant sans risque, passer par **« Charger un plateau »**.
+
+Aucune question n'est posée quand vous réenregistrez un plateau que vous venez de
+charger — c'est le déroulé normal de la réutilisation.
+
+### Nommer un plateau — trois façons
+
+Il n'y a pas de clavier sur le boîtier de commande. À l'ouverture d'un nouveau plateau,
+vous avez donc trois moyens d'indiquer la référence du produit :
+
+1. **taper la référence** dans le champ ;
+2. **appuyer sur une référence de la liste** des produits déjà enregistrés — le champ se
+   remplit, vous pouvez encore le corriger avant de valider. C'est le moyen le plus sûr
+   pour reprendre un produit connu, sans risque de faute de frappe ;
+3. **valider en laissant le champ vide** → le plateau s'appellera `BOITIER_1`, `BOITIER_2`,
+   etc., en prenant le premier numéro libre. C'est le geste le plus rapide quand le nom
+   n'a pas d'importance.
+
 ### Si un ancien plateau est signalé « converti »
 
 Un message peut apparaître à l'ouverture d'un plateau enregistré avec une version

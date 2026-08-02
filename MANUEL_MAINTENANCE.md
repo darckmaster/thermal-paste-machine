@@ -130,6 +130,37 @@ la matrice :
 > 4 points, `getPerspectiveTransform` ajuste sans résidu et le donnerait nul quelle que
 > soit la réalité du plateau. D'où la similitude sur 3 tags.
 
+#### ⚠️ Le repli 2-3 marqueurs doit retourner Y explicitement
+
+**Défaut constaté sur la machine le 2026-08-02** : plus aucune zone de dépose n'était
+détectée, les quatre marqueurs de zone ressortant tous « orphelins ».
+
+`cv2.estimateAffinePartial2D` ajuste une **similitude** — rotation, échelle uniforme,
+translation — dont le déterminant est toujours **positif**. Elle ne sait donc pas produire
+de miroir. Or passer du repère image (Y vers le bas) au repère plateau (Y vers le haut
+depuis le lot C2bis) **est** un retournement. Appelée directement sur les positions mm,
+elle rendait une matrice où `y_mm` croît vers le bas : l'ancienne convention. Toute la
+logique de signe des zones s'en trouvait inversée, et le filtre des paires plausibles
+écartait les vraies zones comme fantômes.
+
+La parade, dans `compute_homography_approx()` : ajuster la similitude vers un repère
+intermédiaire **retourné en Y** — de même « main » que l'image, le seul qu'elle sache
+atteindre — puis composer avec une matrice de retournement (déterminant −1) pour revenir
+au repère du plateau. La partie rotation + échelle reste ajustée exactement comme avant.
+
+> **Pourquoi les tests ne l'avaient pas vu**, et quoi en retenir : les deux tests
+> existants du repli ne vérifiaient que les points **ajustés**, qui retombent juste quelle
+> que soit l'orientation, et le test « boussole » travaille avec 4 marqueurs — donc
+> `compute_homography`, une vraie homographie, qui sait mirroiter. Personne ne convertissait
+> un **troisième** point pour regarder dans quel sens il partait. Le repli 2 marqueurs
+> étant le mode **nominal** sur la Geeetech, le trou portait sur le chemin le plus
+> emprunté du logiciel.
+>
+> Deux tests le gardent désormais : `test_compute_homography_approx_conserve_le_sens_de_y`
+> (la cause) et `test_zones_detectees_avec_deux_marqueurs_de_plateau` (l'effet visible par
+> l'opérateur). **Règle générale à retenir : vérifier une transformation sur un point qui
+> n'a pas servi à l'ajuster.**
+
 ### Zones de dépose — règles de reconstruction
 
 Une **zone de dépose** est l'emplacement d'un produit, vissé à demeure sur le plateau.
@@ -508,6 +539,38 @@ Trois points à connaître si vous ajoutez un jour une version 3 :
 Un fichier v1 contenant des cordons **mais aucune zone** est refusé : la hauteur
 nécessaire est introuvable, et laisser passer des cordons à l'envers enverrait la buse au
 mauvais endroit.
+
+#### Câblage dans l'IHM (lot C3) — trois pièges à ne pas réintroduire
+
+**a) La sauvegarde automatique n'écrit que si `_modifie` est levé.** Le `QTimer` de
+`ScreenCordons` bat toutes les 5 s tant que l'écran est ouvert, mais n'écrit que si le
+signal `cordons_modified` a été émis depuis la dernière écriture. Retirer ce drapeau
+réécrirait le fichier toutes les 5 s indéfiniment — sur la **carte SD** du Raspberry Pi,
+c'est de l'usure gratuite. Le drapeau n'est abaissé qu'après une écriture **réussie** :
+un échec passager ne doit pas faire perdre les modifications de la période.
+
+**b) La zone de RÉFÉRENCE doit être restaurée avant tout affichage à la reprise.** Les
+cordons sont exprimés dans son repère. Si la première zone rouverte par l'opérateur
+devenait la nouvelle référence, ils seraient réinterprétés dans un repère qui n'est pas le
+leur et se retrouveraient décalés, **sans que rien ne le signale**. Même famille de faute
+silencieuse que le miroir vertical du lot C2bis. Verrouillé par
+`test_reprise_restaure_la_zone_de_reference`.
+
+**c) Le numéro `BOITIER_X` ne se calcule qu'à la lecture de `product_name`.** Le calculer
+à la construction du dialogue ferait avancer la numérotation à chaque ouverture, même
+annulée. Les autosaves comptent comme numéros occupés : sans ça, un `BOITIER_3` inachevé
+verrait son numéro réattribué, et le second plateau écraserait le premier.
+
+> **Ce qui n'est PAS enregistré : la photo du plateau.** Reprendre un travail interrompu
+> restaure les cordons, les paramètres et la zone de référence, puis demande une nouvelle
+> capture. C'est possible parce que les cordons sont en mm **relatifs à la zone** — voir
+> plus haut. Ne pas « corriger » cela en persistant l'image : ce serait ajouter une gestion
+> de fichiers annexes pour restaurer une donnée que le dispositif reconstruit en un appui.
+>
+> `MainApp.propose_resume()` est appelée depuis `main.py` **après** `show()`, jamais depuis
+> `__init__` : une boîte modale pendant la construction s'afficherait sans la fenêtre qui
+> lui donne son contexte. Répondre « Non » conserve le fichier — on ne détruit pas un
+> travail sur une réponse hâtive.
 
 **Nom de fichier** : le nom du produit est saisi librement par l'opérateur et sert de nom
 de fichier. Les caractères interdits (`< > : " / \ | ? *`) sont remplacés par `_`, sinon
