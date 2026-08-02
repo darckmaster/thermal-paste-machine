@@ -15,17 +15,35 @@
 import cv2
 import numpy as np
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QStackedLayout
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
+    QStackedLayout, QDialog, QMessageBox,
 )
-from PyQt5.QtCore import Qt, QPoint, pyqtSignal
+from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QBrush, QColor
 
+from gui.dialogs import SettingsDialog
+import os
+
+from modules.preparation import (
+    Cordon,
+    Preparation,
+    Settings,
+    load_preparation,
+    preparation_path,
+    save_autosave,
+    save_preparation,
+)
 from modules.vision import VisionProcessor
 
 
 # Résolution du zoom sur une zone. 8 px/mm donne environ 1 mm de précision de clic sur
 # l'écran tactile sans alourdir l'affichage.
 ZOOM_PX_PER_MM = 8.0
+
+# Période de la sauvegarde automatique, en millisecondes. 5 s : assez court pour qu'une
+# coupure ne coûte qu'un ou deux points de tracé, assez long pour ne pas écrire en
+# permanence (voir la note sur l'usure de la carte SD dans _sauvegarde_automatique).
+AUTOSAVE_INTERVAL_MS = 5000
 
 # Distance maximale, en pixels d'affichage, pour qu'un clic sélectionne un cordon
 # existant. Assez large pour être atteignable au doigt, assez étroite pour ne pas
@@ -509,10 +527,12 @@ class ScreenCordons(QWidget):
     """Écran 7 : choix d'une zone, tracé des cordons, report sur tout le plateau."""
 
     back_requested = pyqtSignal()
-    # Émis à chaque modification du jeu de cordons — le lot C3 y branchera l'autosave
+    # Émis à chaque modification du jeu de cordons — l'autosave s'y branche (lot C3)
     cordons_modified = pyqtSignal()
+    # Émis après un enregistrement définitif réussi, avec le chemin du fichier
+    preparation_saved = pyqtSignal(str)
 
-    def __init__(self) -> None:
+    def __init__(self, directory: str = None) -> None:
         super().__init__()
         self._vision = VisionProcessor()
         self._product_name = ""
@@ -521,6 +541,24 @@ class ScreenCordons(QWidget):
         self._layout_plateau = None
         # Zone sur laquelle les cordons sont tracés — celle qui fera référence
         self._zone_reference = None
+
+        # Dossier d'enregistrement. None = celui du projet (config.PREPARATIONS_DIR) ;
+        # les tests le pointent vers un dossier temporaire pour ne jamais écrire dans
+        # les préparations réelles de l'étudiant.
+        self._directory = directory
+        # La préparation en cours — créée à l'arrivée du plateau, c'est elle qu'on
+        # enregistre. None tant qu'aucun plateau n'a été reçu.
+        self._preparation: Preparation | None = None
+        # Drapeau « quelque chose a changé depuis la dernière écriture ». Voir
+        # _sauvegarde_automatique pour la raison d'être de ce drapeau.
+        self._modifie = False
+
+        # Timer de sauvegarde automatique — démarré à l'arrivée d'un plateau, arrêté
+        # quand l'écran n'est plus visible
+        self._timer_autosave = QTimer()
+        self._timer_autosave.setInterval(AUTOSAVE_INTERVAL_MS)
+        self._timer_autosave.timeout.connect(self._sauvegarde_automatique)
+
         self._setup_ui()
 
     # ------------------------------------------------------------------ interface
@@ -560,10 +598,18 @@ class ScreenCordons(QWidget):
         self._btn_back = QPushButton("Retour")
         self._btn_back.setProperty("role", "secondary")
         self._btn_back.clicked.connect(self.back_requested)
+        self._btn_parametres = QPushButton("Paramètres")
+        self._btn_parametres.setProperty("role", "secondary")
+        self._btn_parametres.clicked.connect(self._ouvrir_parametres)
         self._btn_editer = QPushButton("Modifier les cordons")
         self._btn_editer.clicked.connect(self._rouvrir_zone_reference)
+        self._btn_enregistrer = QPushButton("Enregistrer")
+        self._btn_enregistrer.setProperty("role", "success")
+        self._btn_enregistrer.clicked.connect(self._enregistrer)
         self._barre_plateau.addWidget(self._btn_back)
+        self._barre_plateau.addWidget(self._btn_parametres)
         self._barre_plateau.addWidget(self._btn_editer, stretch=2)
+        self._barre_plateau.addWidget(self._btn_enregistrer, stretch=2)
 
         # Barre du mode « zone »
         self._barre_zone = QHBoxLayout()
@@ -593,16 +639,65 @@ class ScreenCordons(QWidget):
 
     # ------------------------------------------------------------------ entrée
 
-    def set_plateau(self, donnees: dict) -> None:
-        """Reçoit le plateau validé par l'écran précédent et affiche la vue d'ensemble."""
+    def set_plateau(self, donnees: dict, reprise: Preparation = None) -> None:
+        """Reçoit le plateau validé par l'écran précédent et affiche la vue d'ensemble.
+
+        `reprise` est une préparation rechargée depuis un travail interrompu. Elle
+        apporte les cordons déjà tracés, les paramètres et la zone de référence — mais
+        PAS la photo ni les zones, qui viennent forcément de la capture qu'on vient de
+        faire. C'est exactement ce que permet le choix de mémoriser les cordons en mm
+        **relatifs à la zone** : une nouvelle photo, même caméra déplacée, les remet au
+        bon endroit sans rien retracer. Les zones du fichier, elles, sont des positions
+        absolues périmées dès que la caméra bouge : on les remplace.
+        """
         self._product_name = donnees["product_name"]
         self._image = donnees["image"]
         self._homography = donnees["homography"]
         self._layout_plateau = donnees["layout"]
+
+        cordons_repris = [list(c.points_mm) for c in reprise.cordons] if reprise else []
+        parametres = reprise.settings if reprise else Settings()
+
+        # Restaurer la zone de RÉFÉRENCE avant tout affichage. Sans ça, la première zone
+        # que l'opérateur ouvrirait deviendrait la nouvelle référence, et les cordons —
+        # exprimés dans le repère de l'ancienne — seraient réinterprétés dans un repère
+        # qui n'est pas le leur. Ils se retrouveraient décalés sans explication visible.
         self._zone_reference = None
-        self._editeur.set_zone_image(np.zeros((1, 1, 3), dtype=np.uint8), [])
+        if reprise is not None and reprise.reference_zone_id is not None:
+            self._zone_reference = next(
+                (z for z in self._layout_plateau.valid_zones
+                 if z.id_top_left == reprise.reference_zone_id),
+                None,
+            )
+
+        self._editeur.set_zone_image(
+            np.zeros((1, 1, 3), dtype=np.uint8), cordons_repris
+        )
+
+        # La préparation reprend l'identité du fichier repris (dates de création) plutôt
+        # que d'en fabriquer une neuve : le travail est le même, il a seulement été
+        # interrompu.
+        self._preparation = Preparation(
+            product_name=self._product_name,
+            zones=list(self._layout_plateau.zones),
+            settings=parametres,
+            created_at=reprise.created_at if reprise else None,
+        )
+        # Une reprise n'est pas une modification : l'état à l'écran est exactement celui
+        # du fichier. Marquer « modifié » ici réécrirait l'autosave pour rien.
+        self._modifie = False
+
         self._banner.setText(f"Cordons — {self._product_name}")
         self._afficher_plateau()
+
+        if reprise is not None:
+            self._status.setText(
+                f"Travail repris : {len(cordons_repris)} cordon(s) restauré(s). "
+                f"Vérifier le tracé avant de lancer une dépose."
+            )
+
+        # L'autosave ne tourne que quand il y a quelque chose à sauvegarder
+        self._timer_autosave.start()
 
     @property
     def cordons(self) -> list:
@@ -612,6 +707,20 @@ class ScreenCordons(QWidget):
     @property
     def zone_reference(self):
         return self._zone_reference
+
+    @property
+    def preparation(self) -> Preparation:
+        """La préparation à jour de l'état de l'écran.
+
+        Reconstruite à la demande à partir des cordons de l'éditeur plutôt que tenue
+        synchronisée en permanence : l'éditeur est la source de vérité du tracé, et
+        deux copies d'une même donnée finissent toujours par diverger.
+        """
+        self._preparation.cordons = [Cordon(points) for points in self.cordons]
+        self._preparation.reference_zone_id = (
+            self._zone_reference.id_top_left if self._zone_reference else None
+        )
+        return self._preparation
 
     # ------------------------------------------------------------------ mode plateau
 
@@ -633,6 +742,9 @@ class ScreenCordons(QWidget):
                 f"{nb} cordon(s) appliqué(s) aux {len(zones)} zone(s) du plateau"
             )
         self._btn_editer.setEnabled(self._zone_reference is not None)
+        # Enregistrer un plateau sans aucun cordon produirait un fichier qui ne permet
+        # de rien déposer. Le bouton reste donc inactif tant qu'il n'y a rien à déposer.
+        self._btn_enregistrer.setEnabled(nb > 0)
 
     def _rouvrir_zone_reference(self) -> None:
         """Retourne à la zone déjà utilisée, pour compléter ou corriger le tracé."""
@@ -682,8 +794,150 @@ class ScreenCordons(QWidget):
         self._editeur.supprimer_selection()
 
     def _on_cordons_modified(self) -> None:
+        # Marquer le travail comme modifié : c'est ce drapeau, et non le passage du
+        # temps, qui décide si la prochaine sauvegarde automatique écrit réellement
+        self._modifie = True
         self._maj_boutons()
         self.cordons_modified.emit()
+
+    # ------------------------------------------------------------------ persistance
+
+    def _sauvegarde_automatique(self) -> None:
+        """Filet anti-plantage, déclenché toutes les 5 s par le timer.
+
+        Deux garde-fous, qui ne sont ni l'un ni l'autre des détails :
+
+        1. **On n'écrit que si quelque chose a changé** (`self._modifie`). Le timer bat
+           en permanence tant que l'écran est ouvert ; écrire à chaque battement
+           réécrirait le fichier toutes les 5 s indéfiniment, y compris pendant qu'on
+           réfléchit sans rien toucher. Sur le Raspberry Pi, dont le disque est une
+           **carte SD**, c'est de l'usure gratuite sur un support qui la supporte mal.
+        2. **Le tracé en cours est exclu.** `self.cordons` ne retourne que les cordons
+           TERMINÉS — le polyline en cours de saisie n'en fait pas partie. Un cordon
+           inachevé n'a pas de sens : rechargé tel quel après une reprise, il donnerait
+           un tracé arbitrairement coupé, que l'opérateur croirait volontaire.
+
+        Une erreur d'écriture n'interrompt pas le travail : elle est signalée dans la
+        barre de statut et le tracé continue. Perdre le filet est ennuyeux ; perdre le
+        tracé en cours parce que le filet a échoué le serait bien plus.
+        """
+        if not self._modifie or self._preparation is None:
+            return
+
+        try:
+            save_autosave(self.preparation, self._directory)
+        except OSError as e:
+            self._status.setText(f"⚠ Sauvegarde automatique impossible : {e}")
+            return
+
+        # Ne baisser le drapeau qu'après une écriture réussie, sinon un échec passager
+        # ferait perdre définitivement les modifications de cette période
+        self._modifie = False
+
+    def stop_autosave(self) -> None:
+        """Arrête le timer — appelé quand l'écran cesse d'être visible."""
+        self._timer_autosave.stop()
+
+    def hideEvent(self, event) -> None:
+        """L'écran n'est plus affiché : inutile de continuer à sauvegarder.
+
+        Passer par hideEvent plutôt que de demander à MainApp d'arrêter le timer à
+        chaque navigation : l'écran est seul à savoir quand il travaille, et une règle
+        portée par l'appelant finit toujours par être oubliée sur un chemin de sortie.
+        """
+        super().hideEvent(event)
+        self.stop_autosave()
+
+    def _enregistrer(self) -> None:
+        """Enregistrement DÉFINITIF, sur action de l'opérateur.
+
+        Écrit `<produit>.json` et supprime l'autosave : le travail étant validé, le
+        filet anti-plantage n'a plus lieu d'être, et le laisser ferait proposer une
+        reprise inutile au prochain démarrage.
+        """
+        if self._preparation is None:
+            return
+
+        if not self._confirmer_ecrasement():
+            return
+
+        try:
+            chemin = save_preparation(self.preparation, self._directory)
+        except OSError as e:
+            QMessageBox.critical(
+                self, "Enregistrement impossible",
+                f"Le fichier n'a pas pu être écrit :\n{e}\n\n"
+                f"Vérifier l'espace disque et les droits d'accès. Le tracé n'est pas "
+                f"perdu : il reste à l'écran."
+            )
+            return
+
+        # Le travail enregistré n'a plus de modification en attente
+        self._modifie = False
+        self._status.setText(f"Enregistré : {chemin}")
+        self.preparation_saved.emit(chemin)
+
+    def _confirmer_ecrasement(self) -> bool:
+        """Demande confirmation si l'enregistrement va écraser un AUTRE plateau.
+
+        Le nom du produit sert de nom de fichier, et le dialogue de création propose la
+        liste des produits déjà enregistrés : reprendre un nom existant pour un tout
+        autre plateau est donc un geste facile — et l'écriture étant un simple
+        remplacement, le travail précédent disparaîtrait sans un mot.
+
+        On ne demande RIEN quand il s'agit du même travail, reconnu à sa date de
+        création : recharger un plateau puis le réenregistrer est le déroulé normal de
+        la réutilisation, et une confirmation à chaque fois deviendrait un réflexe qu'on
+        valide sans lire — donc une protection qui ne protège plus.
+
+        Un fichier existant mais illisible fait poser la question : on ne remplace pas
+        en silence quelque chose qu'on n'a pas su relire.
+        """
+        chemin = preparation_path(self._product_name, self._directory)
+        if not os.path.exists(chemin):
+            return True
+
+        try:
+            existant = load_preparation(chemin)
+            meme_travail = existant.created_at == self._preparation.created_at
+            details = (
+                f"Il contient {len(existant.cordons)} cordon(s), "
+                f"enregistré le {existant.updated_at.replace('T', ' ')}."
+            )
+        except (OSError, ValueError, KeyError):
+            meme_travail = False
+            details = "Son contenu n'a pas pu être relu."
+
+        if meme_travail:
+            return True
+
+        reponse = QMessageBox.question(
+            self, "Remplacer le plateau existant ?",
+            f"Un plateau « {self._product_name} » est déjà enregistré.\n{details}\n\n"
+            f"L'enregistrer maintenant le remplacera définitivement.\n\n"
+            f"Pour repartir d'un plateau existant sans l'écraser, utiliser plutôt "
+            f"« Charger un plateau » sur l'écran d'accueil.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,      # le défaut protège : un appui distrait n'écrase rien
+        )
+        return reponse == QMessageBox.Yes
+
+    # ------------------------------------------------------------------ paramètres
+
+    def _ouvrir_parametres(self) -> None:
+        """Ouvre le réglage des 2 vitesses et des 2 seuils de la préparation."""
+        if self._preparation is None:
+            return
+
+        dialogue = SettingsDialog(self._preparation.settings, parent=self)
+        if dialogue.exec_() != QDialog.Accepted:
+            return
+
+        self._preparation.settings = dialogue.settings
+        # Les paramètres font partie de la préparation : les changer est une
+        # modification, donc l'autosave doit la reprendre au prochain battement
+        self._modifie = True
+        self._status.setText("Paramètres mis à jour")
 
     def _maj_boutons(self) -> None:
         """Active ou non les boutons selon ce qui est réellement possible."""

@@ -23,6 +23,11 @@ def main() -> None:
     # Sur le RPi avec l'écran tactile, remplacer par window.showFullScreen()
     window.showMaximized()
 
+    # Proposer de reprendre un travail interrompu, s'il en existe un. APRÈS le show() :
+    # une boîte de dialogue modale avant l'affichage laisserait l'opérateur devant un
+    # dialogue flottant, sans la fenêtre qui lui donne son contexte.
+    window.propose_resume()
+
     # Démarrer la boucle d'événements Qt — bloque jusqu'à fermeture de la fenêtre
     sys.exit(app.exec_())
 

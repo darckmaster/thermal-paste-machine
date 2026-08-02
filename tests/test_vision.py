@@ -325,6 +325,80 @@ def test_compute_homography_approx_trois_marqueurs(vision: VisionProcessor) -> N
         f"ID2 (bas-gauche, origine) attendu (0, 0), obtenu ({x:.1f}, {y:.1f})"
 
 
+def test_compute_homography_approx_conserve_le_sens_de_y(vision: VisionProcessor) -> None:
+    """Régression du 2026-08-02 — LE test qui manquait au lot C2bis.
+
+    Défaut constaté sur la machine : plus aucune zone de dépose n'était détectée, tous
+    les marqueurs ressortant « orphelins ». Cause : `estimateAffinePartial2D` ajuste une
+    **similitude** (rotation + échelle + translation), dont le déterminant est POSITIF —
+    elle ne sait donc pas produire de miroir. Or passer du repère image (Y vers le bas)
+    au repère plateau (Y vers le HAUT depuis le lot C2bis) EST un retournement. La
+    matrice rendue faisait croître y_mm vers le bas, soit l'ANCIENNE convention : toute
+    la logique de signe des zones s'inversait et les vraies zones étaient écartées comme
+    fantômes.
+
+    Pourquoi aucun test ne l'avait vu : les deux tests existants ne vérifiaient que les
+    points AJUSTÉS, qui retombent juste quelle que soit l'orientation, et le test
+    « boussole » travaille avec 4 marqueurs — donc `compute_homography`, une vraie
+    homographie, qui sait mirroiter. Personne ne convertissait un TROISIÈME point pour
+    regarder dans quel sens il partait.
+
+    Le repli 2 marqueurs étant le mode **nominal** sur la Geeetech, ce trou de test
+    portait sur le chemin le plus emprunté du logiciel.
+    """
+    # Les deux marqueurs du haut, seuls cadrés par la caméra Geeetech
+    marqueurs = {3: _coins_autour(555, 222), 0: _coins_autour(1455, 215)}
+    H = vision.compute_homography_approx(marqueurs)
+
+    # Un point PLUS BAS dans l'image doit avoir un y en mm PLUS PETIT
+    _, y_haut = vision.pixel_to_mm(555, 222, H)
+    _, y_bas = vision.pixel_to_mm(555, 622, H)
+
+    assert y_bas < y_haut, (
+        f"repère retourné : un point plus bas dans l'image donne y={y_bas:.1f} mm "
+        f"contre y={y_haut:.1f} mm plus haut — l'axe Y doit croître vers le HAUT"
+    )
+    # Et il doit rester DANS le plateau : un point à 400 px sous le bord supérieur ne
+    # peut pas ressortir au-delà de la hauteur du plateau
+    assert 0 < y_bas < WORK_AREA_HEIGHT_MM, (
+        f"y={y_bas:.1f} mm hors du plateau (0 → {WORK_AREA_HEIGHT_MM}) — signe que "
+        f"l'origine ou le sens de l'axe est faux"
+    )
+
+
+def test_zones_detectees_avec_deux_marqueurs_de_plateau(vision: VisionProcessor) -> None:
+    """Régression du 2026-08-02, vue de bout en bout — le symptôme constaté par l'étudiant.
+
+    Géométrie calquée sur la capture d'écran du défaut : seuls les 2 marqueurs du HAUT
+    du plateau sont cadrés, et les deux zones de dépose sont plus bas dans l'image. Avant
+    la correction, ce cas rendait 0 zone et 4 marqueurs orphelins.
+
+    Ce test complète le précédent : celui-là épingle la cause (le sens de Y), celui-ci
+    vérifie l'effet visible par l'opérateur. Les deux valent la peine — une correction
+    qui rétablirait le signe sans rétablir la détection ne serait pas une correction.
+    """
+    marqueurs = {3: _coins_autour(555, 222), 0: _coins_autour(1455, 215)}
+    # Deux zones, chacune repérée par ses coins haut-gauche et bas-droit à l'écran
+    marqueurs[4] = _coins_autour(655, 342)
+    marqueurs[5] = _coins_autour(938, 548)
+    marqueurs[6] = _coins_autour(1077, 695)
+    marqueurs[7] = _coins_autour(1353, 900)
+
+    H = vision.compute_homography_approx(marqueurs)
+    layout = vision.detect_deposit_zones(marqueurs, H)
+
+    paires = {(z.id_top_left, z.id_bottom_right) for z in layout.zones}
+    assert paires == {(4, 5), (6, 7)}, (
+        f"les 2 zones doivent être reconnues, obtenu {paires} "
+        f"(orphelins : {layout.unpaired_ids})"
+    )
+    assert layout.unpaired_ids == [], "aucun marqueur ne doit rester orphelin"
+    assert len(layout.valid_zones) == 2, (
+        f"les 2 zones doivent être exploitables : "
+        f"{[z.anomalies for z in layout.zones]}"
+    )
+
+
 def test_compute_homography_approx_un_seul_marqueur_leve_erreur(vision: VisionProcessor) -> None:
     """compute_homography_approx() doit lever ValueError avec moins de 2 marqueurs."""
     marqueurs = {0: _coins_autour(100, 350)}

@@ -634,6 +634,67 @@ def list_autosaves(directory: str = None) -> list:
     return sorted(chemins, key=os.path.getmtime, reverse=True)
 
 
+def product_name_from_path(chemin: str) -> str:
+    """Retrouve le nom de produit à partir d'un chemin de fichier de préparation.
+
+    Gère les deux formes : `<produit>.json` et `<produit>.autosave.json`. Le suffixe
+    d'autosave est retiré en premier, sinon `os.path.splitext` ne retirerait que le
+    `.json` final et laisserait un `.autosave` parasite dans le nom.
+
+    ⚠️ Le nom retourné est le nom de FICHIER, donc assaini (voir _safe_filename) : il
+    peut différer de la référence exacte saisie par l'opérateur, conservée dans le champ
+    `product_name` à l'intérieur du fichier. Suffisant pour lister ou numéroter, pas
+    pour afficher une référence exacte.
+    """
+    nom = os.path.basename(chemin)
+    if nom.endswith(AUTOSAVE_SUFFIX):
+        return nom[: -len(AUTOSAVE_SUFFIX)]
+    return os.path.splitext(nom)[0]
+
+
+# Préfixe du nom de repli, quand l'opérateur valide sans rien saisir.
+DEFAULT_PRODUCT_PREFIX = "BOITIER_"
+
+
+def next_default_product_name(directory: str = None) -> str:
+    """Premier nom `BOITIER_X` libre dans le dossier des préparations.
+
+    Sert de repli quand l'opérateur valide le champ produit sans rien saisir — cas
+    courant sur l'écran tactile, où saisir du texte coûte cher.
+
+    Pourquoi chercher le premier trou plutôt que « le plus grand + 1 » : après
+    suppression de `BOITIER_2`, le numéro redevient libre et sera réutilisé. C'est
+    voulu — la numérotation sert à distinguer des plateaux de travail, pas à tracer un
+    historique. Un compteur toujours croissant obligerait à conserver un état quelque
+    part.
+
+    Et c'est justement le point de la décision du 2026-08-01 : **aucun état n'est
+    conservé hors du dossier des préparations lui-même**. Le mécanisme fonctionne donc
+    tel quel sur un dépôt fraîchement cloné, sans compteur à initialiser ni fichier de
+    séquence à sauvegarder — et il survit à la copie du dossier sur une autre machine.
+
+    Les travaux interrompus (autosaves) comptent comme occupés : un `BOITIER_3` qu'on
+    n'a pas fini ne doit pas voir son numéro réattribué à un autre plateau.
+    """
+    dossier = directory if directory is not None else PREPARATIONS_DIR
+
+    # Les deux familles de fichiers réunies — définitifs ET travaux interrompus
+    chemins = list_preparations(dossier) + list_autosaves(dossier)
+
+    # Numéros déjà pris, extraits des noms de la forme BOITIER_<entier>
+    motif = re.compile(rf"^{re.escape(DEFAULT_PRODUCT_PREFIX)}(\d+)$")
+    occupes = set()
+    for chemin in chemins:
+        correspondance = motif.match(product_name_from_path(chemin))
+        if correspondance:
+            occupes.add(int(correspondance.group(1)))
+
+    # Premier entier positif absent de l'ensemble. La borne de la boucle est sûre :
+    # avec n numéros occupés, l'un des entiers de 1 à n+1 est forcément libre.
+    numero = next(n for n in range(1, len(occupes) + 2) if n not in occupes)
+    return f"{DEFAULT_PRODUCT_PREFIX}{numero}"
+
+
 def list_preparations(directory: str = None) -> list:
     """Liste les préparations enregistrées définitivement, par ordre alphabétique.
 

@@ -22,7 +22,9 @@ from modules.preparation import (
     list_autosaves,
     list_preparations,
     load_preparation,
+    next_default_product_name,
     preparation_path,
+    product_name_from_path,
     save_autosave,
     save_preparation,
 )
@@ -355,6 +357,74 @@ def test_fichier_v1_reecrit_en_v2_au_chargement(tmp_path) -> None:
     relu = load_preparation(chemin)
     assert relu.converted_from_version is None
     assert relu.cordons[0].points_mm[0] == pytest.approx((5.0, 35.0), abs=0.01)
+
+
+# --------------------------------------------------- nom de produit par defaut (lot C3)
+
+def _poser_fichier(tmp_path, nom_fichier: str) -> None:
+    """Crée un fichier de préparation vide, juste pour occuper un nom."""
+    (tmp_path / nom_fichier).write_text("{}", encoding="utf-8")
+
+
+@pytest.mark.parametrize("chemin, attendu", [
+    ("preparations/BOITIER_3.json", "BOITIER_3"),
+    ("preparations/BOITIER_3.autosave.json", "BOITIER_3"),
+    ("preparations/REF 12_34.json", "REF 12_34"),
+])
+def test_nom_de_produit_deduit_du_chemin(chemin: str, attendu: str) -> None:
+    """Le suffixe d'autosave doit être retiré AVANT l'extension.
+
+    Sans cette précaution, `os.path.splitext` ne retirerait que le `.json` final et
+    laisserait un `.autosave` parasite dans le nom du produit — qui serait alors
+    présenté tel quel à l'opérateur, et compté comme un produit distinct.
+    """
+    assert product_name_from_path(chemin) == attendu
+
+
+def test_premier_nom_par_defaut_sur_dossier_vide(tmp_path) -> None:
+    """Sur un dépôt fraîchement cloné, le premier plateau doit s'appeler BOITIER_1.
+
+    C'est tout l'intérêt de la décision du 2026-08-01 : aucun compteur à initialiser
+    nulle part, le dossier des préparations porte à lui seul l'information.
+    """
+    assert next_default_product_name(str(tmp_path)) == "BOITIER_1"
+
+
+def test_nom_par_defaut_saute_les_numeros_pris(tmp_path) -> None:
+    """Les numéros déjà utilisés ne doivent pas être réattribués."""
+    _poser_fichier(tmp_path, "BOITIER_1.json")
+    _poser_fichier(tmp_path, "BOITIER_2.json")
+
+    assert next_default_product_name(str(tmp_path)) == "BOITIER_3"
+
+
+def test_nom_par_defaut_remplit_le_premier_trou(tmp_path) -> None:
+    """Après suppression d'un plateau, son numéro redevient libre et est réutilisé.
+
+    Choix assumé : la numérotation sert à distinguer des plateaux de travail, pas à
+    tracer un historique. Un compteur toujours croissant obligerait à conserver un état
+    en dehors du dossier — exactement ce qu'on voulait éviter.
+    """
+    _poser_fichier(tmp_path, "BOITIER_1.json")
+    _poser_fichier(tmp_path, "BOITIER_3.json")
+
+    assert next_default_product_name(str(tmp_path)) == "BOITIER_2"
+
+
+def test_nom_par_defaut_compte_les_travaux_interrompus(tmp_path) -> None:
+    """Un BOITIER_1 interrompu garde son numéro : le réattribuer ferait travailler
+    deux plateaux différents sous le même nom, et le second écraserait le premier."""
+    _poser_fichier(tmp_path, "BOITIER_1" + AUTOSAVE_SUFFIX)
+
+    assert next_default_product_name(str(tmp_path)) == "BOITIER_2"
+
+
+def test_nom_par_defaut_ignore_les_references_libres(tmp_path) -> None:
+    """Une référence saisie par l'opérateur ne consomme aucun numéro automatique."""
+    _poser_fichier(tmp_path, "Calculateur ABC.json")
+    _poser_fichier(tmp_path, "BOITIER_XYZ.json")   # ne finit pas par un entier
+
+    assert next_default_product_name(str(tmp_path)) == "BOITIER_1"
 
 
 # ------------------------------------------------------------------ noms de fichiers

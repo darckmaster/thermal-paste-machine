@@ -826,7 +826,27 @@ class VisionProcessor:
         src_pts = np.array(
             [detected_markers[i].mean(axis=0) for i in ids_disponibles], dtype=np.float32
         )
-        dst_pts = np.array([corners[i] for i in ids_disponibles], dtype=np.float32)
+
+        # ⚠️ POINT CRITIQUE — le miroir, corrigé le 2026-08-02 après un défaut constaté
+        # sur la machine (aucune zone de dépose n'était plus détectée).
+        #
+        # Une similitude (rotation + échelle uniforme + translation) a un déterminant
+        # POSITIF : elle ne sait pas produire de miroir. Or le repère du plateau, depuis
+        # le lot C2bis, a son Y dirigé vers le HAUT alors que l'image a le sien vers le
+        # BAS : passer de l'un à l'autre EST un retournement. estimateAffinePartial2D ne
+        # peut donc pas l'exprimer — appelée directement sur les positions mm, elle rend
+        # une matrice où y_mm croît vers le bas, c'est-à-dire l'ANCIENNE convention.
+        # Toute la logique de signe des zones s'en trouvait inversée, et le filtre des
+        # paires plausibles écartait les vraies zones comme fantômes.
+        #
+        # La parade : ajuster la similitude vers un repère intermédiaire retourné en Y —
+        # donc de même « main » que l'image, le seul qu'elle sache atteindre — puis
+        # composer avec le retournement pour revenir au repère du plateau. La partie
+        # rotation + échelle reste ajustée exactement comme avant.
+        dst_pts = np.array(
+            [(corners[i][0], WORK_AREA_HEIGHT_MM - corners[i][1]) for i in ids_disponibles],
+            dtype=np.float32,
+        )
 
         # estimateAffinePartial2D résout exactement avec 2 points (4 inconnues : rotation,
         # échelle, tx, ty ↔ 4 équations) ; avec 3 points, ajuste au mieux (moindres carrés)
@@ -840,7 +860,18 @@ class VisionProcessor:
         # Compléter en 3×3 (ligne [0, 0, 1]) pour rester compatible avec
         # cv2.perspectiveTransform (pixel_to_mm) et cv2.warpPerspective (warp_image),
         # qui acceptent une matrice purement affine sans terme de perspective
-        return np.vstack([matrix_2x3, [0.0, 0.0, 1.0]])
+        vers_repere_retourne = np.vstack([matrix_2x3, [0.0, 0.0, 1.0]])
+
+        # Retournement final : y_plateau = WORK_AREA_HEIGHT_MM − y_intermédiaire.
+        # C'est ce facteur, de déterminant −1, qui apporte le miroir que la similitude
+        # ne pouvait pas fournir.
+        retournement_y = np.array([
+            [1.0,  0.0, 0.0],
+            [0.0, -1.0, WORK_AREA_HEIGHT_MM],
+            [0.0,  0.0, 1.0],
+        ], dtype=np.float64)
+
+        return retournement_y @ vers_repere_retourne
 
     def compute_plateau_reference(self, detected_markers: dict) -> "PlateauReference":
         """Établit le repère du plateau à partir des marqueurs vus, et dit COMMENT.

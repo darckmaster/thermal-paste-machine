@@ -67,6 +67,10 @@ class ScreenCapture(QWidget):
     # Signal émis quand l'opérateur veut créer un plateau (nouveau processus, lot C)
     plateau_requested = pyqtSignal()
 
+    # Demande de rechargement d'un plateau déjà enregistré. C'est MainApp qui ouvre le
+    # sélecteur et applique le chargement : lui seul possède les écrans à alimenter.
+    preparation_load_requested = pyqtSignal()
+
     # Signaux de changement de matériel. L'écran ne remplace PAS lui-même la caméra ou
     # le port : les objets Camera et Machine appartiennent à MainApp (qui les partage
     # avec les autres écrans), donc seul MainApp peut les échanger proprement. L'écran
@@ -203,6 +207,15 @@ class ScreenCapture(QWidget):
         self._btn_plateau.setProperty("role", "secondary")
         self._btn_plateau.clicked.connect(self.plateau_requested)
         homing_layout.addWidget(self._btn_plateau)
+
+        # Rejouer un plateau déjà enregistré, sans rien retracer — point 7 du processus
+        # cible. Bouton distinct de « Créer un plateau » : créer et recharger sont deux
+        # intentions différentes, et les confondre dans un même bouton ferait risquer
+        # d'écraser un plateau existant en croyant en ouvrir un nouveau.
+        self._btn_charger = QPushButton("Charger un plateau")
+        self._btn_charger.setProperty("role", "secondary")
+        self._btn_charger.clicked.connect(self.preparation_load_requested)
+        homing_layout.addWidget(self._btn_charger)
 
         layout.addLayout(homing_layout)
 

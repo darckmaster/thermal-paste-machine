@@ -2,8 +2,15 @@
 # Gère la navigation entre les 4 écrans via un QStackedWidget
 
 import numpy as np
-from PyQt5.QtWidgets import QMainWindow, QStackedWidget
+from PyQt5.QtWidgets import QMainWindow, QStackedWidget, QMessageBox, QDialog
 from PyQt5.QtCore import Qt
+
+from gui.dialogs import PreparationPickerDialog
+from modules.preparation import (
+    list_autosaves,
+    load_preparation,
+    product_name_from_path,
+)
 
 from modules.config import (
     TOUCHSCREEN_WIDTH, TOUCHSCREEN_HEIGHT,
@@ -155,6 +162,11 @@ class MainApp(QMainWindow):
         self._points_mm: list = []    # tracé de l'opérateur (coordonnées ArUco mm)
         self._quantity: float = 0.0   # quantité de pâte configurée (mm E / mm tracé)
 
+        # Travail interrompu que l'opérateur a choisi de reprendre au démarrage. Gardé
+        # ici jusqu'à ce qu'un plateau soit re-photographié : les cordons repris ne
+        # peuvent être replacés qu'une fois les zones redétectées.
+        self._preparation_reprise = None
+
         # Connecter les signaux de chaque écran à la méthode de navigation correspondante
         # Signal émis par l'écran → slot qui bascule vers l'écran suivant
         self._screen_capture.photo_validated.connect(self._go_to_zone)
@@ -164,6 +176,7 @@ class MainApp(QMainWindow):
         self._screen_capture.calibration_requested.connect(self._go_to_calibration)
         self._screen_calibration.back_requested.connect(self._go_from_calibration_to_capture)
         self._screen_capture.plateau_requested.connect(self._go_to_plateau)
+        self._screen_capture.preparation_load_requested.connect(self._go_to_load_preparation)
         self._screen_plateau.back_requested.connect(self._go_from_plateau_to_capture)
         self._screen_plateau.plateau_validated.connect(self._go_to_cordons)
         self._screen_cordons.back_requested.connect(self._go_from_cordons_to_plateau)
@@ -245,16 +258,127 @@ class MainApp(QMainWindow):
         self._go_to_capture()
 
     def _go_to_cordons(self, donnees: object) -> None:
-        """Basculer vers le tracé des cordons, une fois le plateau validé."""
+        """Basculer vers le tracé des cordons, une fois le plateau validé.
+
+        Si un travail interrompu a été repris au démarrage, c'est ICI qu'il rejoint le
+        plateau : les cordons repris ont besoin des zones de la photo qu'on vient de
+        prendre pour être replacés. La reprise est consommée au passage — la rejouer
+        écraserait le travail fait depuis.
+        """
         # Le tracé travaille sur la photo figée : plus besoin de la caméra
         self._screen_plateau.stop_camera()
-        self._screen_cordons.set_plateau(donnees)
+        self._screen_cordons.set_plateau(donnees, reprise=self._preparation_reprise)
+        self._preparation_reprise = None
         self._stack.setCurrentIndex(6)
 
     def _go_from_cordons_to_plateau(self) -> None:
         """Revenir à la création de plateau — typiquement pour reprendre une photo."""
         self._screen_plateau.start_camera()
         self._stack.setCurrentIndex(5)
+
+    # ------------------------------------------------------------------ reprise au démarrage
+
+    def propose_resume(self, directory: str = None) -> bool:
+        """Propose de reprendre un travail interrompu, s'il en existe un.
+
+        Appelée par main.py **après** l'affichage de la fenêtre, et non depuis
+        `__init__` : une boîte de dialogue modale pendant la construction bloquerait le
+        démarrage avant que quoi que ce soit ne soit visible, et l'opérateur ferait face
+        à un dialogue flottant sans contexte.
+
+        Un fichier `.autosave.json` ne signale qu'une chose : un travail interrompu par
+        un plantage ou une coupure. L'enregistrement définitif le supprime, donc sa
+        seule présence est déjà l'information.
+
+        Retourne True si une reprise a été acceptée.
+        """
+        autosaves = list_autosaves(directory)
+        if not autosaves:
+            return False
+
+        # Le plus récemment modifié en premier (list_autosaves trie ainsi) : c'est le
+        # travail que l'opérateur faisait quand l'application s'est arrêtée
+        chemin = autosaves[0]
+        nom = product_name_from_path(chemin)
+
+        reponse = QMessageBox.question(
+            self,
+            "Reprendre un travail interrompu ?",
+            f"Un travail non enregistré a été trouvé pour « {nom} ».\n\n"
+            f"Le reprendre ? Les cordons déjà tracés seront restaurés — il faudra "
+            f"reprendre une photo du plateau, ce qui ne fait perdre aucun tracé.\n\n"
+            f"« Non » conserve le fichier : la question sera reposée au prochain "
+            f"démarrage.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reponse != QMessageBox.Yes:
+            return False
+
+        return self._charger_preparation(chemin, titre_erreur="Reprise impossible")
+
+    def _go_to_load_preparation(self) -> None:
+        """Ouvre le sélecteur de plateaux enregistrés (bouton « Charger un plateau »).
+
+        Distinct de `propose_resume()`, qui ne regarde que les travaux **interrompus**
+        (`*.autosave.json`). Ici on rejoue une préparation **validée** — c'est le point 7
+        du processus cible : les zones étant vissées à demeure, un plateau enregistré se
+        rejoue autant de fois que nécessaire, sans rien retracer.
+        """
+        dialogue = PreparationPickerDialog(parent=self)
+        if dialogue.exec_() != QDialog.Accepted:
+            return
+
+        chemin = dialogue.selected_path
+        if chemin is None:
+            return   # liste vide : le bouton « Charger » était déjà inactif
+
+        self._charger_preparation(chemin, titre_erreur="Chargement impossible")
+
+    def _charger_preparation(self, chemin: str, titre_erreur: str) -> bool:
+        """Relit un fichier de préparation et amène l'opérateur à la prise de photo.
+
+        Tronc commun à la reprise après plantage et au rechargement volontaire : les
+        deux ne diffèrent que par la façon dont le fichier a été choisi. Factorisé pour
+        que le comportement — pré-remplissage du nom, navigation, gestion d'erreur —
+        ne puisse pas diverger entre les deux chemins.
+
+        La préparation est mise de côté dans `_preparation_reprise` : elle ne rejoindra
+        le plateau qu'une fois les zones redétectées, dans `_go_to_cordons()`.
+        """
+        try:
+            self._preparation_reprise = load_preparation(chemin)
+        except (OSError, ValueError, KeyError) as e:
+            # Fichier tronqué, format inconnu, clé manquante : le dire et repartir
+            # normalement plutôt que d'empêcher l'application de démarrer
+            QMessageBox.warning(
+                self, titre_erreur,
+                f"Le fichier n'a pas pu être relu :\n{e}\n\n"
+                f"L'application continue normalement."
+            )
+            self._preparation_reprise = None
+            return False
+
+        # Le nom du produit est déjà connu : le pré-remplir évite de le ressaisir, et
+        # surtout évite qu'une faute de frappe crée un second fichier pour le même
+        # plateau
+        self._screen_plateau.set_product_name(self._preparation_reprise.product_name)
+
+        # Aller directement à la capture du plateau : c'est la seule chose qui manque.
+        # Les zones enregistrées sont des positions absolues, périmées dès que la caméra
+        # bouge ; les cordons, eux, sont relatifs à la zone et survivent à la nouvelle photo.
+        self._screen_capture.stop_camera()
+        self._screen_plateau.start_camera()
+
+        # La photo se déclenche seule dès que le plateau est reconnu. Sur un plateau
+        # rechargé, le cadrage est toujours le même — caméra fixe, zones vissées à
+        # demeure — donc demander un appui sur « Capturer » ne fait prendre aucune
+        # décision à l'opérateur. Si le plateau n'est pas reconnu dans le délai imparti,
+        # l'écran rend la main avec un message et le bouton reste disponible.
+        self._screen_plateau.armer_capture_automatique()
+
+        self._stack.setCurrentIndex(5)
+        return True
 
     # ------------------------------------------------------------------ choix du matériel
 

@@ -20,6 +20,14 @@ from gui.screen_cordons import (
     _distance_point_segment,
     _image_vers_label,
 )
+from modules.preparation import (
+    AUTOSAVE_SUFFIX,
+    Cordon,
+    Preparation,
+    Settings,
+    load_preparation,
+    save_preparation,
+)
 from modules.vision import DepositZone, VisionProcessor
 from tests.test_vision import _marqueurs_synthetiques
 
@@ -431,6 +439,282 @@ def test_signal_emis_a_chaque_modification(ecran, qtbot) -> None:
 
     with qtbot.waitSignal(ecran.cordons_modified, timeout=1000):
         _clic(qtbot, ecran._editeur, 10.0, 10.0)
+
+
+# ------------------------------------------------------------------ persistance (lot C3)
+
+@pytest.fixture
+def ecran_persistant(qtbot, tmp_path) -> ScreenCordons:
+    """Un écran dont les enregistrements vont dans un dossier temporaire.
+
+    Jamais le dossier `preparations/` du projet : un test ne doit pas pouvoir écraser
+    un plateau réel de l'étudiant.
+    """
+    widget = ScreenCordons(directory=str(tmp_path))
+    qtbot.addWidget(widget)
+    widget.resize(800, 480)
+    return widget
+
+
+def _tracer_un_cordon(qtbot, ecran, zone, y_mm: float = 10.0) -> None:
+    """Ouvre la zone et y trace un cordon complet (deux points, puis clôture)."""
+    ecran._ouvrir_zone(zone)
+    _clic(qtbot, ecran._editeur, 10.0, y_mm)
+    _double_clic(qtbot, ecran._editeur, 40.0, y_mm)
+
+
+def test_autosave_ecrit_le_travail_en_cours(ecran_persistant, qtbot, tmp_path) -> None:
+    """La sauvegarde automatique doit écrire un fichier d'autosave exploitable."""
+    zone = _zone()
+    ecran_persistant.set_plateau(_donnees_plateau([zone]))
+    _tracer_un_cordon(qtbot, ecran_persistant, zone)
+
+    ecran_persistant._sauvegarde_automatique()
+
+    chemin = tmp_path / ("Produit test" + AUTOSAVE_SUFFIX)
+    assert chemin.exists(), "l'autosave doit être écrit après une modification"
+    assert len(load_preparation(str(chemin)).cordons) == 1
+
+
+def test_autosave_exclut_le_trace_en_cours(ecran_persistant, qtbot, tmp_path) -> None:
+    """Un cordon non terminé ne doit PAS partir dans la sauvegarde automatique.
+
+    Rechargé tel quel après une reprise, il donnerait un tracé arbitrairement coupé —
+    que l'opérateur croirait volontaire, puisque rien ne le distinguerait d'un cordon
+    qu'il aurait vraiment voulu court.
+    """
+    zone = _zone()
+    ecran_persistant.set_plateau(_donnees_plateau([zone]))
+    _tracer_un_cordon(qtbot, ecran_persistant, zone)
+
+    # Démarrer un second cordon SANS le clore
+    _clic(qtbot, ecran_persistant._editeur, 10.0, 30.0)
+    _clic(qtbot, ecran_persistant._editeur, 40.0, 30.0)
+    assert ecran_persistant._editeur.a_un_trace_en_cours, "prérequis du test"
+
+    ecran_persistant._sauvegarde_automatique()
+
+    chemin = tmp_path / ("Produit test" + AUTOSAVE_SUFFIX)
+    assert len(load_preparation(str(chemin)).cordons) == 1, \
+        "seul le cordon TERMINÉ doit être enregistré"
+
+
+def test_autosave_n_ecrit_pas_sans_modification(ecran_persistant, qtbot, tmp_path) -> None:
+    """Sans changement, le battement du timer ne doit provoquer AUCUNE écriture.
+
+    Le timer bat toutes les 5 s tant que l'écran est ouvert. Écrire à chaque battement
+    réécrirait le fichier indéfiniment, y compris pendant qu'on réfléchit sans rien
+    toucher — de l'usure gratuite sur la carte SD du Raspberry Pi, qui la supporte mal.
+    """
+    zone = _zone()
+    ecran_persistant.set_plateau(_donnees_plateau([zone]))
+    _tracer_un_cordon(qtbot, ecran_persistant, zone)
+    ecran_persistant._sauvegarde_automatique()
+
+    chemin = tmp_path / ("Produit test" + AUTOSAVE_SUFFIX)
+    chemin.unlink()   # si une écriture a lieu, le fichier réapparaîtra
+
+    ecran_persistant._sauvegarde_automatique()
+
+    assert not chemin.exists(), (
+        "une seconde sauvegarde sans modification a réécrit le fichier"
+    )
+
+
+def test_une_modification_reamorce_l_autosave(ecran_persistant, qtbot, tmp_path) -> None:
+    """Après une nouvelle modification, la sauvegarde doit repartir.
+
+    Le pendant du test précédent : un drapeau qui ne se relèverait jamais rendrait
+    l'autosave muet pour le reste de la session.
+    """
+    zone = _zone()
+    ecran_persistant.set_plateau(_donnees_plateau([zone]))
+    _tracer_un_cordon(qtbot, ecran_persistant, zone)
+    ecran_persistant._sauvegarde_automatique()
+
+    chemin = tmp_path / ("Produit test" + AUTOSAVE_SUFFIX)
+    chemin.unlink()
+
+    _tracer_un_cordon(qtbot, ecran_persistant, zone, y_mm=30.0)
+    ecran_persistant._sauvegarde_automatique()
+
+    assert chemin.exists()
+    assert len(load_preparation(str(chemin)).cordons) == 2
+
+
+def test_enregistrement_definitif_supprime_l_autosave(
+    ecran_persistant, qtbot, tmp_path
+) -> None:
+    """Le travail validé n'a plus besoin de filet : l'autosave doit disparaître.
+
+    Le laisser ferait proposer une reprise inutile au prochain démarrage — et
+    l'opérateur n'aurait aucun moyen de savoir que son travail est bel et bien acquis.
+    """
+    zone = _zone()
+    ecran_persistant.set_plateau(_donnees_plateau([zone]))
+    _tracer_un_cordon(qtbot, ecran_persistant, zone)
+    ecran_persistant._sauvegarde_automatique()
+    assert (tmp_path / ("Produit test" + AUTOSAVE_SUFFIX)).exists()
+
+    # Revenir à la vue d'ensemble, comme le fait l'opérateur : c'est là que se trouve
+    # le bouton d'enregistrement, et c'est ce retour qui le rend actif
+    ecran_persistant._valider_trace()
+    assert ecran_persistant._btn_enregistrer.isEnabled(), \
+        "le bouton doit s'activer dès qu'un cordon existe"
+
+    with qtbot.waitSignal(ecran_persistant.preparation_saved, timeout=1000):
+        ecran_persistant._btn_enregistrer.click()
+
+    assert (tmp_path / "Produit test.json").exists(), "le fichier définitif doit exister"
+    assert not (tmp_path / ("Produit test" + AUTOSAVE_SUFFIX)).exists(), \
+        "l'autosave doit avoir été supprimé"
+
+
+def test_enregistrer_inactif_sans_cordon(ecran_persistant) -> None:
+    """Un plateau sans cordon ne permet de rien déposer : le bouton reste inactif."""
+    ecran_persistant.set_plateau(_donnees_plateau())
+
+    assert not ecran_persistant._btn_enregistrer.isEnabled()
+
+
+def test_autosave_arrete_quand_l_ecran_disparait(ecran_persistant) -> None:
+    """Le timer ne doit pas continuer à battre une fois l'écran quitté."""
+    ecran_persistant.set_plateau(_donnees_plateau())
+    assert ecran_persistant._timer_autosave.isActive()
+
+    ecran_persistant.stop_autosave()
+
+    assert not ecran_persistant._timer_autosave.isActive()
+
+
+def test_reenregistrer_le_meme_travail_ne_demande_rien(
+    ecran_persistant, qtbot, tmp_path, monkeypatch
+) -> None:
+    """Recharger un plateau puis le réenregistrer est le déroulé NORMAL de la
+    réutilisation : aucune confirmation ne doit être demandée.
+
+    Une question posée à chaque enregistrement deviendrait un réflexe qu'on valide sans
+    lire — donc une protection qui ne protège plus.
+    """
+    zone = _zone()
+    reprise = Preparation("Produit test", cordons=[Cordon([(5.0, 5.0), (55.0, 5.0)])])
+    # Le fichier existe déjà sur disque, écrit par ce même travail
+    save_preparation(reprise, directory=str(tmp_path))
+
+    ecran_persistant.set_plateau(_donnees_plateau([zone]), reprise=reprise)
+
+    # Si une boîte de dialogue s'ouvrait, ce remplacement la ferait échouer bruyamment
+    monkeypatch.setattr(
+        "gui.screen_cordons.QMessageBox.question",
+        lambda *a, **k: pytest.fail("aucune confirmation ne devait être demandée"),
+    )
+
+    assert ecran_persistant._confirmer_ecrasement() is True
+
+
+def test_ecraser_un_autre_plateau_demande_confirmation(
+    ecran_persistant, qtbot, tmp_path, monkeypatch
+) -> None:
+    """Réutiliser le nom d'un plateau existant pour un AUTRE travail doit alerter.
+
+    Le nom du produit sert de nom de fichier, et le dialogue de création propose la
+    liste des produits déjà enregistrés : reprendre un nom par mégarde est un geste
+    facile, et l'écriture étant un simple remplacement, le travail précédent
+    disparaîtrait sans un mot.
+    """
+    from PyQt5.QtWidgets import QMessageBox
+
+    # Un plateau homonyme, mais issu d'un AUTRE travail (autre date de création)
+    autre = Preparation(
+        "Produit test",
+        cordons=[Cordon([(1.0, 1.0), (2.0, 2.0)])],
+        created_at="2020-01-01T00:00:00",
+    )
+    save_preparation(autre, directory=str(tmp_path))
+
+    ecran_persistant.set_plateau(_donnees_plateau([_zone()]))
+
+    questions = []
+    monkeypatch.setattr(
+        "gui.screen_cordons.QMessageBox.question",
+        lambda *a, **k: questions.append(a) or QMessageBox.No,
+    )
+
+    assert ecran_persistant._confirmer_ecrasement() is False, \
+        "répondre Non doit annuler l'enregistrement"
+    assert questions, "la confirmation devait être demandée"
+
+
+# ------------------------------------------------------------------ reprise (lot C3)
+
+def test_reprise_restaure_les_cordons(ecran_persistant, qtbot) -> None:
+    """Reprendre un travail interrompu doit remettre les cordons, sans nouvelle photo.
+
+    C'est ce que permet le choix de mémoriser les cordons en mm RELATIFS à la zone :
+    une photo différente, voire une caméra déplacée, ne les invalide pas.
+    """
+    zone = _zone()
+    reprise = Preparation(
+        product_name="Produit test",
+        cordons=[Cordon([(5.0, 5.0), (55.0, 5.0)])],
+        reference_zone_id=zone.id_top_left,
+    )
+
+    ecran_persistant.set_plateau(_donnees_plateau([zone]), reprise=reprise)
+
+    assert len(ecran_persistant.cordons) == 1
+    assert ecran_persistant.cordons[0][0] == pytest.approx((5.0, 5.0), abs=0.01)
+
+
+def test_reprise_restaure_la_zone_de_reference(ecran_persistant, qtbot) -> None:
+    """La zone de référence doit être celle du fichier, pas la première rouverte.
+
+    Les cordons sont exprimés dans SON repère. Si une autre zone devenait la référence,
+    ils seraient réinterprétés dans un repère qui n'est pas le leur et se retrouveraient
+    décalés — sans que rien ne le signale à l'opérateur.
+    """
+    premiere, seconde = _zone(4, 40.0, 60.0), _zone(6, 120.0, 60.0)
+    reprise = Preparation(
+        product_name="Produit test",
+        cordons=[Cordon([(5.0, 5.0), (55.0, 5.0)])],
+        reference_zone_id=6,          # la SECONDE zone, pas la première
+    )
+
+    ecran_persistant.set_plateau(_donnees_plateau([premiere, seconde]), reprise=reprise)
+
+    assert ecran_persistant.zone_reference is seconde
+    # Le bouton de retour à l'édition doit être actif d'emblée : la référence est connue
+    assert ecran_persistant._btn_editer.isEnabled()
+
+
+def test_reprise_restaure_les_parametres(ecran_persistant) -> None:
+    """Les réglages font partie du travail : ils doivent revenir avec lui."""
+    reprise = Preparation(
+        product_name="Produit test",
+        settings=Settings(travel_speed_mm_min=1234.0, extrusion_speed_mm_min=56.0),
+    )
+
+    ecran_persistant.set_plateau(_donnees_plateau(), reprise=reprise)
+
+    assert ecran_persistant.preparation.settings.travel_speed_mm_min == 1234.0
+    assert ecran_persistant.preparation.settings.extrusion_speed_mm_min == 56.0
+
+
+def test_reprise_n_est_pas_une_modification(ecran_persistant, tmp_path) -> None:
+    """Rouvrir un travail sans y toucher ne doit rien réécrire.
+
+    L'état à l'écran est exactement celui du fichier : marquer « modifié » ferait
+    réécrire l'autosave pour rien, et brouillerait la date de dernière modification.
+    """
+    reprise = Preparation(
+        product_name="Produit test",
+        cordons=[Cordon([(5.0, 5.0), (55.0, 5.0)])],
+    )
+    ecran_persistant.set_plateau(_donnees_plateau(), reprise=reprise)
+
+    ecran_persistant._sauvegarde_automatique()
+
+    assert not (tmp_path / ("Produit test" + AUTOSAVE_SUFFIX)).exists()
 
 
 def test_clic_sur_une_zone_du_plateau_l_ouvre(ecran, qtbot) -> None:

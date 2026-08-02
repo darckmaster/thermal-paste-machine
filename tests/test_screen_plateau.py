@@ -241,6 +241,96 @@ def test_repli_deux_marqueurs_avertit_de_la_precision(ecran: ScreenPlateau) -> N
     assert ecran._layout is not None
 
 
+# ------------------------------------------------------- capture automatique (2026-08-02)
+
+class _CameraFactice:
+    """Une caméra qui rend toujours la même image de synthèse."""
+
+    def __init__(self, image: np.ndarray) -> None:
+        self._image = image
+        self.appels = 0
+
+    def capture(self) -> np.ndarray:
+        self.appels += 1
+        return self._image.copy()
+
+
+def test_capture_automatique_declenche_des_que_le_plateau_est_vu(
+    ecran: ScreenPlateau,
+) -> None:
+    """Au rechargement d'un plateau, la photo doit se prendre seule.
+
+    La caméra est fixe sur le bâti et les zones sont vissées à demeure : le cadrage est
+    toujours le même, donc l'appui sur « Capturer » ne fait prendre aucune décision à
+    l'opérateur — c'est un geste de plus sur un écran tactile, rien d'autre.
+    """
+    ecran.set_camera(_CameraFactice(_plateau_synthetique(_deux_zones_saines())))
+    ecran.armer_capture_automatique()
+
+    # Une image d'aperçu suffit : les marqueurs y sont visibles dès la première
+    ecran._update_frame()
+
+    assert ecran._layout is not None, "l'analyse devait être déclenchée sans action"
+    assert len(ecran._layout.valid_zones) == 2
+    assert ecran._btn_continue.isEnabled()
+
+
+def test_capture_automatique_attend_de_voir_le_plateau(ecran: ScreenPlateau) -> None:
+    """Tant que le plateau n'est pas reconnaissable, on n'appuie pas sur la détente.
+
+    Une temporisation aveugle déclencherait sur la première image venue — main encore
+    dans le champ, exposition pas stabilisée — et produirait un diagnostic raté qu'il
+    faudrait de toute façon reprendre.
+    """
+    # Un seul coin de plateau : en dessous du minimum de 2 exigé par l'homographie
+    image = _plateau_synthetique(_deux_zones_saines(), coins_plateau={3: (80, 80)})
+    ecran.set_camera(_CameraFactice(image))
+    ecran.armer_capture_automatique()
+
+    ecran._update_frame()
+
+    assert ecran._layout is None, "aucune analyse ne devait être lancée"
+    assert ecran._capture_auto_armee, "la capture doit rester armée, en attente"
+    assert "recherche du plateau" in ecran._status_label.text()
+
+
+def test_capture_automatique_rend_la_main_apres_le_garde_temps(
+    ecran: ScreenPlateau,
+) -> None:
+    """Passé le délai, l'opérateur reprend la main avec un message qui dit quoi faire.
+
+    Mieux vaut ça qu'un écran qui attend sans fin, où l'on finit par se demander si
+    l'application est bloquée.
+    """
+    # Aucun marqueur de plateau visible : la capture automatique ne peut pas aboutir
+    ecran.set_camera(_CameraFactice(_plateau_synthetique(zones={}, coins_plateau={})))
+    # Même enchaînement que MainApp au rechargement : on démarre l'aperçu, PUIS on arme
+    ecran.start_camera()
+    ecran.armer_capture_automatique()
+
+    ecran._abandonner_capture_automatique()   # simule l'expiration du garde-temps
+
+    assert not ecran._capture_auto_armee
+    assert ecran._btn_capture.isEnabled(), "le bouton manuel doit rester disponible"
+    assert "Capturer" in ecran._status_label.text()
+    ecran.stop_camera()   # ne pas laisser le timer d'aperçu battre après le test
+
+
+def test_reprendre_desarme_la_capture_automatique(ecran: ScreenPlateau) -> None:
+    """Après un « Reprendre », c'est l'opérateur qui décide du moment.
+
+    Il vient de constater un défaut de montage : redéclencher tout seul le renverrait
+    au même diagnostic avant qu'il ait eu le temps de rectifier quoi que ce soit.
+    """
+    ecran.set_camera(_CameraFactice(_plateau_synthetique(_deux_zones_saines())))
+    ecran.armer_capture_automatique()
+    assert ecran._capture_auto_armee
+
+    ecran.start_camera()   # ce que fait le bouton « Reprendre »
+
+    assert not ecran._capture_auto_armee
+
+
 # ------------------------------------------------------------------ signal de sortie
 
 def test_continuer_emet_le_plateau_valide(ecran: ScreenPlateau, qtbot) -> None:

@@ -11,12 +11,12 @@
 import cv2
 import numpy as np
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
-    QInputDialog, QLineEdit,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QDialog,
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
 
+from gui.dialogs import ProductNameDialog
 from modules.config import ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM
 from modules.vision import (
     VisionProcessor,
@@ -51,6 +51,12 @@ _LIBELLES_IMAGE = {
 # nécessaire : sur l'écran tactile 800×480, l'image ne dispose que d'environ 310 px de
 # hauteur, qu'un message trop long réduirait encore.
 _MAX_DEFAUTS_DETAILLES = 2
+
+# Garde-temps de la capture automatique, en millisecondes. Au-delà, la main est rendue à
+# l'opérateur : mieux vaut un message qui dit quoi faire qu'un écran qui attend sans fin.
+# 5 s laissent largement le temps à la caméra de délivrer une image exploitable, tout en
+# restant en deçà du seuil où l'on se demande si l'application est bloquée.
+CAPTURE_AUTO_TIMEOUT_MS = 5000
 
 # Libellés accentués pour la barre de statut et les messages Qt
 _LIBELLES_TEXTE = {
@@ -99,6 +105,13 @@ class ScreenPlateau(QWidget):
         # Timer d'aperçu — 10 fps, suffisant pour cadrer sans charger le RPi
         self._timer = QTimer()
         self._timer.timeout.connect(self._update_frame)
+
+        # Capture automatique (rechargement d'un plateau) : armée, elle déclenche dès
+        # que les marqueurs du plateau sont vus. Voir armer_capture_automatique().
+        self._capture_auto_armee = False
+        self._timer_capture_auto = QTimer()
+        self._timer_capture_auto.setSingleShot(True)
+        self._timer_capture_auto.timeout.connect(self._abandonner_capture_automatique)
 
         self._setup_ui()
 
@@ -163,8 +176,8 @@ class ScreenPlateau(QWidget):
 
     # ------------------------------------------------------------------ nom du produit
 
-    def ask_product_name(self, parent=None) -> bool:
-        """Demande le nom du produit. Retourne False si l'opérateur annule.
+    def ask_product_name(self, parent=None, directory: str = None) -> bool:
+        """Demande la référence du produit. Retourne False si l'opérateur annule.
 
         Le nom sert à deux choses : il nomme le fichier de préparation, et il reste
         affiché en permanence dans le bandeau.
@@ -172,27 +185,20 @@ class ScreenPlateau(QWidget):
         Méthode publique et non appelée depuis __init__ : une boîte de dialogue modale
         au moment de la construction de l'écran bloquerait le démarrage de
         l'application, puisque tous les écrans sont créés d'un coup par MainApp.
+
+        Depuis le lot C3, la saisie passe par ProductNameDialog, qui offre trois voies
+        (saisie libre, choix dans la liste des produits existants, ou champ vide →
+        `BOITIER_X`). Un champ laissé vide n'est donc plus un refus : c'est le repli
+        automatique, et le dialogue rend un nom dans tous les cas.
         """
-        # QInputDialog.getText() se dimensionne sur son contenu, ce qui donne une boîte
-        # minuscule au titre tronqué — acceptable à la souris, inutilisable au doigt sur
-        # l'écran 7 pouces. On construit donc le dialogue pour pouvoir l'agrandir.
-        dialogue = QInputDialog(parent or self)
-        dialogue.setWindowTitle("Nouveau plateau")
-        dialogue.setLabelText("Référence du produit :")
-        dialogue.setTextValue(self._product_name)
-        dialogue.setInputMode(QInputDialog.TextInput)
-        dialogue.setMinimumWidth(480)
-        # Les boutons héritent de la feuille de style globale (hauteur mini 55 px), ce
-        # qui suffit à en faire des cibles tactiles correctes
+        dialogue = ProductNameDialog(
+            nom_initial=self._product_name, directory=directory, parent=parent or self
+        )
 
-        if dialogue.exec_() != QInputDialog.Accepted:
+        if dialogue.exec_() != QDialog.Accepted:
             return False
 
-        nom = dialogue.textValue().strip()
-        if not nom:
-            return False
-
-        self.set_product_name(nom)
+        self.set_product_name(dialogue.product_name)
         return True
 
     def set_product_name(self, nom: str) -> None:
@@ -217,6 +223,11 @@ class ScreenPlateau(QWidget):
         self._reference = None
         self._btn_retake.setEnabled(False)
         self._btn_continue.setEnabled(False)
+        # Toute reprise d'aperçu désarme la capture automatique : si on repasse par ici,
+        # c'est soit un nouveau plateau, soit un « Reprendre » après un échec — et dans
+        # les deux cas l'opérateur reprend la main.
+        self._capture_auto_armee = False
+        self._timer_capture_auto.stop()
 
         if self._camera is None:
             self._image_label.setText("Camera non disponible\n\nVerifier le branchement USB")
@@ -230,9 +241,43 @@ class ScreenPlateau(QWidget):
         )
         self._timer.start(100)
 
+    def armer_capture_automatique(self) -> None:
+        """Déclenche la capture dès que le plateau est reconnaissable, sans action.
+
+        Utilisé au rechargement d'un plateau enregistré : la caméra est fixe sur le
+        bâti et les zones sont vissées à demeure, donc le cadrage est toujours le même.
+        Demander un appui sur « Capturer » n'apporte alors aucune décision à
+        l'opérateur — c'est un geste de plus sur un écran tactile, rien d'autre.
+
+        On n'attend PAS un simple délai : on attend que les marqueurs du plateau soient
+        effectivement visibles. Une temporisation aveugle déclencherait sur la première
+        image venue — main encore dans le champ, exposition pas stabilisée — et
+        produirait un diagnostic raté qu'il faudrait de toute façon reprendre.
+
+        Un garde-temps évite l'attente indéfinie : passé ce délai, la main est rendue à
+        l'opérateur avec un message, plutôt que de laisser un écran qui ne fait rien.
+        """
+        if self._camera is None:
+            return
+        self._capture_auto_armee = True
+        self._status_label.setText("Capture automatique — recherche du plateau…")
+        self._timer_capture_auto.start(CAPTURE_AUTO_TIMEOUT_MS)
+
+    def _abandonner_capture_automatique(self) -> None:
+        """Garde-temps écoulé : rendre la main plutôt que d'attendre sans fin."""
+        self._capture_auto_armee = False
+        self._status_label.setText(
+            "Plateau non reconnu automatiquement — vérifier le cadrage, "
+            "puis appuyer sur Capturer"
+        )
+
     def stop_camera(self) -> None:
         """Arrêter l'aperçu — sans libérer la caméra, qui est partagée."""
         self._timer.stop()
+        # Ne pas laisser un garde-temps courir sur un écran qu'on vient de quitter :
+        # il tirerait un message de statut sur un écran qui n'est plus affiché
+        self._timer_capture_auto.stop()
+        self._capture_auto_armee = False
 
     def _update_frame(self) -> None:
         """Aperçu en direct, avec les marqueurs détectés en surimpression.
@@ -256,6 +301,23 @@ class ScreenPlateau(QWidget):
             coins = [c.reshape(1, 4, 2).astype(np.float32) for c in marqueurs.values()]
             ids = np.array([[mid] for mid in marqueurs.keys()])
             cv2.aruco.drawDetectedMarkers(apercu, coins, ids)
+
+        # Capture automatique : déclencher dès que le plateau est situable, c'est-à-dire
+        # dès qu'au moins 2 de ses 4 coins sont vus — le minimum dont a besoin
+        # compute_plateau_reference(), et le mode nominal sur la Geeetech.
+        if self._capture_auto_armee:
+            ids_plateau = {0, 1, 2, 3} & marqueurs.keys()
+            if len(ids_plateau) >= 2:
+                self._capture_auto_armee = False
+                self._timer_capture_auto.stop()
+                self._on_capture()
+                return
+            self._status_label.setText(
+                f"Capture automatique — recherche du plateau… "
+                f"({len(ids_plateau)}/2 marqueurs de coin)"
+            )
+            self._display_image(apercu)
+            return
 
         self._status_label.setText(
             f"Marqueurs visibles : {sorted(marqueurs) if marqueurs else 'aucun'}"

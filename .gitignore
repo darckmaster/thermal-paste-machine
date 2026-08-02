@@ -11,6 +11,13 @@ build/
 # Reports (generated at runtime)
 reports/*.pdf
 
+# Preparations (plateaux enregistres par l'operateur, ecrits a l'execution).
+# Ce sont des donnees de travail, pas du code : elles contiennent des coordonnees en mm
+# ABSOLUES, donc liees a la position de la camera et au plateau d'UNE machine donnee.
+# Les partager entre machines n'aurait pas de sens. Le dossier est recree tout seul au
+# premier enregistrement (os.makedirs dans modules/preparation.py).
+preparations/
+
 # IDE
 .vscode/
 .idea/
