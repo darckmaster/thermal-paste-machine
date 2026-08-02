@@ -216,7 +216,7 @@ Le soir à la maison : `git pull` sur le PC, on continue sur grand écran.
 | Base mécanique | Imprimante 3D **Geeetech I3** modifiée | ✅ Confirmé (modèle exact à identifier) |
 | Actionneur de dépose | Moteur **Nema 17** sur axe E (ex-extrudeur) + vis sans fin | ✅ Confirmé |
 | Contrôleur machine | Carte Geeetech — firmware **Marlin 1.1.8** via USB série **250000 baud** — port `/dev/ttyUSB0` | ✅ Confirmé (2026-07-01, `M115`) |
-| Référentiel plateau | 4 marqueurs **ArUco** DICT_4X4_50 — IDs 0, 1, 2, 3 aux coins. Disposition relevée le 2026-08-01 : `3`=haut-gauche (origine du repère mm), `0`=haut-droit, `1`=bas-droit, `2`=bas-gauche | ✅ Arrêté |
+| Référentiel plateau | 4 marqueurs **ArUco** DICT_4X4_50 — IDs 0, 1, 2, 3 aux coins. Disposition relevée le 2026-08-01 : `3`=haut-gauche, `0`=haut-droit, `1`=bas-droit, `2`=bas-gauche. Depuis le lot C2bis (2026-08-02) : **origine du repère mm = marqueur 2** (bas-gauche), **Y vers le haut**, marqueur 0 en contrôle de cohérence | ✅ Arrêté |
 | Référentiel zone de dépose | 2 marqueurs **ArUco** DICT_4X4_50 — IDs 4 et 5, aux coins opposés (diagonale) de la zone où est posée la pièce | ✅ Arrêté |
 
 #### Machine cible (CNC — production)
@@ -256,7 +256,7 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 | ~~Q2~~ | ~~Version exacte du firmware Marlin~~ | ✅ **Résolu** — Marlin 1.1.8 (compilé 2022-09-25, confirmé 2026-07-01) |
 | ~~Q3~~ | ~~Port série Geeetech : `/dev/ttyUSB0` ou `/dev/ttyACM0`~~ | ✅ **Résolu** — `/dev/ttyUSB0` (puce CH340), baudrate **250000** |
 | ~~Q4~~ | ~~Choix interface caméra : V4L2 ou picamera2~~ | ✅ **Résolu** — `cv2.VideoCapture(0)` direct via USB (UVC), pas de picamera2 |
-| ~~Q5~~ | ~~Taille réelle de la zone de travail (en mm)~~ | ✅ **Résolu** — 151 mm × 104 mm (re-mesuré centre-à-centre des marqueurs, 2026-06-12) |
+| ~~Q5~~ | ~~Taille réelle de la zone de travail (en mm)~~ | ✅ **Résolu** — 151 mm × 104 mm (re-mesuré centre-à-centre des marqueurs, 2026-06-12). ⚠️ Périmé depuis le 2026-07-30 : les marqueurs sont aux coins du bâti, soit 192 mm centre-à-centre **supposés** — devenu le paramètre `plateau_size_mm` au lot C2bis, mesure au mètre toujours en attente (action `M1`) |
 | ~~Q6~~ | ~~Distance caméra → pièce (hauteur en mm)~~ | ✅ **Résolu** — 200 mm (20 cm, re-mesuré 2026-06-12) |
 | ~~Q7~~ | ~~Taille des marqueurs ArUco à imprimer (en mm)~~ | ✅ **Résolu** — 28 mm × 28 mm (marqueurs imprimés, détection confirmée) |
 | Q8 | Volume de pâte par mm² (quantité de référence) | Calibrage expérimental lors des tests de dépose |
@@ -286,8 +286,9 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 | # | Action | Pourquoi ça compte / ce que ça bloque |
 |---|---|---|
-| **M1** | **Mesurer le plateau au mètre** : bord extérieur à bord extérieur des 4 tags (supposé 220×220 mm → 192 mm centre-à-centre) | Devient le paramètre `plateau_size_mm` (lot C2bis). En repli 2 tags — **le mode nominal sur la Geeetech** — l'origine est *extrapolée* à partir de cette valeur : toute erreur dessus décale toute la dépose |
-| **M2** | **`M114` buse au-dessus du marqueur 2** (bas-gauche) → origine machine | Les valeurs actuelles (20/50) datent de deux conventions en arrière. **Tant que ce n'est pas refait, la dépose réelle est décalée** |
+| **M1** | **Mesurer le plateau au mètre** : bord extérieur à bord extérieur des 4 tags (supposé 220×220 mm → 192 mm centre-à-centre) | **Le paramètre `plateau_size_mm` existe depuis le 2026-08-02** (lot C2bis, à renseigner dans `local_config.json`) — il ne manque plus que la mesure. En repli 2 tags, **le mode nominal sur la Geeetech**, l'origine est *extrapolée* à partir de cette valeur : toute erreur dessus décale toute la dépose. L'IHM affiche « origine extrapolée » dans ce mode |
+| ~~**M2**~~ | ~~`M114` buse au-dessus du marqueur 2 (bas-gauche) → origine machine~~ | ✅ **Fait le 2026-08-02** — relevé `X:5.00 Y:0.00 Z:0.00 · Count X:394 Y:0 Z:0` → `MACHINE_ORIGIN_X = 5.0`, `MACHINE_ORIGIN_Y = 0.0`. Repère de home vérifié au passage (`G28` + `M114` immédiat = X:0 Y:0 Count 0/0) : ni `X_MIN_POS` non nul, ni `M206` en EEPROM. ⚠️ **Réserve sur Y** : le compteur Y était à 0 exact, donc l'axe n'avait pas bougé depuis le homing — soit le marqueur 2 tombait déjà sous la buse, soit le plateau butait sur la fin de course et `0` est une limite, pas une mesure. Non départagé. **Premier suspect si la dépose ressort décalée en Y** → voir `M2 bis` |
+| **M2 bis** | **Lever la réserve sur `MACHINE_ORIGIN_Y`** : buse en `X5 / Y0`, la pointe est-elle au centre du marqueur 2, ou celui-ci est-il encore à distance ? | 30 secondes à l'œil, machine sous tension. Si le marqueur est à distance, le bord bas du plateau est **hors course** (cadre de 220 mm pour ~200 mm de course utile) : `MACHINE_ORIGIN_Y` devrait être négatif, il faut rapprocher le plateau ou acter qu'une bande basse est indéposable. À trancher **avant le lot D**. Même si la mesure est juste, une origine à `Y=0` ne laisse **aucune marge** avant la fin de course |
 | **M3** | **Hauteur Z de la pointe de seringue après homing** | Le paramètre de position après homing devient **3D** `(x, y, z)` au lot D. M2 ne donne que X et Y |
 | **M4** | **Sens des axes machine vs axes plateau** (X, Y, Z) — à établir **en interactif**, machine sous tension | Décidé le 2026-08-01 : on ne le déduit pas sur le papier. Bloque la validation réelle du lot D |
 | **M5** | **Calibration ChArUco sur le RPi et la caméra Philips réels** (15 poses) | Le pipeline n'a été validé que sur le PC de dev. Cause connue de l'**écart résiduel de ~10 %** (distorsion de l'objectif) |
@@ -311,22 +312,46 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ---
 
-### 🚩 POINT DE REPRISE — session de cadrage close le 2026-08-01 au soir (`v0.4.2`)
+### 🚩 POINT DE REPRISE — lot C2bis livré le 2026-08-02 (`v0.4.2`)
 
-> **▶️ POUR DÉMARRER LA PROCHAINE SESSION, IL SUFFIT DE DIRE : « on lance le lot C2bis ».**
-> Tout est cadré ci-dessous, toutes les questions ont été tranchées, il n'y a **rien à
-> redemander à l'étudiant** avant d'écrire du code — sauf l'unique question de vocabulaire
-> signalée plus bas, qui a déjà une réponse retenue (on garde haut-gauche/bas-droit).
-> Ne pas refaire l'évaluation d'impact : elle est faite et détaillée en 5 étapes.
+> **▶️ POUR DÉMARRER LA PROCHAINE SESSION, IL SUFFIT DE DIRE : « on lance le lot C3 ».**
+> Le lot C3 est déjà spécifié en 4 points plus bas dans cette section, et toutes ses
+> questions ouvertes ont été tranchées le 2026-08-01 (saisie du nom de produit : trois
+> voies dans le même écran, repli `BOITIER_X` au premier numéro libre). Il n'y a **rien à
+> redemander à l'étudiant** avant d'écrire du code.
+>
+> **Si la session se fait à l'atelier** (machine sous la main), la priorité est ailleurs :
+> `M2` et `M1`, puis `M4` — ce sont elles qui débloquent la vérification du lot C2bis sur
+> la vraie machine. Lire d'abord l'état du dépôt ci-dessous, il y a un piège d'ordre.
 >
 > Ordre de démarrage : checklist section 3 → **rappeler la section 7 bis** (actions en
-> attente) → attaquer l'étape 1 du lot C2bis.
+> attente) → attaquer le point 1 du lot C3 (autosave 5 s), ou `M2` si on est à l'atelier.
 
-**État du dépôt** : branche `v0.4.2` créée et mergée dans `master`, working tree propre, tout
-est poussé sur GitHub. La branche `v0.4.2` **reste ouverte** : le code du lot C2bis s'écrit
-dessus, le cadrage n'en est que le premier commit.
-**Tests** : 155/155 (`pytest`, 46 s). Ajouter `-m "not toutes_cameras"` pour éviter d'ouvrir
-la webcam intégrée du PC (~41 s).
+**État du dépôt** : lot C2bis **commité, mergé dans `master` et poussé** le 2026-08-02
+(rituel de fin de session, section 15), avec la mesure `M2` intégrée à `config.py`.
+Vérifier quand même avec `git status` et `git log --oneline -3` avant toute conclusion.
+
+**Tests** : 163/163 avec `pytest -m "not toutes_cameras"`. ⚠️ Le run de clôture a rendu
+**152 passés / 12 sautés** : les tests sur image réelle ne se sont pas exécutés, le plateau
+— solidaire du lit — s'étant retrouvé hors du champ de la caméra fixe après le `G28`. Ce
+n'est pas une régression (la fixture saute proprement quand aucune caméra ne voit de
+marqueur), mais **la chaîne complète n'a pas été revalidée sur photo réelle après le
+changement de repère**. À refaire dès que le plateau est de nouveau cadré.
+**Tests** : 161/161 avec `pytest -m "not toutes_cameras"` (~33 s ; sans le marqueur, la
+webcam intégrée du PC s'allume et le run prend ~46 s). +7 tests par rapport au lot C2.
+
+**Ce qui a été fait le 2026-08-02** — lot C2bis complet, les 5 étapes du cadrage :
+repère plateau orthonormé (origine tag 2, Y vers le haut), retournement explicite de Y dans
+les trois `warp_*`, bascule de toute la logique de signe des zones, repère de zone à
+l'origine bas-gauche, `FORMAT_VERSION` → 2 avec conversion des fichiers v1, `plateau_size_mm`
+en paramètre, et regroupement du choix d'homographie dans `compute_plateau_reference()`.
+Détail complet en `CONCEPTION.md` section 4.2 et dans le journal (dernière ligne).
+
+**⚠️ Ce que le lot C2bis N'A PAS validé** : la formule de conversion vers le repère machine
+(`gui/screen_run.py`) est cohérente avec la nouvelle convention — deux additions — mais
+**non vérifiée sur la machine**. Le sens réel des axes est l'action `M4`, à établir en
+interactif au lot D, et `MACHINE_ORIGIN_X/Y` reste à remesurer (`M2`). Tant que ce n'est pas
+fait, la dépose réelle est décalée, et aucun test ne peut le détecter.
 
 **Ce qui a été fait le 2026-08-01 au soir** — session de cadrage, **aucune ligne de code** :
 décision du changement de repère, évaluation de son impact sur le code réel, spécification du
@@ -343,14 +368,19 @@ des actions en attente (section 7 bis).
 | `v0.3.1` | Sélection de la caméra de test par détection ArUco |
 | `v0.4.0` | **Lot C1** — écran « Créer un plateau » : capture, détection, diagnostic |
 | `v0.4.1` | **Lot C2** — écran « Cordons » : zoom, tracé, report sur toutes les zones |
+| `v0.4.2` | **Lot C2bis** — repère plateau orthonormé (voir ci-dessous) |
 
-**➡️ PROCHAINE ÉTAPE : lot C2bis (`v0.4.2`) — repère plateau orthonormé.** Le lot C3 est
-décalé en `v0.4.3` : la convention de repère change, et tout ce qui serait écrit avant
-serait à réécrire après.
+**➡️ PROCHAINE ÉTAPE : lot C3 (`v0.4.3`) — persistance et paramètres.** Spécifié plus bas
+dans cette section, en 4 points, toutes questions tranchées.
 
 ---
 
-#### Lot C2bis — changement de convention du repère du plateau
+#### Lot C2bis — changement de convention du repère du plateau ✅ LIVRÉ le 2026-08-02
+
+> **Ce qui suit est la spécification d'origine, conservée telle quelle** : elle documente
+> ce qui avait été prévu et pourquoi, ce qui vaut pour le rapport de stage. Le bilan de ce
+> qui a réellement été livré, et des trois écarts par rapport à cette spécification, est
+> en fin de sous-section.
 
 **Décidé le 2026-08-01 (soir).** Le repère du plateau devient **orthonormé et défini par
 trois tags** :
@@ -463,6 +493,7 @@ en l'état donnerait du commentaire menteur, ce qui est pire que du code faux.
   l'endroit, donc ces noms continuent de décrire ce que voit l'opérateur — proposition :
   **on les garde**, et on précise dans les docstrings qu'ils désignent le rendu à l'écran,
   pas le signe des coordonnées.
+  → **✅ tranché le 2026-08-02 : conservés**, proposition suivie.
 
 *(Les deux autres questions ont été tranchées le 2026-08-01 : tag 0 = contrôle de cohérence,
 fichiers v1 = conversion au chargement. Voir ci-dessus.)*
@@ -470,6 +501,44 @@ fichiers v1 = conversion au chargement. Voir ci-dessus.)*
 **Garde-fou proposé** : un test « boussole » qui épingle la convention en un seul endroit —
 tag 2 → `(0, 0)`, tag 3 → `(0, H)`, image redressée non miroir, diagonale d'une zone saine à
 `dy < 0`. Si la convention rebouge un jour, c'est ce test qui doit hurler en premier.
+→ **✅ écrit tel quel** : `test_boussole_de_la_convention_du_repere` dans `test_vision.py`.
+
+##### ✅ Bilan de livraison (2026-08-02) — et trois écarts à la spécification
+
+Les 5 étapes ont été livrées **en une seule session** et non deux, et le découpage
+« session 1 = étapes 1-2 » n'a pas été tenu — délibérément. Motif : l'étape 3 (repère de
+zone) n'est pas une suite de l'étape 2, c'en est la **condition de cohérence**. S'arrêter
+après l'étape 2 aurait laissé le plateau en Y montant et les zones en Y descendant, donc
+un état intermédiaire faux, qu'aucun test n'aurait pu valider. Le découpage en 2 sessions
+était une estimation de charge, pas une frontière de correction.
+
+Trois écarts par rapport à ce qui était écrit ci-dessus, tous dans le sens d'un travail
+en plus :
+
+1. **La conversion des fichiers v1 retourne aussi les ZONES**, pas seulement les cordons.
+   La spécification ne mentionnait que `y_v2 = hauteur_zone − y_v1`. Mais un fichier
+   contient des coordonnées dans les **deux** repères retournés par ce lot : ne convertir
+   que les cordons aurait produit un fichier incohérent avec lui-même — pire que de ne
+   rien convertir. Les coins passent par `WORK_AREA_HEIGHT_MM` et `rotation_deg` change
+   de signe. Limite assumée et documentée : la hauteur de plateau utilisée est celle
+   configurée aujourd'hui, sans conséquence pratique (ces coordonnées absolues sont de
+   toute façon redétectées à la capture suivante).
+2. **`load_preparation()` réécrit le fichier converti**, ce que la spécification demandait
+   (« réenregistré en v2 ») sans dire où. Le choix : dans la fonction qui touche déjà au
+   disque, pas dans `from_dict()`, qui doit rester utilisable en mémoire.
+3. **L'écart du tag 0 est mesuré contre une similitude ajustée sur les tags 2/1/3**, et
+   non contre la matrice de `compute_homography()`. Découvert en écrivant le code : avec
+   exactement 4 points, `getPerspectiveTransform` ajuste **sans résidu**, et le contrôle
+   aurait été nul par construction quelle que soit la réalité du plateau — un indicateur
+   qui n'indique rien. Point à ressortir pour le rapport : la décision « le tag 0 devient
+   un contrôle de cohérence » était juste, mais sa mise en œuvre naïve l'aurait vidée de
+   son sens.
+
+**Ce que le lot n'a pas validé, et ne pouvait pas valider** : la formule de conversion
+vers le repère machine (`screen_run.py`) est passée de « addition + soustraction » à deux
+additions, cohérente avec la nouvelle convention. Elle n'est **pas vérifiée sur la
+machine** — actions `M2` (remesurer `MACHINE_ORIGIN` au-dessus du marqueur **2**) et `M4`
+(sens réel des axes, en interactif au lot D).
 
 ---
 
@@ -577,10 +646,11 @@ Phase 7 ✅ :
 - [x] **IDs réels des marqueurs du plateau** — ✅ **résolu le 2026-08-01** : fausse alerte. Le plateau utilise bien `{0,1,2,3}` ; les `{0,3,4,5}` observés = 2 marqueurs de plateau cadrés (3 et 0, ceux du haut) + les 2 marqueurs de zone de dépose (4 et 5). Enseignement : le **repli à 2 marqueurs est le mode nominal** sur la Geeetech. Détail en `MANUEL_MAINTENANCE.md` section 4.5
 - [x] **Repère du plateau refait** (2026-08-01) — origine sur le marqueur 3 (haut-gauche), Y vers le bas. Corrige au passage un miroir vertical de `warp_image()`/`warp_region()` présent depuis la Phase 2. Inversion vers l'axe Y machine concentrée dans `screen_run.py`
 - [x] **Choix du matériel dans l'interface** (2026-08-01) — 2 listes déroulantes (port machine + caméra) + bouton Rafraichir sur l'écran 1. `serial_port` et `serial_baudrate` rendus surchargeables via `local_config.json`
-- [ ] **⚠️ `MACHINE_ORIGIN_X/Y` à remesurer** (2026-08-01) : les valeurs actuelles (20/50) correspondent à l'ancienne position du marqueur 0. `M114` à refaire buse au-dessus du **marqueur 3**. Tant que ce n'est pas fait, la dépose réelle sera décalée
+- [x] **`MACHINE_ORIGIN_X/Y` remesuré** (2026-08-02, action `M2`) : `M114` buse au-dessus du marqueur **2** → `X = 5.0`, `Y = 0.0` (remplace 20/50, qui dataient de deux conventions en arrière). Repère de home vérifié : pas de `X_MIN_POS` ni de `M206`. ⚠️ Réserve sur Y non levée (compteur de pas à 0 exact → butée possible) → action `M2 bis` en section 7 bis
 - [x] **Étape 2 — LOT A livré (v0.2.0, 2026-08-01)** : géométrie des zones de dépose dans `vision.py` (`detect_deposit_zones_mm`, `PlateauLayout`, `DepositZone`). Détail des règles en `MANUEL_MAINTENANCE.md` section 1 et `CONCEPTION.md` section 4.2 bis
 - [x] **Étape 2 — LOT B livré (v0.3.0, 2026-08-01)** : `modules/preparation.py` (`Cordon`, `Settings`, `Preparation` + persistance) et transfert de repère `to_plateau_mm`/`to_zone_mm` sur `DepositZone`. Format documenté en `CONCEPTION.md` section 6 et `MANUEL_MAINTENANCE.md` section 6.1. Les deux seuils de zone ont été mis dans `Settings` (donc enregistrés par plateau) — question du rituel v0.2.0 tranchée dans ce sens
 - [x] **Étape 2 — LOT C1 livré (v0.4.0, 2026-08-01)** : `gui/screen_plateau.py` — écran « Créer un plateau », saisie du produit, capture, détection des zones, restitution visuelle du diagnostic, choix continuer/abandonner. 13 tests `pytest-qt`. Navigation : bouton sur l'écran 1, cohabitation avec le cycle historique (option **a**, la bascule en point d'entrée principal se fera au lot D)
+- [x] **Étape 2 — LOT C2bis livré (v0.4.2, 2026-08-02)** : repère plateau orthonormé — origine au marqueur **2** (bas-gauche), **Y vers le haut**, tag 0 en contrôle de cohérence. Retournement explicite de Y dans les trois `warp_*`, bascule de toute la logique de signe des zones, repère de zone à l'origine bas-gauche, `FORMAT_VERSION` → 2 avec conversion des fichiers v1, `plateau_size_mm` en paramètre, choix de l'homographie regroupé dans `compute_plateau_reference()`. 161 tests (+7). Détail et bilan de livraison ci-dessus dans cette section ; conception en `CONCEPTION.md` section 4.2 ; maintenance en `MANUEL_MAINTENANCE.md` section 1
 - [x] **Étape 2 — LOT C2 livré (v0.4.1, 2026-08-01)** : `VisionProcessor.warp_zone()` (redresse une zone **tournée**) + `gui/screen_cordons.py` — vue d'ensemble cliquable, zoom, tracé des polylines, undo/redo de profondeur 1, sélection/suppression, report sur toutes les zones. 25 tests. Validé à la main sur machine réelle par l'étudiant
 - [ ] **Étape 2 — LOT C3** : autosave 5 s (hors polyline en cours), bouton d'enregistrement, reprise au démarrage si un autosave existe, fenêtre de paramètres (2 vitesses + 2 seuils)
 - [ ] **LOT D** : exécution multi-zones (adapter `path_planner` et `screen_run` pour parcourir zones × cordons avec les 2 vitesses), puis bascule de la création de plateau en point d'entrée principal et retrait de `screen_zone.py`
@@ -776,17 +846,23 @@ Ces choix sont actés — ne pas les remettre en question sans raison documenté
 | Terminal série RPi | `picocom -b 250000 --imap lfcrlf --echo /dev/ttyUSB0` | `screen` non installé ; `minicom` ne supporte pas 250000 baud |
 | Configuration par machine | Fichier `local_config.json` à la racine (gitignoré). Modèle : `local_config.json.example` (tracké). Chargé au démarrage par `modules/config.py` — surcharge les défauts | Le PC et le RPi ont des paramètres différents (index caméra, port série) qui ne doivent pas transiter par git |
 | Caméra partagée | Une seule instance `Camera` créée dans `MainApp.__init__` et passée aux écrans via `set_camera()`. Les écrans arrêtent/redémarrent leur QTimer mais ne libèrent jamais la caméra | Le release+reopen prenait 1-2 s à chaque changement d'écran ; désormais instantané. Libération unique dans `closeEvent` |
-| Repère du plateau (2026-08-01) | Origine = marqueur **3** (haut-gauche), X+ à droite, **Y+ vers le bas**. Table dans `vision.py::_plateau_corner_positions_mm()` | Coordonnées positives partout (le clipping de `screen_zone` en dépend) + corrige le miroir vertical de `warp_image()`/`warp_region()`. Contrepartie : Y opposé à l'axe machine, inversé en **un seul point** (`screen_run.py`) |
+| ~~Repère du plateau (2026-08-01)~~ | ~~Origine = marqueur 3 (haut-gauche), Y+ vers le bas~~ | **Remplacé le 2026-08-02 par la ligne ci-dessous.** Conservé pour l'historique : ce repère avait été choisi pour de bonnes raisons *locales* (coordonnées positives, correction du miroir vertical), et c'est en regardant le problème depuis la machine — pour le lot D — que le bon critère est apparu |
+| Repère du plateau (2026-08-02, lot C2bis) | **Orthonormé, défini par trois tags** : origine = marqueur **2** (bas-gauche), X+ vers le tag 1, **Y+ vers le HAUT** vers le tag 3. Tag 0 = contrôle de cohérence. Table dans `vision.py::_plateau_corner_positions_mm()` | Aligne le repère logiciel sur le repère physique de la machine **avant** d'écrire le G-code (lot D) : la conversion vers le repère machine devient deux additions, plus une inversion isolée qu'il faut penser à écrire. Les coordonnées restent positives, l'origine étant toujours sur un coin. Contrepartie payée une fois : les trois `warp_*` doivent retourner Y explicitement, sans quoi le plateau s'affiche à l'envers |
+| Repère d'une zone (2026-08-02) | Origine = coin **bas-gauche** (`DepositZone.origin_mm` = `corners_mm[3]`), Y montant — même convention que le plateau | Garder deux conventions opposées réintroduirait exactement la confusion que le lot C2bis supprime. Les formules de `to_plateau_mm`/`to_zone_mm` sont inchangées : seule l'origine change de coin, ce qu'aucun test de réversibilité ne peut attraper |
+| Contrôle de cohérence du plateau (2026-08-02) | Écart entre la position vue du tag 0 et sa position attendue, mesuré contre une **similitude ajustée sur les tags 2/1/3** | Avec 4 points, `getPerspectiveTransform` ajuste sans résidu : mesurer l'écart sur la matrice de `compute_homography()` le donnerait **nul par construction**, quelle que soit la réalité du plateau. L'indicateur n'indiquerait rien |
+| Choix de l'homographie (2026-08-02) | Une seule méthode, `compute_plateau_reference()`, qui retourne la matrice **et** la qualité du repère (mode, origine extrapolée, écart du tag 0) | La règle « 4 tags → exact, 2-3 → approché » était écrite **deux fois** (`screen_plateau.py`, `screen_zone.py`). Deux copies divergent toujours, et c'est celle qu'on ne relit pas qui reste juste. Retourner une matrice nue obligerait par ailleurs chaque appelant à redéduire ce qu'il doit dire à l'opérateur |
+| Taille du plateau (2026-08-02) | `plateau_size_mm` surchargeable dans `local_config.json` (220 mm par défaut) | Sert de **repli quand les 4 tags ne sont pas détectés**, donc dans le mode nominal de la Geeetech où l'origine est extrapolée. Toute erreur dessus décale toute la dépose et aucun test ne peut le détecter → action `M1` |
+| Fichiers de préparation v1 (2026-08-02) | `FORMAT_VERSION` → 2, fichiers v1 **convertis au chargement** puis réécrits, conversion signalée à l'opérateur | Le contrôle de version ne refusait que les fichiers plus RÉCENTS : un v1 aurait été relu silencieusement à l'envers. Refuser sec ferait perdre à l'opérateur un plateau déjà tracé pour une raison purement interne au logiciel |
 | Choix du matériel (2026-08-01) | 2 listes déroulantes sur l'écran 1. Les écrans émettent `camera_selected`/`machine_port_selected` ; **seul `MainApp` applique** le changement | `MainApp` est propriétaire de `Camera` et `Machine` partagées. Si un écran les remplaçait lui-même, deux endroits ouvriraient la caméra et un handle finirait non libéré |
 | Scan des caméras | `Camera.list_devices(exclude=...)` ne sonde **jamais** un index déjà ouvert | Un second handle DirectShow sur le même périphérique casse le flux du premier à son `release()` — symptôme trompeur « Camera deconnectee » (2026-08-01) |
 | Zones de dépose (2026-08-01) | 2 marqueurs par zone, `id(bas-droit) = id(haut-gauche) + 1`, IDs ≥ 4. Ambiguïté d'appariement levée par la **longueur de diagonale la plus représentée**, les zones portant toutes le même produit | Aucun moyen local de savoir si le tag 5 clôt `(4,5)` ou ouvre `(5,6)`. L'invariante « même produit partout » est la seule information globale disponible |
-| Tri par signe des diagonales | Composantes `(+,+)` = zone plausible · `(−,−)` = zone inversée signalée · **signes mixtes = paire fantôme écartée** | Sur un plateau en grille, la paire fantôme entre deux zones voisines a la **même longueur** que les vraies (symétrie) : le filtrage par longueur seul laissait un plateau sain devenir inexploitable par conflit |
-| Rotation d'une zone | `θ = angle(diagonale) − angle(w, h)`, **solution unique**. Pas de choix entre solutions symétriques | Le format `(w, h)` étant déduit de la médiane sur toutes les zones, il est *orienté* : l'ambiguïté n'existe plus. Retenir « la plus petite rotation » ferait ressortir une zone à 25° comme étant à 2°, rendant l'anomalie de montage indétectable |
+| Tri par signe des diagonales | Composantes `(+,−)` = zone plausible · `(−,+)` = zone inversée signalée · **signes identiques = paire fantôme écartée**. ⚠️ Signes inversés au lot C2bis (c'était `(+,+)` pour une zone plausible) | Sur un plateau en grille, la paire fantôme entre deux zones voisines a la **même longueur** que les vraies (symétrie) : le filtrage par longueur seul laissait un plateau sain devenir inexploitable par conflit. C'est le premier filtre à basculer quand l'axe Y change de sens |
+| Rotation d'une zone | `θ = angle(diagonale) − angle(w, −h)` (signe moins depuis le lot C2bis), **solution unique**, positive dans le sens trigonométrique. Pas de choix entre solutions symétriques | Le format `(w, h)` étant déduit de la médiane sur toutes les zones, il est *orienté* : l'ambiguïté n'existe plus. Retenir « la plus petite rotation » ferait ressortir une zone à 25° comme étant à 2°, rendant l'anomalie de montage indétectable |
 | Appartenance des cordons | Les cordons appartiennent à la **préparation**, pas à une zone. `reference_zone_id` mémorise celle sur laquelle ils ont été tracés | Toutes les zones portent le même produit : les dupliquer par zone créerait autant de copies à maintenir cohérentes pour zéro information supplémentaire |
 | Zone de référence figée | La **première** zone ouverte devient le repère de travail. En ouvrir une autre y affiche les mêmes cordons sans changer de repère | Les cordons sont exprimés dans ce repère : en changer les déplacerait |
 | Règle d'interaction du tracé | Tracé en cours → tout clic ajoute un point · hors tracé → clic près d'un cordon = sélection, ailleurs = nouveau tracé | Permet de tout faire au clic sans bouton de mode. Sans la priorité au tracé en cours, un point posé près d'un cordon existant le sélectionnerait au lieu de continuer |
 | Double-clic indépendant de Qt | Le double-clic pose le point **seulement s'il n'est pas déjà le dernier** | En usage réel un `press` précède le double-clic et a posé le point ; `QTest.mouseDClick` n'envoie que le double-clic. Le garde-fou rend le résultat identique dans les deux cas et insensible aux versions de Qt |
-| Coordonnées des cordons | **mm relatifs à la zone** (origine au coin haut-gauche), jamais en pixels ni en mm plateau | Rend le même cordon applicable à toutes les zones, et insensible à un déplacement de la caméra |
+| Coordonnées des cordons | **mm relatifs à la zone** (origine au coin **bas-gauche** depuis le lot C2bis), jamais en pixels ni en mm plateau | Rend le même cordon applicable à toutes les zones, et insensible à un déplacement de la caméra |
 | Quantité de pâte | Deux **paramètres globaux** — vitesse de déplacement et vitesse d'extrusion — et non un attribut par cordon | C'est le rapport des deux qui fixe l'épaisseur du boudin ; un réglage par cordon serait une complexité sans usage identifié |
 | Persistance | 2 fichiers : `<produit>.json` (validé) et `<produit>.autosave.json` (toutes les 5 s). L'enregistrement définitif supprime l'autosave. Écriture **atomique** | Un autosave présent au démarrage signale un travail interrompu, et rien d'autre. Une écriture non atomique coupée en cours laisserait un fichier tronqué — un filet anti-plantage qui ne protège de rien |
 | Compatibilité des fichiers | `format_version` : version future **refusée**, clé manquante = valeur par défaut | Sur des coordonnées de dépose, une lecture silencieusement fausse enverrait la buse au mauvais endroit. Mieux vaut refuser franchement |
@@ -961,6 +1037,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 | 2026-07-01 | **Fix test ArUco résiduel** — Confirmé au préalable que l'échec de `test_pixel_to_mm_coins_de_la_zone` était déterministe (2 essais identiques) et sans lien avec la caméra (test 100% synthétique, aucun `cv2.VideoCapture`). `tests/test_vision.py::_marqueurs_synthetiques()` remis dans l'ordre ID0=bas-gauche/ID1=haut-gauche/ID2=haut-droit/ID3=bas-droit (aligné sur la convention réelle de `vision.py`), assertions de coins ajustées en conséquence. | 45/45 tests passent ✅. |
 | 2026-07-11 | **Révision planning + cadrage fonctionnel** — Nouvelles contraintes calendaires : 3 soutenances blanches entreprise (22/07, 05/08, 12/08, partie en anglais), rapport final IUT le 17/08, soutenance finale IUT le 31/08 (démo Geeetech acceptée), MàJ rapport entreprise le 17/07. CNC déjà quasi assemblée (mécanique + carte + firmware Marlin dernière version flashés ; reste câblage capteurs/moteurs) → Q9 résolue, chemin critique dé-risqué. Cadrage du process de dépose complet et actage de 4 fonctionnalités : calibration **ChArUco**, **cordons multiples** avec quantité par cordon, **fichier de préparation JSON**, **temps de dépose** au rapport. Planning détaillé jour par jour (11/07→31/08) ajouté en section 9. | CLAUDE.md + CONCEPTION.md mis à jour. Planning validé. Aucune ligne de code produite ce jour. |
 | 2026-07-29 | **Session 🏠 — Détection ChArUco débloquée + fix OpenCV 5.0 + distance mire + manuels.** Deux causes cumulées trouvées et corrigées pour le blocage de `CharucoDetector.detectBoard()` constaté le 2026-07-25 : (1) `camera_index` de `local_config.json` pointait sur la webcam intégrée du PC, pas l'USB ; (2) `charuco_legacy_pattern: true` incompatible avec les mires générées par l'appli (`board.generateImage()` ignore ce réglage, `detectBoard()` non — corrigé à `false`). `cv2.aruco.calibrateCameraCharuco()` (supprimée en OpenCV 5.0) remplacée par `board.matchImagePoints()` + `cv2.calibrateCamera()` dans `modules/calibration.py::calibrate_charuco`. Ajout de `estimate_board_pose()` et `distance_to_board_normal_mm()` (solvePnP) affichant la distance caméra↔mire en direct dans l'écran calibration. Overlay de debug ArUco/ChArUco ajouté sur `screen_capture.py` et `screen_calibration.py` (`detect_charuco` retourne désormais aussi `marker_count`) — c'est cet overlay qui a permis d'isoler les deux causes ci-dessus. `assets/camera_calibration.npz` ajouté au `.gitignore` (spécifique à chaque caméra/objectif, ne doit pas être partagé entre machines). `MANUEL_UTILISATEUR.md` et `MANUEL_MAINTENANCE.md` créés (guide opérateur 5 écrans + guide technique installation/config/dépannage). Rituel de fin de session formalisé en section 15 de ce fichier. | 45/45 tests passés. Points ouverts identifiés cette session : collision d'IDs ArUco plateau/mire (même dictionnaire `DICT_4X4_50` sans plage séparée — contournement : masquer le plateau pendant la calibration), et IDs réels du plateau à confirmer (`{0,3,4,5}` suspecté au lieu de `{0,1,2,3}`). Calibration optique à refaire sur le Raspberry Pi/caméra réels (pipeline validé sur PC de dev cette session). |
+| 2026-08-02 | **Session 🏠 + 🏭 (v0.4.2) — Lot C2bis livré : repère plateau orthonormé, et mesure `M2` sur la Geeetech.** Les 5 étapes du cadrage livrées en une seule session au lieu de deux — délibérément, l'étape 3 (repère de zone) étant la condition de cohérence de l'étape 2 et non sa suite : s'arrêter entre les deux aurait laissé le plateau en Y montant et les zones en Y descendant, un état faux qu'aucun test n'aurait pu valider. Le tableau des coins tient en 4 lignes ; tout le travail est dans ce qui en dépendait implicitement — retournement explicite de Y dans les trois `warp_*` (sans quoi le miroir vertical corrigé la veille revenait), bascule de toute la logique de signe des zones, repère de zone à l'origine bas-gauche, `FORMAT_VERSION` → 2 avec conversion des fichiers v1, `plateau_size_mm` en paramètre, et regroupement du choix d'homographie dans `compute_plateau_reference()`. Trois écarts à la spécification, tous documentés en section 8. **Puis, machine sous tension : action `M2` faite** — `M114` buse au-dessus du marqueur 2 → `MACHINE_ORIGIN` = 5.0 / 0.0, avec vérification que le repère de home est bien à 0/0 (ni `X_MIN_POS`, ni `M206`). | 152 passés, 12 sautés (les tests sur image réelle n'ont pas tourné : le plateau, solidaire du lit, était hors du champ caméra après `G28`). Sans le marqueur `toutes_cameras`, 163/163 plus tôt dans la session. ⚠️ Réserve sur `MACHINE_ORIGIN_Y` non levée (compteur de pas à 0 exact → butée possible) → action `M2 bis`. Sens des axes machine toujours à établir (`M4`). |
 | 2026-08-01 (soir) | **Session 🏠 (v0.4.2) — Cadrage du lot C2bis : changement de convention du repère plateau. Aucune ligne de code.** Nouvelle convention posée par l'étudiant : repère **orthonormé** défini par trois tags — origine au centre du tag **2** (bas-gauche), ordonnées vers le tag **3**, abscisses vers le tag **1**, donc **Y vers le haut** ; le tag **0**, devenu redondant, sert de **contrôle de cohérence**. Motif : aligner le repère logiciel sur le repère physique dans lequel on raisonne devant la machine **avant** d'écrire les commandes machine du lot D. Évaluation d'impact conduite sur le code réel plutôt que de mémoire : le tableau des coins est trivial, mais le retournement de Y **ramène mécaniquement le miroir vertical** corrigé le matin même en `v0.1.1` — d'où un `y_pixel = (hauteur_mm − y_mm) × échelle` à écrire explicitement dans les trois `warp_*`. Point pédagogique tranché avec l'étudiant : cette ligne n'est pas une entorse à la règle « l'opérateur voit ce qui se passe sur le plateau », elle en est **la garantie**. Bascule également : toute la logique de signe de la géométrie des zones, le repère relatif des zones, et donc les cordons déjà enregistrés (`FORMAT_VERSION` → 2). Trois décisions annexes : contrôle de cohérence sur le tag 0, **conversion** des fichiers v1 au chargement (pas de refus), repli `BOITIER_X` au **premier numéro libre** (aucun état hors du dossier des préparations, donc fonctionne sur un dépôt fraîchement cloné). Lot C2bis spécifié en 5 étapes, chiffré à 2 sessions ; C3 décalé en `v0.4.3`. **Création de la section 7 bis** — registre des 13 actions en attente (`M1`-`M9` machine, `L1`-`L4` logiciel), à rappeler au début de chaque session et dès qu'un travail en cours en touche une, à la demande de l'étudiant. | 155/155 tests (inchangés). Manuels volontairement inchangés : rien de visible pour l'opérateur, et documenter maintenant un repère non encore implémenté induirait en erreur celui qui dépanne demain. Une seule question laissée ouverte, avec réponse retenue : garder le vocabulaire « haut-gauche / bas-droit » pour les coins de zone. |
 | 2026-08-01 | **Session 🏠 (v0.4.1) — Étape 2, lot C2 : tracé des cordons et report sur toutes les zones.** Brique préalable dans `vision.py` : `warp_zone()` redresse une zone même vissée de travers, en composant homographie + passage au repère de la zone + mise à l'échelle. Conséquence exploitée par tout l'éditeur : l'image obtenue a son origine sur le coin haut-gauche de la zone à échelle constante, donc un clic se convertit en millimètres par une simple division. Création de `gui/screen_cordons.py`, un écran à **deux modes** dans une pile (vue d'ensemble cliquable / zoom et tracé) plutôt que deux écrans, l'aller-retour entre les deux étant le geste central de cette étape. Trois règles d'interaction tranchées hors spécification : priorité au tracé en cours pour capter les clics, sélection d'un cordon par clic à proximité hors tracé, et « Valider » inactif tant qu'un cordon est ouvert pour ne pas le perdre en silence. Undo/redo de profondeur 1 sur les 3 actions convenues, la suppression restaurant le cordon **à sa place** dans la liste. **Piège rencontré** : `QTest.mouseDClick` n'envoie que l'événement de double-clic, sans le `press` qui le précède en usage réel — c'est le CODE qui a été corrigé, pas le test, en rendant le comportement indépendant de la séquence d'événements Qt. | 155/155 tests (25 nouveaux, dont 22 pilotant de vrais événements souris). Validé à la main par l'étudiant : deux cordons tracés sur la zone 4/5 se retrouvent au même endroit relatif sur la 6/7. **Observation reportée au lot D** : les deux zones n'ont pas exactement la même taille à l'écran, signature de l'homographie approchée sans correction de perspective — l'erreur de report croît avec l'éloignement des marqueurs de référence, à corriger par la calibration ChArUco puis le recul de caméra sur la CNC. |
 | 2026-08-01 | **Session 🏠 (v0.4.0) — Étape 2, lot C1 : écran de création de plateau.** Découpage du lot C en trois sous-lots (C1 vue globale et diagnostic, C2 zoom et tracé, C3 persistance et paramètres), un rituel par sous-lot. Décision de navigation : le nouvel écran **cohabite** avec le cycle historique via un bouton sur l'écran 1 (option a), la bascule en point d'entrée principal étant reportée au lot D — on ne casse pas le seul cycle qui va aujourd'hui jusqu'à la dépose. Création de `gui/screen_plateau.py` : saisie du produit avec bandeau permanent, flux caméra avec overlay des marqueurs, capture, analyse, restitution visuelle du diagnostic (rectangles verts/rouges étiquetés, cercles orange sur les marqueurs orphelins), message de statut borné à 2 zones détaillées pour ne pas manger la place de l'image en 800×480. Ajout de `mm_to_pixels()` dans `vision.py` pour la reprojection. **Défaut trouvé par les tests** : la longueur de diagonale de référence était votée sur les seules paires d'orientation plausible, si bien qu'un plateau intégralement monté à l'envers faisait élire des paires fantômes comme zones valides tandis que les vraies passaient pour orphelines — corrigé, le vote inclut désormais les paires inversées. Nouvelle anomalie `format_indeterminable`, distincte de `diagonale_hors_norme` qui était trompeuse dans ce cas. `pytest-qt`, `openpyxl` et `python-pptx` ajoutés à `requirements.txt`. | 130/130 tests (15 nouveaux, dont 13 `pytest-qt` qui pilotent réellement les widgets). Validé sur matériel réel par l'étudiant : les 2 zones de son plateau sont reconnues, format déduit 58 × 45 mm. Mesuré en 800×480 : 311 px restent pour l'image. **Point ouvert bloquant pour le lot C3** : la saisie du nom de produit passe par une boîte de dialogue clavier, inutilisable sur l'écran tactile du RPi sans clavier physique. |
