@@ -289,7 +289,8 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 | **M1** | **Mesurer le plateau au mètre** : bord extérieur à bord extérieur des 4 tags (supposé 220×220 mm → 192 mm centre-à-centre) | **Le paramètre `plateau_size_mm` existe depuis le 2026-08-02** (lot C2bis, à renseigner dans `local_config.json`) — il ne manque plus que la mesure. En repli 2 tags, **le mode nominal sur la Geeetech**, l'origine est *extrapolée* à partir de cette valeur : toute erreur dessus décale toute la dépose. L'IHM affiche « origine extrapolée » dans ce mode |
 | ~~**M2**~~ | ~~`M114` buse au-dessus du marqueur 2 (bas-gauche) → origine machine~~ | ✅ **Fait le 2026-08-02** — relevé `X:5.00 Y:0.00 Z:0.00 · Count X:394 Y:0 Z:0` → `MACHINE_ORIGIN_X = 5.0`, `MACHINE_ORIGIN_Y = 0.0`. Repère de home vérifié au passage (`G28` + `M114` immédiat = X:0 Y:0 Count 0/0) : ni `X_MIN_POS` non nul, ni `M206` en EEPROM. ⚠️ **Réserve sur Y** : le compteur Y était à 0 exact, donc l'axe n'avait pas bougé depuis le homing — soit le marqueur 2 tombait déjà sous la buse, soit le plateau butait sur la fin de course et `0` est une limite, pas une mesure. Non départagé. **Premier suspect si la dépose ressort décalée en Y** → voir `M2 bis` |
 | **M2 bis** | **Lever la réserve sur `MACHINE_ORIGIN_Y`** : buse en `X5 / Y0`, la pointe est-elle au centre du marqueur 2, ou celui-ci est-il encore à distance ? | 30 secondes à l'œil, machine sous tension. Si le marqueur est à distance, le bord bas du plateau est **hors course** (cadre de 220 mm pour ~200 mm de course utile) : `MACHINE_ORIGIN_Y` devrait être négatif, il faut rapprocher le plateau ou acter qu'une bande basse est indéposable. À trancher **avant le lot D**. Même si la mesure est juste, une origine à `Y=0` ne laisse **aucune marge** avant la fin de course |
-| **M3** | **Hauteur Z de la pointe de seringue après homing** | Le paramètre de position après homing devient **3D** `(x, y, z)` au lot D. M2 ne donne que X et Y |
+| **M2 ter** | **Mesurer le décalage buse ↔ pointe de seringue** (X et Y), dispositif monté | ⚠️ `M2` a été mesuré **chez soi, donc SANS le dispositif de seringue** (absent de la Geeetech hors entreprise — voir section 5.1). `MACHINE_ORIGIN_X/Y` est donc la position de la BUSE, alors que c'est la pointe de seringue qui dépose. Si le support la décale, toute la dépose est décalée d'autant. **À faire au boulot, en même temps que `M3`** : les deux demandent le dispositif monté |
+| **M3** | **Hauteur Z de la pointe de seringue après homing** | Le paramètre de position après homing devient **3D** `(x, y, z)` au lot D. M2 ne donne que X et Y. Demande le dispositif de seringue monté, donc **au boulot** — à grouper avec `M2 ter` |
 | **M4** | **Sens des axes machine vs axes plateau** (X, Y, Z) — à établir **en interactif**, machine sous tension | Décidé le 2026-08-01 : on ne le déduit pas sur le papier. Bloque la validation réelle du lot D |
 | **M5** | **Calibration ChArUco sur le RPi et la caméra Philips réels** (15 poses) | Le pipeline n'a été validé que sur le PC de dev. Cause connue de l'**écart résiduel de ~10 %** (distorsion de l'objectif) |
 | **M6** | **Q8 — volume de pâte de référence** (par mm de cordon) | Calibrage expérimental. Alimente la quantité déposée et le volume estimé du rapport PDF |
@@ -337,13 +338,24 @@ données de travail liées à une machine, pas du code.
 d'accueil. Le lot C3 ne couvrait que la reprise après plantage ; la **réutilisation** d'un
 plateau validé — point 7 du processus cible, section 1 — n'avait été affectée à aucun lot
 et le manque n'est apparu qu'en s'en servant. Ajout d'une confirmation d'écrasement au
-passage. ⚠️ Les boutons de capture du cycle historique sur l'écran 1 restent en place :
+passage. Puis, sur remarque de l'étudiant, la **capture automatique** au rechargement : la
+photo se déclenche seule dès que ≥ 2 marqueurs de coin sont vus (garde-temps 5 s), et
+seulement dans ce cas — pas à la création ni après un « Reprendre ».
+⚠️ Les boutons de capture du cycle historique sur l'écran 1 restent en place :
 c'est **encore le seul chemin validé jusqu'à la dépose réelle**, leur retrait est prévu au
 lot D et seulement après validation du nouveau chemin sur machine.
 
-**Tests** : 204/204 avec `pytest -m "not toutes_cameras"` (+43 sur la session). Les tests
-sur image réelle **se sont exécutés cette fois** (plateau devant la caméra) : la chaîne
-complète est donc enfin revalidée depuis le changement de repère du lot C2bis.
+**Tests** : **208** avec `pytest -m "not toutes_cameras"`, **209** avec `pytest` complet
+(+48 sur la session). Les tests sur image réelle **se sont exécutés cette fois** (plateau
+devant la caméra) : la chaîne complète est donc enfin revalidée depuis le changement de
+repère du lot C2bis.
+
+**Deux propositions laissées en suspens le 2026-08-02** — les reproposer *une fois*, sans
+insister, mais ne pas les traiter comme neuves :
+- étendre la **capture automatique à la création** d'un plateau (aujourd'hui volontairement
+  manuelle : l'opérateur y pose les boîtiers et sait seul quand c'est prêt) ;
+- **retirer la confirmation d'écrasement** si elle s'avère pesante à l'usage — elle a été
+  ajoutée d'initiative, l'étudiant ne l'avait pas demandée.
 
 **Ce qui a été fait le 2026-08-02 (lot C3)** — persistance et paramètres : sauvegarde
 automatique toutes les 5 s avec drapeau de modification, bouton d'enregistrement définitif,
