@@ -399,3 +399,113 @@ réenregistré au nouveau format — le message n'apparaîtra donc qu'une fois.
 
 ⚠️ **Vérifier le tracé avant de lancer une dépose sur un plateau converti.** La conversion
 est vérifiée par des tests, mais un coup d'œil coûte moins cher qu'une pièce ratée.
+
+---
+
+## 9. Écran « Lancer une dépose » — le cycle multi-zones
+
+C'est le chemin normal au quotidien : un seul bouton depuis l'écran d'accueil, et le
+logiciel vous guide jusqu'au bout. Les deux boutons voisins servent à **préparer** un
+plateau ; celui-ci sert à **l'exécuter**.
+
+### Ce que fait la machine, dans l'ordre
+
+1. Vous appuyez sur **« Lancer une dépose »**.
+2. La machine fait un **homing**, se dégage en hauteur, puis se place en **position de
+   prise de vue**. Comptez de 30 à 60 secondes.
+3. Le logiciel vous demande **quel plateau exécuter**, parmi ceux que vous avez
+   enregistrés.
+4. Il prend une **photo** et vous montre le plateau avec ses zones.
+5. Vous **désignez les zones où se trouve un produit**.
+6. Vous validez ; une fenêtre récapitule ce qui va se passer et demande confirmation.
+7. La machine refait un **homing**, puis dépose zone par zone.
+8. Une fenêtre suit l'avancement. À la fin, un **bilan** s'affiche.
+
+### Désigner les zones
+
+Les zones apparaissent dans trois états :
+
+| Aspect | Signification |
+|---|---|
+| Contour **gris fin** | Zone utilisable, **pas encore choisie** |
+| Contour **vert épais**, cordons dessinés dedans | Zone **choisie** — c'est là qu'on déposera |
+| Contour **rouge** | Zone **écartée**, non sélectionnable — le motif est écrit à côté |
+
+**Un appui sélectionne, un second désélectionne.** Rien n'est coché au départ : c'est
+volontaire, déposer sur une zone vide gaspille de la pâte et salit le plateau. Sur un
+plateau plein, le bouton **« Tout sélectionner »** évite d'appuyer six fois.
+
+Les **cordons se dessinent dans les zones choisies** : vous voyez exactement ce qui va
+être déposé, et où, avant que la machine ne bouge.
+
+Une zone peut être écartée pour un **format qui ne correspond pas au produit** : les
+cordons ont été tracés pour un boîtier d'une certaine taille, sur un autre ils
+déborderaient.
+
+### La dépose à blanc
+
+La fenêtre de confirmation propose une case **« Dépose à blanc »**, **cochée par
+défaut**.
+
+En dépose à blanc, la machine parcourt **exactement le même chemin**, mais n'extrude rien
+et ne descend pas : elle reste en hauteur. C'est le mode à utiliser pour :
+
+- vérifier un plateau neuf sans gâcher de pâte ;
+- montrer le cycle complet ;
+- contrôler que la machine vise juste — c'est le passage de la buse au coin de chaque
+  zone qui le dit.
+
+⚠️ **Décochez-la pour déposer réellement.** Tant que les réglages d'extrusion n'ont pas
+été faits, laissez-la cochée.
+
+### Pendant la dépose
+
+La fenêtre de suivi affiche l'avancement, la zone en cours, le nombre de zones terminées
+et le temps écoulé. Deux boutons :
+
+- **Pause** — la machine s'arrête entre deux mouvements. La pâte peut continuer de
+  s'écouler légèrement : c'est normal, ce n'est pas rattrapé à la reprise.
+- **ARRÊT** — coupe tous les actionneurs. Une confirmation est demandée, car c'est
+  irréversible : **la machine doit être redémarrée** avant le cycle suivant.
+
+⚠️ **Cette fenêtre ne se ferme ni par la croix ni par Échap.** Tant que la machine bouge,
+la seule sortie est le bouton d'arrêt — pour qu'il reste toujours accessible.
+
+### Le bilan de fin
+
+Il rappelle le produit, le nombre de zones déposées et le temps total.
+
+**Après un arrêt**, il détaille en plus **zone par zone** ce qui a été déposé et ce qui ne
+l'a pas été. ⚠️ Une zone interrompue en cours de cordon a reçu une **dose partielle** :
+la vérifier avant de relancer.
+
+### Si la dépose est refusée avant de démarrer
+
+Un message peut annoncer que des points **sortent de la course de la machine**, en
+nommant la zone fautive. Le lancement est alors annulé et **rien ne bouge**.
+
+Ce contrôle existe parce que la machine ne signalerait rien d'elle-même : elle ramènerait
+silencieusement les points hors course à sa limite, et la dépose sortirait déformée sans
+explication.
+
+Le remède est mécanique : rapprocher le plateau, ou retracer les cordons plus loin du
+bord.
+
+---
+
+## 10. Les photos et la position de la machine
+
+Depuis le 2026-08-04, **toute photo du plateau est précédée d'un homing** et d'une mise en
+position de prise de vue. Cela vaut pour les trois écrans qui photographient : l'accueil,
+« Créer un plateau », et le cycle de dépose.
+
+**Pourquoi** : sur la Geeetech, le plateau est solidaire du lit qui bouge en Y.
+Photographier là où la machine se trouve donnerait un cadrage différent à chaque fois, et
+deux plateaux créés à deux moments ne seraient pas comparables.
+
+**Conséquence à connaître** : chaque photo coûte de 30 à 60 secondes. Un « Reprendre »
+pour corriger un cadrage repart pour un homing complet.
+
+Si aucune machine n'est disponible, le logiciel **demande** s'il faut photographier quand
+même — « Non » par défaut. Vous pouvez accepter : la photo sera prise à la position
+actuelle, et le message vous le rappellera à côté du diagnostic.

@@ -312,6 +312,12 @@ Paramètres surchargeables (voir `modules/config.py` pour les valeurs par défau
 | `charuco_square_mm` / `charuco_marker_mm` | Taille physique case/marqueur de la mire imprimée |
 | `charuco_dict` | Dictionnaire ArUco de la mire (défaut `DICT_4X4_50`, **même dictionnaire que les marqueurs du plateau** — voir section 5, problème connu) |
 | `charuco_legacy_pattern` | Voir section 4.2 — **doit être `false`** pour une mire générée par ce projet |
+| `work_area_width_mm` / `work_area_height_mm` | **Distance CENTRE À CENTRE des marqueurs de coin.** La grandeur réellement utilisée par l'homographie. ✅ Mesurée sur le PoC le 2026-08-04 : **205,5 mm**. À privilégier — c'est ce qu'on mesure naturellement au mètre |
+| `plateau_size_mm` (+ `_width_` / `_height_`) | Voie indirecte : mesure bord **EXTÉRIEUR** à bord extérieur, dont une largeur de marqueur est retranchée automatiquement. ⚠️ **Ne JAMAIS y saisir une mesure centre-à-centre** : elle retrancherait une seconde fois les 28 mm du marqueur, soit une erreur silencieuse de 28 mm |
+| `photo_position_x` / `_y` / `_z` | Position où la machine se place avant **toute** acquisition. Défaut `(0,0,0)` = le homing, ce qui convient au PoC (caméra fixe sur le bâti). La CNC aura une vraie position, sa caméra étant solidaire de la seringue — action `M10` |
+| `machine_travel_x_max_mm` / `_y_` / `_z_` | Bornes du domaine atteignable, pour le contrôle de course fait avant chaque dépose. ⚠️ Valeurs actuelles = dimensions **catalogue** d'une Geeetech I3, **jamais relevées** (action `M11`). Une valeur trop **grande** laisse passer un dépassement réel : c'est le sens dangereux |
+| `dry_run_z_clearance_mm` | Marge ajoutée à la hauteur du homing pour la **dépose à blanc** (défaut 2,0). Constatée nécessaire le 2026-08-04 : à la hauteur du homing seule, la pointe passe trop près du dessus des zones |
+| `camera_flush_frames` | Nombre d'images jetées avant celle qu'on garde, à chaque capture (défaut 5). Voir section 4.7 |
 
 `assets/camera_calibration.npz` (coefficients de distorsion objectif) est **gitignoré**
 lui aussi depuis la session v0.1 : il dépend du capteur/objectif physique exact de
@@ -448,6 +454,53 @@ puis le réintègre à la main dans la liste affichée. Verrouillé par le test
 
 ⚠️ **Règle générale à retenir** : ne jamais ouvrir une `VideoCapture` sur un index déjà
 ouvert ailleurs dans le processus, même brièvement, même pour "juste tester".
+
+### 4.7 La photo analysée est celle du cycle PRÉCÉDENT
+
+**Symptôme** (constaté le 2026-08-04) : au second cycle de dépose, l'image analysée
+montre le plateau tel qu'il était à la **fin du cycle précédent**. Les zones sont donc
+détectées au mauvais endroit — et **rien ne le signale** : la photo est nette, les
+marqueurs sont dedans, le diagnostic ressort vert.
+
+**Cause** : le pilote garde quelques images d'avance dans un tampon, et `read()` rend la
+**plus ancienne**, pas la plus récente. L'enchaînement est traître :
+
+1. l'écran d'accueil lit la caméra en continu → tampon frais ;
+2. l'appui sur « Lancer une dépose » **arrête** cette lecture → tampon figé à cet instant ;
+3. le homing et la mise en position durent 30 à 60 s, pendant lesquelles **plus personne
+   ne lit** ;
+4. `capture()` lit une image → celle figée à l'étape 2, donc **d'avant le déplacement**.
+
+**Protection en place** : `Camera.capture()` lit et jette `CAMERA_FLUSH_FRAMES` images
+(défaut 5) avant de garder la suivante. Réglable par `camera_flush_frames`. Verrouillé
+par trois tests dans `test_camera.py`, qui n'ont besoin d'aucun matériel : ils remplacent
+le flux par un faux qui rend des images numérotées.
+
+⚠️ **Symptôme voisin à ne pas confondre** : si l'image est bonne mais que la MACHINE
+semble mal placée, c'est la mise en position qu'il faut regarder (`PhotoPositionWorker`
+dans `gui/workers.py`), pas le tampon.
+
+**Règle générale** : après toute période sans lecture, la première image d'une caméra est
+suspecte. Ne jamais la traiter comme fraîche.
+
+### 4.8 La buse traverse le plateau à la hauteur du homing
+
+**Symptôme** (constaté le 2026-08-04) : au tout début d'un parcours, la buse se déplace
+horizontalement en rasant les pièces avant de monter.
+
+**Cause** : `Machine.move_to()` envoie `G1 X Y` **puis** `G1 Z` — le déplacement XY a donc
+toujours lieu à la hauteur où la buse se trouvait **avant**. Juste après un homing, cette
+hauteur est celle du homing.
+
+**Protection en place** : `Machine.move_z()` déplace **uniquement** l'axe Z, et les deux
+workers de `gui/workers.py` et `gui/screen_execution.py` s'en servent pour se dégager
+avant tout déplacement horizontal. Verrouillé par
+`test_le_worker_se_degage_en_z_avant_tout_deplacement_horizontal`.
+
+⚠️ **Conséquence à garder en tête pour toute évolution** : dans une liste de steps, la
+hauteur à laquelle un déplacement XY a réellement lieu est celle du step **précédent**,
+pas celle du step courant. Un test qui vérifierait le `z` du step qui bouge ne prouverait
+rien — l'erreur a été commise puis corrigée en écrivant l'invariant I2 du lot D1.
 
 ## 5. Lancer les tests
 
