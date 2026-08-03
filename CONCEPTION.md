@@ -780,6 +780,80 @@ produit, pas de la machine. Les coordonnées de prise de vue, à l'inverse, sont
 sur la CNC, c'est donc une caractéristique de machine. Cette séparation est ce qui rendra le
 portage CNC (phase 10) transparent côté code.
 
+### 6.3 Ce que les lots D1 et D2 ont appris (2026-08-04)
+
+> Section volontairement tournée vers les **enseignements** et non vers l'inventaire du
+> code livré, que la section 8 de `CLAUDE.md` détaille déjà. Ce qui suit est ce qui vaut
+> encore quand le code aura changé.
+
+#### La hauteur d'un déplacement est celle du step PRÉCÉDENT
+
+`Machine.move_to()` envoie `G1 X Y` puis `G1 Z` : les deux axes ne bougent pas ensemble.
+Un step qui porte à la fois de nouvelles coordonnées XY et une nouvelle hauteur exécute
+donc son déplacement horizontal **à l'ancienne hauteur**.
+
+Trois conséquences, découvertes séparément avant d'être reliées :
+
+- la remontée en fin de cordon n'est pas une précaution de style : sans elle, le premier
+  déplacement du cordon suivant traîne la buse dans la pâte déjà posée ;
+- il faut un `move_z()` — qui ne bouge que Z — pour se dégager après un homing, sinon la
+  buse traverse le plateau à la hauteur du homing ;
+- **un test qui vérifie le `z` du step qui bouge ne prouve rien.** L'invariant I2, dont
+  c'était pourtant le seul rôle, a été écrit ainsi et ne détectait pas la traînée.
+
+#### Valider les tests par mutation
+
+Chaque batterie de tests de ces deux sous-lots a été éprouvée en **cassant volontairement
+le code** pour vérifier qu'elle réagit. Sur une fonction critique comme la dépose, un test
+vert ne vaut que si l'on sait ce qu'il attrape.
+
+Le rendement a été élevé : trois défauts de test trouvés alors que tout était au vert.
+L'invariant I2 ci-dessus ; une docstring qui attribuait à une ligne un rôle que la
+condition de boucle voisine assurait déjà ; et un avertissement écrit dans la barre de
+statut puis écrasé par le diagnostic avant d'avoir pu être lu.
+
+Ce dernier mérite d'être noté : le test portait sur ce que l'opérateur **voit**, pas sur
+ce que le code fait. C'est ce qui l'a rendu capable de détecter un message correctement
+produit mais jamais affiché.
+
+#### La famille de défauts que ce projet rencontre
+
+Quatre découvertes machine de cette session relèvent du même schéma : **un résultat
+plausible qui ne l'est pas**, sans le moindre signal d'erreur.
+
+| Découverte | Ce qu'on voyait | Ce qui était vrai |
+|---|---|---|
+| Photo périmée (tampon du pilote) | Photo nette, marqueurs dedans, diagnostic vert | Image d'avant le déplacement de la machine |
+| Rognage silencieux de Marlin | Dépose exécutée sans erreur | Coordonnées hors course ramenées à la limite |
+| `MACHINE_ORIGIN_Y = 0` | Une mesure | Une butée de fin de course |
+| Plateau supposé à 220 mm | Une dimension | Une hypothèse jamais vérifiée, fausse de 13,5 mm |
+
+La réponse est chaque fois la même, et c'est celle du `FORMAT_VERSION` du lot C2bis :
+**transformer l'erreur silencieuse en refus bruyant**. D'où le contrôle de course avant
+tout mouvement, et le vidage du tampon caméra avant toute capture.
+
+#### Une capture automatique ne peut rien demander
+
+En ajoutant la mise en position avant chaque photo, la capture automatique s'est mise à
+ouvrir une fenêtre de confirmation quand aucune machine n'était disponible — et à attendre
+une réponse que personne n'était là pour donner.
+
+La règle qui en découle : **tout mode non surveillé doit pouvoir se conclure seul**. Il
+avertit, il ne demande pas. Le symptôme a été un blocage de la suite de tests, qui est
+passée de 35 secondes à un arrêt complet — un rappel utile que les tests détectent aussi
+ce genre de faute, pourvu qu'on remarque leur durée.
+
+#### Deux grandeurs mesurables, deux conventions
+
+La zone de travail se mesure naturellement **d'un centre de tag à l'autre**, mais le
+paramètre historique attendait une mesure **bord à bord**. Confondre les deux coûte 28 mm,
+en silence.
+
+Plutôt que de documenter la conversion, on a rendu saisissable la grandeur que l'on
+mesure réellement (`work_area_width_mm`). Principe applicable ailleurs : **quand une unité
+prête à confusion, ce n'est pas la documentation qu'il faut renforcer, c'est l'interface
+qu'il faut changer**.
+
 ---
 
 ## 7. Module : Rapport (Phase 7)
