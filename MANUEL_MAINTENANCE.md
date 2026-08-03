@@ -60,8 +60,9 @@ G1 Z1 F100           ; descendre près du plateau : de haut, la parallaxe fausse
 M114                 ; X et Y = MACHINE_ORIGIN_X / MACHINE_ORIGIN_Y
 ```
 
-**Relevé du 2026-08-02** : `X:5.00 Y:0.00 Z:0.00 · Count X:394 Y:0 Z:0`
-→ `MACHINE_ORIGIN_X = 5.0`, `MACHINE_ORIGIN_Y = 0.0`.
+**Relevé du 2026-08-02** (buse, sans dispositif de seringue) :
+`X:5.00 Y:0.00 Z:0.00 · Count X:394 Y:0 Z:0` → `MACHINE_ORIGIN` = `5.0 / 0.0`.
+⚠️ **Valeurs périmées**, conservées pour la démarche — voir le relevé du 2026-08-03.
 
 **Vérifier aussi le repère de home**, une fois, et le noter : `G28` suivi d'un `M114`
 immédiat doit rendre `X:0.00 Y:0.00 Count 0/0`. C'est ce qui prouve qu'il n'y a ni
@@ -69,21 +70,51 @@ immédiat doit rendre `X:0.00 Y:0.00 Count 0/0`. C'est ce qui prouve qu'il n'y a
 un reset EEPROM décalerait toute la dépose **sans rien signaler**. Vérifié conforme le
 2026-08-02.
 
-> ⚠️ **Réserve non levée sur l'axe Y** (action `M2 bis`). Le relevé Y valait `0.00` avec un
-> compteur de pas à **0 exact** : l'axe Y n'avait donc pas bougé depuis le homing. Soit le
-> marqueur 2 tombait déjà sous la buse, soit le plateau **butait sur la fin de course** et
-> `0` est une limite et non une mesure. Non départagé.
+#### ✅ Relevé du 2026-08-03 — valeurs en vigueur (action `M2 bis`)
+
+Le relevé a été repris **dispositif de seringue monté**, et **dans l'autre sens** : au lieu
+d'amener la buse sur le marqueur puis de lire `M114`, on laisse la machine au homing et on
+regarde **où tombe la pointe** dans le repère plateau. C'est plus commode, et ça vise
+directement la pointe qui dépose plutôt que la buse.
+
+**Relevé** : au homing, la pointe de seringue est au point **`(-6.0, +2.0)`** du repère
+plateau.
+
+La conversion `plateau = machine - ORIGIN`, appliquée au homing où `machine = (0, 0)`,
+donne par simple inversion :
+
+```
+-6 = 0 - MACHINE_ORIGIN_X   →   MACHINE_ORIGIN_X = +6.0
++2 = 0 - MACHINE_ORIGIN_Y   →   MACHINE_ORIGIN_Y = -2.0
+```
+
+Ce relevé **absorbe l'action `M2 ter`** (mesure du décalage buse ↔ pointe), qui n'a plus
+lieu d'être puisqu'on vise la pointe. Recoupement avec la mesure de la veille, prise sur la
+buse : l'écart buse↔pointe ressort à `(-1, +2)` mm, crédible pour un support de seringue.
+Les deux mesures se confirment mutuellement.
+
+> 🔎 **Ce que ce relevé a tranché.** La veille, `Y` valait `0.00` avec un compteur de pas à
+> **0 exact** — l'axe n'avait pas bougé d'un pas depuis le homing. Deux lectures étaient
+> possibles : soit le marqueur 2 tombait déjà sous la buse, soit le plateau **butait sur la
+> fin de course** et `0` était une limite, pas une mesure. La nouvelle valeur, **négative**,
+> tranche pour la butée.
 >
-> Le second cas est plausible : les marqueurs sont aux coins d'un cadre de 220 mm depuis le
-> 2026-07-30, pour une course utile de l'ordre de 200 mm. S'il se confirme, le bord bas du
-> plateau est **hors course**, `MACHINE_ORIGIN_Y` devrait être négatif, et toute la dépose
-> est décalée en Y. **C'est le premier suspect en cas de décalage constaté.**
+> **Règle de diagnostic à retenir** : une grandeur relevée à `0` exact, sur un axe dont le
+> compteur de pas est lui aussi à `0` exact, est presque toujours une **butée** et non une
+> mesure.
+
+> ⚠️ **CONSÉQUENCE PHYSIQUE — une bande de 2 mm en bas du plateau est HORS COURSE.**
+> Atteindre `plateau_y = 0` demanderait `machine_y = -2`, en deçà de la fin de course : seul
+> `plateau_y >= 2` est réellement atteignable.
 >
-> Comment trancher, en 30 secondes : amener la buse en `X5 / Y0` et regarder — la pointe
-> est-elle au centre du marqueur 2, ou celui-ci est-il encore à distance ?
+> **Le piège** : Marlin ne refuse pas une coordonnée hors course, il la **rogne en
+> silence**. Une dépose déformée passerait donc pour une erreur de vision ou de calibration.
+> C'est pourquoi le lot D1 ajoute un **contrôle de course avant le premier mouvement**, qui
+> fait échouer le lancement en nommant la zone fautive.
 >
-> ⚠️ Même si la mesure est juste, une origine à `Y = 0` ne laisse **aucune marge** avant la
-> fin de course : un cordon tracé un peu bas sort de la course de la machine.
+> **En dépannage** : si une dépose ressort tassée vers le bas du plateau, vérifier d'abord
+> que les cordons ne descendent pas sous `plateau_y = 2`. Le remède durable est mécanique —
+> rapprocher le plateau du fond — et non logiciel.
 
 **Pas/mm** : le rapport `Count / position` donne les pas/mm de l'axe — ici 394 pas pour
 5,00 mm, soit ≈ 78,74 pas/mm (courroie MXL, valeur Geeetech classique). Utile comme
