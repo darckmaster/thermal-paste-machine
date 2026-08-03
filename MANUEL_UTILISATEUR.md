@@ -473,11 +473,32 @@ la seule sortie est le bouton d'arrêt — pour qu'il reste toujours accessible.
 
 ### Le bilan de fin
 
-Il rappelle le produit, le nombre de zones déposées et le temps total.
+À la fin du cycle, la machine **revient en position de prise de vue et photographie le
+plateau**. Le bilan affiche cette vue, puis rappelle le produit, le nombre de zones
+déposées et le temps total.
 
 **Après un arrêt**, il détaille en plus **zone par zone** ce qui a été déposé et ce qui ne
 l'a pas été. ⚠️ Une zone interrompue en cours de cordon a reçu une **dose partielle** :
 la vérifier avant de relancer.
+
+⚠️ **Après un arrêt, la machine n'est pas redéplacée** pour la photo. L'arrêt la met hors
+service jusqu'au redémarrage : on photographie donc là où elle s'est immobilisée. Le
+bilan et le rapport le signalent — le cadrage n'est pas celui des autres rapports, et
+deux vues ne sont alors pas comparables.
+
+### Imprimer le rapport
+
+Le bouton **« Imprimer le rapport »** produit un PDF. Il **ne ferme pas** le bilan : vous
+pouvez imprimer, relire, et réimprimer si besoin. Le chemin du fichier s'affiche sous les
+boutons.
+
+Les rapports sont écrits dans le dossier **`reports/` à la racine du projet**, quel que
+soit l'endroit d'où l'application a été lancée. Deux rapports produits dans la même
+seconde ne s'écrasent pas : le second reçoit un suffixe.
+
+Le PDF contient la vue de fin, le produit, le nombre de zones, le temps total et la
+longueur tracée. En cas d'interruption, il ajoute le détail par zone. En dépose à blanc,
+il l'annonce en tête : **le rapport atteste d'un parcours, pas d'une dépose**.
 
 ### Si la dépose est refusée avant de démarrer
 

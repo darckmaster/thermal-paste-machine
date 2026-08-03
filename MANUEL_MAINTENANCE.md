@@ -502,6 +502,44 @@ hauteur à laquelle un déplacement XY a réellement lieu est celle du step **pr
 pas celle du step courant. Un test qui vérifierait le `z` du step qui bouge ne prouverait
 rien — l'erreur a été commise puis corrigée en écrivant l'invariant I2 du lot D1.
 
+### 4.9 Les couleurs des rapports PDF sont fausses (rouge et bleu échangés)
+
+**Symptôme** : sur un rapport PDF, la photo a des teintes anormales — le rouge apparaît
+bleu et inversement. Peu visible sur un plateau grisâtre, flagrant dès qu'une pièce
+colorée est dans le champ.
+
+**Cause** (défaut présent de la Phase 7 au 2026-08-04) : `reporter.py` appelait
+`cv2.cvtColor(image, COLOR_BGR2RGB)` **avant** `cv2.imwrite`. Or `imwrite` suppose déjà
+que le tableau reçu est en BGR et fait la conversion lui-même : convertir en amont
+revenait à la faire **deux fois**.
+
+**Protection en place** : l'écriture passe par `reporter._ecrire_image_temporaire()`, qui
+donne le tableau BGR tel quel à `imwrite`. Verrouillé par
+`test_l_image_du_rapport_n_a_pas_le_rouge_et_le_bleu_inverses`, qui écrit un bleu franc et
+vérifie qu'il ressort bleu.
+
+⚠️ **Règle à retenir** : `cv2.imwrite` attend du **BGR**, `QImage.Format_RGB888` attend du
+**RGB**. Le premier ne demande aucune conversion, le second en demande une. Les confondre
+ne provoque jamais d'erreur — seulement une image fausse.
+
+### 4.10 Les rapports PDF n'apparaissent pas dans `reports/`
+
+**Deux causes possibles, distinctes.**
+
+**(a) Ils ont été écrits ailleurs** (corrigé le 2026-08-04). Le dossier de sortie était le
+chemin **relatif** `"reports"`, qui suit le répertoire courant : lancer l'application
+autrement qu'en se plaçant d'abord à la racine — raccourci, service au démarrage du RPi,
+double-clic — dispersait les rapports. `modules/config.py::REPORTS_DIR` est désormais un
+chemin absolu calculé depuis l'emplacement du code, comme `PREPARATIONS_DIR`.
+
+**(b) Un rapport en a écrasé un autre** (corrigé le 2026-08-04). Le nom de fichier n'a
+qu'un horodatage **à la seconde** : deux rapports produits dans la même seconde portaient
+le même nom. `Reporter._chemin_libre()` suffixe désormais plutôt que d'écraser.
+
+⚠️ **Règle générale** : tout chemin de sortie du projet doit être calculé depuis
+`os.path.dirname(__file__)`, jamais relatif au répertoire courant. Un fichier écrit au
+mauvais endroit ne provoque aucune erreur — il disparaît simplement de la vue.
+
 ## 5. Lancer les tests
 
 ```bash
