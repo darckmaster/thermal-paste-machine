@@ -67,43 +67,55 @@ WORK_AREA_HEIGHT_MM = PLATEAU_HEIGHT_MM - ARUCO_MARKER_SIZE_MM  # 192.0 par déf
 DISPENSE_Z_HEIGHT_MM = 1.0      # Hauteur buse au-dessus de la pièce pendant la dépose
 MACHINE_Z_TRAVEL_MM = 5.0      # Hauteur de transit entre les points (assez haut pour ne rien toucher)
 
-# Origine du repère plateau dans le repère machine (mesuré le 2026-08-02 via M114)
+# Origine du repère plateau dans le repère machine (mesuré le 2026-08-03)
 # = position machine (mm depuis G28) du marqueur **2**, coin BAS-GAUCHE du plateau.
 # La formule de conversion (appliquée dans gui/screen_run.py) est :
 #     machine_x = plateau_x + MACHINE_ORIGIN_X   ← addition, les deux X vont vers la droite
 #     machine_y = plateau_y + MACHINE_ORIGIN_Y   ← addition AUSSI depuis le lot C2bis : le
 #                                                  repère plateau monte comme l'axe machine
-# ✅ MESURÉ le 2026-08-02 sur la Geeetech (action M2) : `G28`, puis pointage manuel de la buse
-# au-dessus du centre du marqueur 2, puis `M114`. Remplace les valeurs 20/50 du 2026-07-01,
-# qui dataient de deux conventions de repère en arrière.
 #
-#   Relevé brut : X:5.00 Y:0.00 Z:0.00 — Count X:394 Y:0 Z:0
+# ✅ MESURÉ le 2026-08-03 sur la Geeetech, dispositif de seringue MONTÉ (action M2 bis).
+# Le relevé est pris dans l'autre sens que celui du 2026-08-02, et c'est plus commode : au
+# lieu d'amener la buse sur le marqueur puis de lire M114, on lit où tombe la pointe quand
+# la machine est au homing. Relevé d'Erwann :
 #
-# Le repère de home a été vérifié le même jour : `G28` suivi d'un `M114` immédiat rend
-# X:0.00 Y:0.00 Count 0/0. Il n'y a donc ni `X_MIN_POS` non nul ni décalage `M206` en EEPROM,
-# et les 5 mm en X sont bien un déplacement réel (394 pas ÷ 78,74 pas/mm ≈ 5,00 mm). Cette
-# vérification compte : un `M206` en EEPROM, effacé un jour par un reset, décalerait toute la
-# dépose sans rien signaler.
+#   Au homing, la POINTE DE SERINGUE est au point (-6.0, +2.0) du repère plateau.
 #
-# ⚠️ RÉSERVE SUR L'AXE Y — premier suspect si la dépose ressort décalée. Le relevé Y valait
-# 0.00 avec un compteur de pas à 0 EXACT : l'axe Y n'avait donc pas bougé d'un pas depuis le
-# homing. Deux lectures possibles, non départagées au moment d'enregistrer — soit le marqueur
-# 2 tombait déjà sous la buse en Y, soit le plateau butait sur la fin de course et 0 est une
-# LIMITE, pas une mesure. Le second cas est plausible : les marqueurs sont aux coins d'un
-# cadre de 220 mm depuis le 2026-07-30, pour une course utile de l'ordre de 200 mm. Si c'est
-# lui, le bord bas du plateau est hors course, `MACHINE_ORIGIN_Y` devrait être négatif, et
-# toute la dépose est décalée en Y. Le vérifier à l'œil : buse en X5/Y0, la pointe est-elle
-# au centre du marqueur 2, ou celui-ci est-il encore à distance ?
+# On en déduit l'origine par simple inversion. La conversion ci-dessus se relit
+# `plateau = machine - ORIGIN` ; appliquée au homing, où `machine = (0, 0)` :
+#     -6 = 0 - MACHINE_ORIGIN_X   →   MACHINE_ORIGIN_X = +6.0
+#     +2 = 0 - MACHINE_ORIGIN_Y   →   MACHINE_ORIGIN_Y = -2.0
 #
-# ⚠️ Fragilité valable même si la mesure est juste : avec une origine à Y=0, le bord bas du
-# plateau tombe EXACTEMENT sur la fin de course. Aucune marge — un cordon tracé un peu bas,
-# ou une erreur de calibration d'un millimètre, sort de la course de la machine.
+# Ce relevé vise la POINTE et non la buse : il absorbe l'action M2 ter, qui devait mesurer
+# séparément le décalage entre les deux. Recoupement avec la mesure du 2026-08-02 (qui
+# visait la buse, sans seringue montée) : l'écart buse↔pointe ressort à (-1, +2) mm, un
+# ordre de grandeur crédible pour un support de seringue. Les deux mesures se confirment.
+#
+# 🔎 CE QUE CETTE MESURE A TRANCHÉ. Le relevé du 2026-08-02 donnait Y = 0.00 avec un
+# compteur de pas à 0 EXACT : l'axe Y n'avait donc pas bougé d'un pas depuis le homing, et
+# la valeur avait été enregistrée sous réserve — soit le marqueur 2 tombait déjà sous la
+# buse, soit le plateau BUTAIT sur la fin de course et 0 était une limite, pas une mesure.
+# La nouvelle valeur, NÉGATIVE, tranche pour la seconde lecture : c'était bien une butée.
+# Leçon à garder : une grandeur relevée à 0 exact, sur un axe dont le compteur de pas est
+# lui aussi à 0 exact, est presque toujours une butée et non une mesure.
+#
+# ⚠️ CONSÉQUENCE PHYSIQUE À NE PAS OUBLIER — une bande de 2 mm en bas du plateau est HORS
+# COURSE. Atteindre `plateau_y = 0` demanderait `machine_y = -2`, en deçà de la fin de
+# course : seul `plateau_y >= 2` est réellement atteignable. Un cordon tracé plus bas ne
+# fera PAS échouer Marlin, qui rogne les coordonnées hors course EN SILENCE — la dépose
+# sortirait déformée et passerait pour une erreur de vision. D'où le contrôle de course
+# décidé pour le lot D1 (décision D12, CLAUDE.md section 8), à faire AVANT le premier
+# mouvement et à signaler en nommant la zone fautive.
 #
 # ⚠️ Le SENS des axes machine (action M4) reste à établir en interactif, machine sous
-# tension : les deux additions ci-dessus sont cohérentes avec la nouvelle convention, mais
-# ne sont pas validées sur la machine. À trancher au lot D.
-MACHINE_ORIGIN_X = 5.0    # X machine du marqueur 2 (bas-gauche) — mesuré le 2026-08-02
-MACHINE_ORIGIN_Y = 0.0    # Y machine du marqueur 2 (bas-gauche) — mesuré le 2026-08-02, voir réserve
+# tension. Le relevé ci-dessus est COHÉRENT avec les deux additions, mais il ne les prouve
+# pas : il a été pris en se plaçant déjà dans cette convention. C'est le passage visible au
+# zéro de chaque zone (décision D8 du lot D) qui le validera, à l'œil, pendant D2.
+#
+# 📜 Historique des valeurs : 20/50 (2026-07-01, deux conventions de repère en arrière),
+# puis 5.0/0.0 (2026-08-02, buse sans seringue, réserve sur Y), puis les valeurs actuelles.
+MACHINE_ORIGIN_X = 6.0    # X machine du marqueur 2 (bas-gauche) — pointe, 2026-08-03
+MACHINE_ORIGIN_Y = -2.0   # Y machine du marqueur 2 — NÉGATIF : bas du plateau hors course
 
 # Calibration caméra
 # Nombre minimum d'images à capturer avant de pouvoir lancer la calibration
