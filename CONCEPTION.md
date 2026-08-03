@@ -856,6 +856,62 @@ qu'il faut changer**.
 
 ---
 
+### 6.4 Le rapport de fin de cycle (lot D3, 2026-08-04)
+
+#### Séparer le contenu du rendu
+
+`reporter.plateau_report_lines()` rend le rapport **ligne par ligne**, et
+`_build_plateau_pdf()` ne fait que l'habiller. Ce n'est pas une élégance gratuite : la
+règle qui gouverne ce rapport — détail par zone **uniquement** en cas d'interruption
+(décision D9) — est une règle de **contenu**. La vérifier à travers un PDF compressé
+aurait demandé un extracteur de texte, pour un test lent et fragile ; ici elle se lit et
+se teste directement.
+
+Principe réutilisable : **quand une règle métier gouverne un document, extraire le
+document du moteur de rendu.**
+
+#### Ne pas redéplacer une machine arrêtée
+
+L'arrêt d'urgence envoie `M112`, qui met Marlin hors service jusqu'au redémarrage. La
+photo de fin ne peut donc pas être prise depuis la position de référence après un arrêt.
+
+Trois réponses étaient possibles : ne pas photographier, photographier en silence, ou
+photographier en le disant. La troisième a été retenue — la vue reste informative, elle
+montre ce qui a été déposé, mais un rapport qui tairait le changement de cadrage
+laisserait comparer deux plateaux qui ne sont pas comparables.
+
+#### Les trois défauts silencieux de cette session
+
+Ils prolongent le tableau de la section 6.3 et confirment le même schéma : **aucun ne
+provoquait d'erreur**.
+
+| Défaut | Depuis | Ce qu'on voyait |
+|---|---|---|
+| `cvtColor(BGR2RGB)` avant `cv2.imwrite` | Phase 7 (2026-07-01) | Un rapport normal, aux couleurs simplement « bizarres » |
+| Nom de rapport horodaté à la seconde | Phase 7 | Un rapport produit — mais qui avait remplacé le précédent |
+| Dossier de sortie relatif au répertoire courant | Phase 7 | Aucun rapport là où on l'attendait |
+
+Deux règles générales en sortent, applicables bien au-delà de ce module :
+
+- **`cv2.imwrite` attend du BGR** et fait lui-même la conversion ; `QImage.Format_RGB888`
+  attend du RGB et en demande une. Les confondre ne lève jamais d'exception — seulement
+  une image fausse.
+- **Tout chemin de sortie se calcule depuis `os.path.dirname(__file__)`**, jamais
+  relativement au répertoire courant. Un fichier écrit au mauvais endroit ne provoque
+  aucune erreur : il disparaît de la vue.
+
+#### Un test d'emplacement qui prouve quelque chose
+
+Vérifier que le dossier de sortie est **absolu** ne prouve rien : il pourrait être rendu
+absolu à partir du répertoire courant, ce qui reproduirait exactement le défaut. Le test
+retenu **change réellement de répertoire courant** avant de construire le `Reporter`.
+
+C'est la même exigence que celle posée le 2026-08-02 sur les transformations
+géométriques : **contrôler la propriété dans les conditions qui produiraient le défaut**,
+et non dans celles où il ne peut pas se manifester.
+
+---
+
 ## 7. Module : Rapport (Phase 7)
 
 ### Contenu du rapport PDF
