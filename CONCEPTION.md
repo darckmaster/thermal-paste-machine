@@ -699,6 +699,87 @@ Rappel affiché dans le dialogue, parce qu'il n'est pas devinable : l'épaisseur
 
 **Résultat** : 32 tests dédiés (`test_dialogs.py` créé, `test_screen_cordons.py` et `test_preparation.py` enrichis), 193/193 pour la suite complète.
 
+### 6.2 Exécution multi-zones — conception (lot D, cadré le 2026-08-03)
+
+> La **spécification** détaillée (processus pas à pas, 14 décisions, 5 sous-lots, 10
+> invariants de test) vit dans `CLAUDE.md` section 8. On ne consigne ici que la
+> **conception** : les quelques choix de structure qui commandent tout le reste, et
+> pourquoi ils ont été faits ainsi. Dupliquer la spécification ferait diverger les deux
+> documents, et c'est toujours celui qu'on ne relit pas qui reste à jour.
+
+#### Le planner produit le plateau entier, pas une zone
+
+`generate_plateau_path()` rend la liste de steps de **tout le plateau** en une fois, plutôt
+qu'une liste par zone que l'écran concaténerait. Ce n'est pas un détail d'organisation :
+c'est ce qui rend l'ordre de parcours, le relevage entre cordons et le contrôle de course
+**testables sans interface**. Le sous-lot D1 se livre ainsi avec sa batterie de tests et
+sans toucher un seul fichier de `gui/` — la dépose étant la fonction critique de la
+machine, on veut que sa logique soit vérifiable ailleurs que dans une IHM.
+
+Corollaire pratique : un cordon est déjà un chemin autonome (montée, descente, tracé,
+remontée) dans `generate_path_from_line()`. **Les enchaîner revient donc à les
+concaténer**, et le relevage de buse entre deux cordons vient gratuitement. L'implémentation
+la plus simple est ici aussi la plus sûre — c'est rare, autant en profiter.
+
+#### Trois repères, et un seul endroit où ils se rejoignent
+
+La chaîne est `repère de zone → repère plateau → repère machine`. Les deux premières
+conversions existent depuis le lot B (`to_plateau_mm`), la troisième est l'addition de
+`MACHINE_ORIGIN`. Le lot D ne crée **aucun repère nouveau** : il enchaîne des conversions
+déjà écrites. C'est le bénéfice différé du changement de convention du lot C2bis, qui avait
+été payé cher précisément pour que cette étape-ci soit sans surprise.
+
+⚠️ Ce que cette chaîne ne garantit pas : le **sens réel** des axes machine (action `M4`).
+Les tests peuvent épingler la convention du logiciel, pas la réalité physique. D'où la
+décision de faire passer la buse **visiblement** par le zéro de chaque zone : c'est le seul
+contrôle disponible tant que la dépose se fait sans pâte, et il se lit à l'œil.
+
+#### La dépose à blanc, ou comment séparer le mouvement de la matière
+
+Neutraliser l'extrusion (`amount = 0`) **et** aplatir les hauteurs
+(`z_travel = z_dispense = Z du homing`) donne un mode où la machine exécute tout le
+parcours sans rien déposer et sans jamais bouger en Z. Deux conséquences de conception :
+
+- l'action `M3` (hauteur Z de la pointe) **sort du chemin critique** — elle n'est plus
+  requise qu'au sous-lot D4, celui de l'extrusion réelle ;
+- le parcours complet — vision, sélection, conversions de repères, ordre des zones,
+  mouvement — devient validable **avant** d'avoir réglé quoi que ce soit de la pâte.
+
+Ce mode est né d'une contrainte de calendrier (soutenance blanche du 2026-08-05, où seul le
+mouvement fait effet). Il est conservé ensuite pour ce qu'il vaut en exploitation : essayer
+un plateau neuf sans risque et sans gâcher de pâte.
+
+#### Le contrôle de course, rendu nécessaire par une mesure
+
+Le relevé du 2026-08-03 donne `MACHINE_ORIGIN_Y = −2.0` : atteindre `plateau_y = 0`
+demanderait `machine_y = −2`, en deçà de la fin de course. **Une bande de 2 mm en bas du
+plateau est donc hors d'atteinte.**
+
+Le point de conception n'est pas la bande elle-même, c'est le **mode de défaillance** :
+Marlin ne refuse pas une coordonnée hors course, il la **rogne en silence**. Une dépose
+déformée passerait alors pour une erreur de vision ou de calibration, et se chercherait du
+mauvais côté. D'où un contrôle explicite **avant le premier mouvement**, qui fait échouer le
+lancement en nommant la zone fautive. C'est la même famille de décision que le
+`FORMAT_VERSION` du lot C2bis : transformer une erreur silencieuse en refus bruyant.
+
+#### Deux tempos, parce que la pâte a de l'inertie aux deux bouts
+
+La pâte thermique est très visqueuse. Au démarrage elle met un temps à sortir ; à l'arrêt
+elle continue sous la pression accumulée dans la seringue. D'où un **amorçage** (extruder à
+l'arrêt pendant `N` secondes avant de bouger) et une **anticipation de fin** (couper
+l'extrusion `X` mm avant la fin du tracé, et finir à vide).
+
+Les unités ne sont pas interchangeables : l'amorçage se règle en **secondes** parce qu'on
+regarde la pâte sortir, l'anticipation en **millimètres** parce qu'on regarde le cordon
+dépasser. Une anticipation exprimée en secondes se décalerait toute seule dès qu'on
+changerait la vitesse de dépose — le réglage ne tiendrait pas.
+
+Les deux vivent dans `Settings`, donc **par préparation** : ils dépendent de la pâte et du
+produit, pas de la machine. Les coordonnées de prise de vue, à l'inverse, sont dans
+`local_config.json` : la caméra est fixe sur le bâti sur le PoC et solidaire de la seringue
+sur la CNC, c'est donc une caractéristique de machine. Cette séparation est ce qui rendra le
+portage CNC (phase 10) transparent côté code.
+
 ---
 
 ## 7. Module : Rapport (Phase 7)
