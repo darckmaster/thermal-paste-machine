@@ -229,6 +229,16 @@ PREPARATIONS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "preparations")
 )
 
+# Rapports PDF de fin de cycle. Même motif de calcul que ci-dessus, et pour la même
+# raison : un chemin RELATIF ferait écrire les rapports dans le répertoire courant, qui
+# n'est pas celui du projet dès qu'on lance l'application autrement qu'en se plaçant
+# d'abord à sa racine — un raccourci du bureau, un service au démarrage du RPi, un
+# double-clic. Les rapports finiraient éparpillés à des endroits qu'on ne penserait pas
+# à aller regarder, sans que rien ne le signale.
+REPORTS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "reports")
+)
+
 # Paramètres de dépose par défaut, repris dans chaque nouvelle préparation.
 # Ils déterminent ensemble la quantité de pâte déposée : plus la buse avance lentement
 # pour une vitesse d'extrusion donnée, plus le cordon est épais.

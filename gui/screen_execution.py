@@ -1,4 +1,4 @@
-# Écran d'exécution multi-zones — lot D2
+# Écran d'exécution multi-zones — lots D2 et D3
 #
 # C'est le nouveau point d'entrée de la dépose : un seul bouton depuis l'accueil, et
 # l'opérateur est guidé jusqu'au bout du cycle. Il remplacera à terme le trio historique
@@ -17,7 +17,7 @@
 #   8. modale de confirmation (annuler = revenir à l'étape 6, pas à l'accueil)
 #   9. nouveau homing, puis la dépose
 #  10. modale de progression : avancement, zones faites, temps, pause, arrêt
-#  11. bilan de fin  (la photo de fin et le rapport PDF arrivent au sous-lot D3)
+#  11. retour en position de prise de vue, photo de fin, bilan et rapport PDF
 #  12. acquittement, homing, retour à l'accueil
 #
 # Pourquoi tout ce qui touche la machine passe par un thread : une commande G-code bloque
@@ -43,7 +43,7 @@ from gui.dialogs import (
     PreparationPickerDialog,
 )
 from gui.screen_cordons import _label_vers_image
-from gui.workers import PhotoPositionWorker
+from gui.workers import PhotoPositionRunner, PhotoPositionWorker
 from modules.config import (
     DISPENSE_Z_HEIGHT_MM, MACHINE_Z_TRAVEL_MM,
     PHOTO_POSITION_X, PHOTO_POSITION_Y, PHOTO_POSITION_Z,
@@ -54,6 +54,7 @@ from modules.path_planner import (
     sort_zones_for_deposit,
 )
 from modules.preparation import load_preparation
+from modules.reporter import Reporter
 from modules.vision import VisionProcessor
 
 # Couleurs BGR (convention OpenCV) des trois états d'une zone à l'écran.
@@ -404,6 +405,13 @@ class ScreenExecution(QWidget):
         self._thread_depose: QThread | None = None
         self._worker_depose = None
 
+        # Retour en position de prise de vue pour la photo de fin (sous-lot D3).
+        # Runner distinct de celui du début : les deux ne se croisent jamais, mais
+        # partager l'objet obligerait à débrancher puis rebrancher son signal `done`
+        # entre les deux usages — exactement le genre de bascule qu'on oublie.
+        self._runner_fin = PhotoPositionRunner(self)
+        self._runner_fin.done.connect(self._on_position_fin_atteinte)
+
         self._dialogue_progression = None
         self._depart = 0.0
         self._chrono = QTimer(self)
@@ -412,6 +420,13 @@ class ScreenExecution(QWidget):
         self._zones_faites: list = []
         self._zones_prevues: list = []
         self._dry_run = True
+        # État de fin de cycle, renseigné au moment où la dépose s'achève
+        self._secondes_totales = 0
+        self._interrompu = False
+        self._cadrage_incertain = False
+        # Ce que la trajectoire prévoyait de déposer — calculé une fois, au lancement
+        self._longueur_deposee_mm = 0.0
+        self._quantite_deposee_mm = 0.0
 
         self._setup_ui()
 
@@ -722,6 +737,12 @@ class ScreenExecution(QWidget):
 
     def _lancer_depose(self, steps: list, zones: list) -> None:
         self._zones_faites = []
+        # Longueur réellement tracée et quantité extrudée, lues sur la trajectoire qui
+        # va être exécutée. Calculées ici plutôt qu'à partir des cordons de la
+        # préparation : ce sont les steps qui font foi, et eux seuls tiennent compte de
+        # l'anticipation de fin de cordon et du nombre de zones retenues.
+        self._longueur_deposee_mm = _longueur_des_deposes(steps)
+        self._quantite_deposee_mm = sum(s["amount"] for s in steps)
         self._zones_prevues = [z.id_top_left for z in sort_zones_for_deposit(zones)]
         settings = self._preparation.settings
 
@@ -804,24 +825,96 @@ class ScreenExecution(QWidget):
     # ------------------------------------------------------------------ étapes 11-12
 
     def _fin_de_depose(self, interrompu: bool) -> None:
+        """Fin du cycle : photo de fin, puis bilan (sous-lot D3)."""
         self._chrono.stop()
-        secondes = int(time.monotonic() - self._depart)
+        self._secondes_totales = int(time.monotonic() - self._depart)
+        self._interrompu = interrompu
 
         if self._dialogue_progression is not None:
             self._dialogue_progression.accept()
             self._dialogue_progression = None
 
+        # ⚠️ Après un ARRÊT, on ne redéplace PAS la machine. `emergency_stop()` envoie
+        # `M112`, qui met Marlin en arrêt d'urgence : il ne répond plus tant qu'il n'a pas
+        # été redémarré. Lui demander de se mettre en position échouerait, et surtout
+        # ferait attendre l'opérateur pour rien devant une machine bloquée.
+        # On photographie donc là où elle s'est arrêtée, en le signalant.
+        if interrompu or self._machine is None:
+            self._cadrage_incertain = interrompu
+            self._afficher_bilan(self._capturer_vue_de_fin())
+            return
+
+        self._status.setText("Retour en position de prise de vue...")
+        self._cadrage_incertain = False
+        self._runner_fin.start(
+            self._machine, (PHOTO_POSITION_X, PHOTO_POSITION_Y, PHOTO_POSITION_Z)
+        )
+
+    @pyqtSlot(bool)
+    def _on_position_fin_atteinte(self, reussi: bool) -> None:
+        """La machine est revenue en position de prise de vue — ou n'a pas pu."""
+        # Un échec ici ne doit pas priver l'opérateur de son bilan : le cycle a eu lieu,
+        # il doit pouvoir en rendre compte. On note simplement que le cadrage n'est pas
+        # celui de référence.
+        self._cadrage_incertain = not reussi
+        self._afficher_bilan(self._capturer_vue_de_fin())
+
+    def _capturer_vue_de_fin(self):
+        """Photographier le plateau en fin de cycle. Rend None si c'est impossible.
+
+        Une photo ratée ne doit pas faire échouer la fin de cycle : le bilan chiffré et
+        le rapport restent produisibles sans elle.
+        """
+        if self._camera is None:
+            return None
+        try:
+            return self._camera.capture()
+        except Exception:
+            return None
+
+    def _afficher_bilan(self, image) -> None:
         bilan = DepositSummaryDialog(
             product_name=self._preparation.product_name,
             zones_faites=self._zones_faites,
             zones_prevues=self._zones_prevues,
-            secondes=secondes,
-            interrompu=interrompu,
+            secondes=self._secondes_totales,
+            interrompu=self._interrompu,
             dry_run=self._dry_run,
+            image=image,
+            cadrage_incertain=self._cadrage_incertain,
             parent=self,
+        )
+        bilan.report_requested.connect(
+            lambda: self._imprimer_rapport(bilan, image)
         )
         bilan.exec_()
         self.back_requested.emit()
+
+    def _imprimer_rapport(self, bilan, image) -> None:
+        """Produire le PDF de fin de cycle et dire où il a été écrit.
+
+        C'est l'écran qui le fait et non le dialogue : générer un PDF n'est pas le
+        travail d'une boîte de dialogue, et l'écran seul connaît les longueurs déposées.
+        """
+        try:
+            chemin = Reporter().generate_plateau_report(
+                image=image,
+                product_name=self._preparation.product_name,
+                zones_faites=self._zones_faites,
+                zones_prevues=self._zones_prevues,
+                seconds=self._secondes_totales,
+                interrupted=self._interrompu,
+                dry_run=self._dry_run,
+                length_mm=self._longueur_deposee_mm,
+                amount_mm=self._quantite_deposee_mm,
+                cadrage_incertain=self._cadrage_incertain,
+            )
+        except Exception as e:
+            # Message rendu à l'opérateur plutôt qu'une exception qui remonte : le cycle
+            # est terminé, une impression ratée ne doit pas faire disparaître le bilan.
+            bilan.set_report_result(f"Impression impossible : {e}")
+            return
+        bilan.set_report_result(f"Rapport enregistre : {chemin}")
 
     # ------------------------------------------------------------------ erreurs
 
@@ -838,3 +931,20 @@ class ScreenExecution(QWidget):
     def _echec(self, message: str) -> None:
         self._avertir(message)
         self.back_requested.emit()
+
+
+def _longueur_des_deposes(steps: list) -> float:
+    """Longueur totale RÉELLEMENT tracée en déposant, en mm.
+
+    Ne compte que les steps de dépose : les déplacements à vide et le passage au zéro de
+    chaque zone parcourent de la distance sans rien poser. Les inclure gonflerait la
+    longueur annoncée dans le rapport, qui doit correspondre à ce qu'on voit sur la pièce.
+    """
+    total = 0.0
+    precedent = None
+    for step in steps:
+        if precedent is not None and step["type"] == "dispense":
+            total += ((step["x"] - precedent["x"]) ** 2
+                      + (step["y"] - precedent["y"]) ** 2) ** 0.5
+        precedent = step
+    return total

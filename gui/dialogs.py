@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
     QCheckBox, QProgressBar, QMessageBox,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QPixmap
 
 from modules.preparation import (
     Settings,
@@ -344,6 +345,22 @@ class SettingsDialog(QDialog):
 # Lot D2 — les trois modales du cycle de dépose
 # ===========================================================================
 
+def _pixmap_depuis_image(image, largeur_max: int) -> QPixmap:
+    """Convertit une image OpenCV (BGR) en QPixmap mis à l'échelle.
+
+    Les imports d'OpenCV et de Qt sont faits ici plutôt qu'en tête de module : ce fichier
+    ne sert qu'à des boîtes de dialogue, et seule celle-ci a besoin d'afficher une image.
+    """
+    import cv2
+    from PyQt5.QtGui import QImage
+
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    hauteur, largeur, canaux = rgb.shape
+    qimage = QImage(rgb.data, largeur, hauteur, canaux * largeur, QImage.Format_RGB888)
+    return QPixmap.fromImage(qimage).scaledToWidth(
+        largeur_max, Qt.SmoothTransformation
+    )
+
 class ConfirmDepositDialog(QDialog):
     """Dernier point d'arrêt avant que la machine ne bouge.
 
@@ -547,11 +564,19 @@ class DepositSummaryDialog(QDialog):
     c'est exactement l'inverse — savoir quelles pièces ont reçu de la pâte est le seul
     renseignement qui compte.
 
-    ⚠️ Sous-lot D2 : la vue de fin et le bouton d'impression PDF arrivent au sous-lot D3.
+    La **vue de fin** et le bouton d'impression sont arrivés au sous-lot D3. La vue peut
+    être absente (`image=None`) : le cycle reste rapportable même si la photo a échoué, et
+    un bilan sans vue vaut mieux que pas de bilan.
     """
 
+    # L'opérateur demande l'impression du rapport. C'est l'écran qui le produit, pas ce
+    # dialogue : générer un PDF n'est pas le travail d'une boîte de dialogue, et l'écran
+    # seul connaît les longueurs déposées.
+    report_requested = pyqtSignal()
+
     def __init__(self, product_name: str, zones_faites: list, zones_prevues: list,
-                 secondes: int, interrompu: bool, dry_run: bool, parent=None) -> None:
+                 secondes: int, interrompu: bool, dry_run: bool,
+                 image=None, cadrage_incertain: bool = False, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Depose interrompue" if interrompu else "Depose terminee")
         self.setMinimumWidth(520)
@@ -583,6 +608,25 @@ class DepositSummaryDialog(QDialog):
             rappel.setWordWrap(True)
             layout.addWidget(rappel)
 
+        # --- Vue de fin ---
+        # Affichée en petit : cette fenêtre doit tenir sur un écran de 7 pouces à côté du
+        # bilan chiffré, qui est l'information principale. La vue en pleine résolution est
+        # dans le PDF, là où on peut l'examiner.
+        if image is not None:
+            self._vue = QLabel()
+            self._vue.setAlignment(Qt.AlignCenter)
+            self._vue.setPixmap(_pixmap_depuis_image(image, largeur_max=460))
+            layout.addWidget(self._vue)
+
+            if cadrage_incertain:
+                note = QLabel(
+                    "Vue prise a la position ou la machine s'est arretee, et non depuis "
+                    "la position de prise de vue habituelle : le cadrage differe."
+                )
+                note.setProperty("role", "status")
+                note.setWordWrap(True)
+                layout.addWidget(note)
+
         # Détail par zone : seulement quand il porte une information — voir la docstring
         if interrompu:
             faites = set(zones_faites)
@@ -604,7 +648,26 @@ class DepositSummaryDialog(QDialog):
             layout.addWidget(consigne)
 
         boutons = QDialogButtonBox()
+        # ActionRole : ce bouton ne ferme PAS la fenêtre. Imprimer un rapport puis vouloir
+        # relire le bilan est le comportement normal, et un opérateur qui doit rouvrir un
+        # cycle terminé pour réimprimer ne le ferait tout simplement pas.
+        self._btn_rapport = boutons.addButton(
+            "Imprimer le rapport", QDialogButtonBox.ActionRole
+        )
+        self._btn_rapport.clicked.connect(self.report_requested)
+
         btn = boutons.addButton("Terminer", QDialogButtonBox.AcceptRole)
         btn.setProperty("role", "success")
         boutons.accepted.connect(self.accept)
         layout.addWidget(boutons)
+
+        # Message de confirmation d'impression, sous les boutons — l'opérateur doit voir
+        # que quelque chose s'est passé, et surtout OÙ le fichier a été écrit
+        self._confirmation = QLabel("")
+        self._confirmation.setProperty("role", "status")
+        self._confirmation.setWordWrap(True)
+        layout.addWidget(self._confirmation)
+
+    def set_report_result(self, message: str) -> None:
+        """Afficher le résultat de l'impression (chemin du PDF, ou message d'erreur)."""
+        self._confirmation.setText(message)

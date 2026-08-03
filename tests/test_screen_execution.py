@@ -521,6 +521,132 @@ def test_une_trajectoire_dans_la_course_produit_des_steps(ecran) -> None:
 # Les modales
 # ===========================================================================
 
+# ===========================================================================
+# Fin de cycle (lot D3) — photo de fin et rapport
+# ===========================================================================
+
+def _preparer_fin_de_cycle(ecran, interrompu: bool) -> MachineSimulee:
+    """Place l'écran dans l'état où la dépose vient de s'achever."""
+    machine = MachineSimulee()
+    ecran.set_machine(machine)
+    ecran._zones_faites = [4]
+    ecran._zones_prevues = [4, 6]
+    ecran._depart = 0.0
+    ecran._dry_run = True
+    return machine
+
+
+def test_apres_un_arret_la_machine_n_est_pas_redeplacee(ecran, monkeypatch) -> None:
+    """⚠️ Après un arrêt, Marlin est en M112 : il ne répond plus avant un redémarrage.
+
+    Lui demander de revenir en position de prise de vue échouerait, et surtout ferait
+    attendre l'opérateur devant une machine bloquée. On photographie donc là où elle
+    s'est arrêtée, en signalant que le cadrage n'est pas celui de référence.
+    """
+    machine = _preparer_fin_de_cycle(ecran, interrompu=True)
+    lancements = []
+    monkeypatch.setattr(ecran._runner_fin, "start",
+                        lambda *args: lancements.append(args))
+    monkeypatch.setattr(ecran, "_afficher_bilan", lambda image: None)
+
+    ecran._fin_de_depose(interrompu=True)
+
+    assert lancements == [], "aucun deplacement ne doit etre demande apres un arret"
+    assert ecran._cadrage_incertain is True
+
+
+def test_en_fin_nominale_la_machine_revient_en_position_de_prise_de_vue(
+    ecran, monkeypatch,
+) -> None:
+    """La vue de fin doit être comparable d'un rapport à l'autre : même position."""
+    _preparer_fin_de_cycle(ecran, interrompu=False)
+    lancements = []
+    monkeypatch.setattr(ecran._runner_fin, "start",
+                        lambda *args: lancements.append(args))
+
+    ecran._fin_de_depose(interrompu=False)
+
+    assert len(lancements) == 1, "la machine doit revenir en position de prise de vue"
+
+
+def test_une_photo_de_fin_ratee_ne_bloque_pas_le_bilan(ecran, monkeypatch) -> None:
+    """Le cycle a eu lieu : l'opérateur doit pouvoir en rendre compte, vue ou pas."""
+    class CameraQuiCasse:
+        def capture(self):
+            raise RuntimeError("camera debranchee")
+
+    _preparer_fin_de_cycle(ecran, interrompu=False)
+    ecran.set_camera(CameraQuiCasse())
+
+    assert ecran._capturer_vue_de_fin() is None
+
+
+def test_la_longueur_du_rapport_ne_compte_que_les_deposes() -> None:
+    """Les déplacements à vide parcourent de la distance sans rien poser.
+
+    Les compter gonflerait la longueur annoncée dans le rapport, qui doit correspondre à
+    ce qu'on voit sur la pièce.
+    """
+    from gui.screen_execution import _longueur_des_deposes
+
+    steps = [
+        {"type": "travel", "x": 0.0, "y": 0.0, "z": 5.0, "amount": 0.0, "zone": 4},
+        {"type": "travel", "x": 100.0, "y": 0.0, "z": 1.0, "amount": 0.0, "zone": 4},
+        {"type": "dispense", "x": 130.0, "y": 0.0, "z": 1.0, "amount": 3.0, "zone": 4},
+        {"type": "travel", "x": 130.0, "y": 0.0, "z": 5.0, "amount": 0.0, "zone": 4},
+    ]
+
+    # Seul le segment de 30 mm dépose ; les 100 mm de trajet à vide ne comptent pas
+    assert _longueur_des_deposes(steps) == pytest.approx(30.0)
+
+
+def test_le_bilan_propose_d_imprimer_un_rapport(qtbot) -> None:
+    """Le bouton doit exister, et NE PAS fermer la fenêtre.
+
+    Imprimer puis relire le bilan est le geste normal ; un opérateur obligé de rouvrir un
+    cycle terminé pour réimprimer ne le ferait tout simplement pas.
+    """
+    dialogue = DepositSummaryDialog(
+        "Produit", zones_faites=[4], zones_prevues=[4],
+        secondes=30, interrompu=False, dry_run=True,
+    )
+    qtbot.addWidget(dialogue)
+    dialogue.show()
+
+    demandes = []
+    dialogue.report_requested.connect(lambda: demandes.append(True))
+    dialogue._btn_rapport.click()
+
+    assert demandes == [True]
+    assert dialogue.isVisible(), "imprimer ne doit pas fermer le bilan"
+
+
+def test_le_bilan_affiche_ou_le_rapport_a_ete_ecrit(qtbot) -> None:
+    """Sans le chemin, l'opérateur ne sait pas si quelque chose s'est passé, ni où."""
+    dialogue = DepositSummaryDialog(
+        "Produit", zones_faites=[4], zones_prevues=[4],
+        secondes=30, interrompu=False, dry_run=True,
+    )
+    qtbot.addWidget(dialogue)
+
+    dialogue.set_report_result("Rapport enregistre : /tmp/rapport_x.pdf")
+
+    assert "rapport_x.pdf" in _textes_des_labels(dialogue)
+
+
+def test_le_bilan_accepte_une_vue(qtbot) -> None:
+    """La vue de fin s'affiche dans le bilan, en plus du PDF."""
+    image = np.full((120, 200, 3), 180, dtype=np.uint8)
+    dialogue = DepositSummaryDialog(
+        "Produit", zones_faites=[4], zones_prevues=[4],
+        secondes=30, interrompu=False, dry_run=True, image=image,
+    )
+    qtbot.addWidget(dialogue)
+
+    assert dialogue._vue.pixmap() is not None
+    assert not dialogue._vue.pixmap().isNull()
+
+
 def test_la_depose_a_blanc_est_cochee_par_defaut(qtbot) -> None:
     """Tant que l'extrusion n'est pas réglée (sous-lot D4), le défaut sûr est à blanc.
 

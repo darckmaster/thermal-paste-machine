@@ -9,7 +9,7 @@ dist/
 build/
 
 # Reports (generated at runtime)
-reports/*.pdf
+reports/
 
 # Preparations (plateaux enregistres par l'operateur, ecrits a l'execution).
 # Ce sont des donnees de travail, pas du code : elles contiennent des coordonnees en mm
