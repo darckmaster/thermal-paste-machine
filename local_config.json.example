@@ -7,8 +7,22 @@
     "serial_port": "COM3",
     "serial_baudrate": 250000,
 
-    "_comment_plateau": "plateau_size_mm : taille du plateau mesuree au metre, bord EXTERIEUR a bord exterieur des 4 marqueurs de coin (supposee 220 mm tant que la mesure M1 n'est pas faite). Cette valeur sert de repli quand les 4 tags ne sont pas detectes — le cas nominal sur la Geeetech, ou seuls 2 tags sont cadres : l'origine du repere (marqueur 2) est alors extrapolee a partir d'elle, et toute erreur decale TOUTE la depose. Pour un plateau non carre, utiliser plateau_width_mm et plateau_height_mm.",
-    "plateau_size_mm": 220.0,
+    "_comment_plateau": "Taille du plateau. La grandeur reellement utilisee par l'homographie est la distance CENTRE A CENTRE des 4 marqueurs de coin. Elle sert de repli quand les 4 tags ne sont pas detectes — le cas NOMINAL sur la Geeetech, ou seuls 2 tags sont cadres : l'origine du repere (marqueur 2) est alors extrapolee a partir d'elle, et toute erreur decale TOUTE la depose. Deux facons de la renseigner, selon ce qu'on a mesure : (1) work_area_width_mm / work_area_height_mm si l'on a mesure d'un CENTRE de tag a l'autre — le plus sur, aucune conversion ; (2) plateau_size_mm si l'on a mesure bord EXTERIEUR a bord exterieur, dont on retranche automatiquement une largeur de marqueur. /!\\ Ne JAMAIS saisir une mesure centre-a-centre dans plateau_size_mm : elle retrancherait une seconde fois la largeur d'un marqueur, soit 28 mm d'erreur silencieuse. Pour un plateau non carre, les deux voies ont leurs variantes width/height.",
+    "work_area_width_mm": 205.5,
+    "work_area_height_mm": 205.5,
+
+    "_comment_photo": "photo_position_x/y/z : position ou la machine se place avant TOUTE acquisition camera (debut d'un cycle de depose, puis photo de fin pour le rapport). Sur la Geeetech (PoC) la camera est FIXE SUR LE BATI et le homing convient : laisser les zeros. Sur la CNC elle sera SOLIDAIRE DE LA SERINGUE, donc cette position est une vraie inconnue, sans rapport avec le homing — c'est l'action M10, a mesurer machine sous tension.",
+    "photo_position_x": 0.0,
+    "photo_position_y": 0.0,
+    "photo_position_z": 0.0,
+
+    "_comment_blanc": "dry_run_z_clearance_mm : marge ajoutee a la hauteur du homing pour la DEPOSE A BLANC. Constatee necessaire sur la Geeetech le 2026-08-04 : a la hauteur du homing seule, la pointe passe tres pres du dessus des zones de depose. Augmenter cette valeur si les pieces sont plus epaisses, ou si le plateau est pose plus haut. La depose a blanc garde sa propriete essentielle quelle que soit la valeur : une hauteur UNIQUE pour le transit comme pour la depose, donc aucune descente possible pendant le parcours.",
+    "dry_run_z_clearance_mm": 2.0,
+
+    "_comment_course": "machine_travel_*_max_mm : bornes du domaine atteignable, en coordonnees machine depuis le homing. Servent au controle de course effectue AVANT le premier mouvement d'une depose. Marlin ne refuse pas une coordonnee hors course, il la ROGNE EN SILENCE : sans ce controle, la depose sortirait deformee et passerait pour une erreur de vision. ⚠️ Les valeurs par defaut (200/200/180) sont les dimensions CATALOGUE d'une Geeetech I3, elles n'ont PAS ete relevees (action M11) — a confirmer avec M211 ou dans la configuration Marlin. Une valeur trop GRANDE laisserait passer un depassement reel : c'est le sens dangereux.",
+    "machine_travel_x_max_mm": 200.0,
+    "machine_travel_y_max_mm": 200.0,
+    "machine_travel_z_max_mm": 180.0,
 
     "calibration_min_images": 15,
 

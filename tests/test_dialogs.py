@@ -259,6 +259,38 @@ def test_parametres_ne_modifient_pas_l_objet_recu(qtbot) -> None:
     assert dialogue.settings is not original
 
 
+def test_parametres_non_edites_survivent_a_un_passage_par_la_fenetre(qtbot) -> None:
+    """Les réglages que ce dialogue n'affiche pas ne doivent pas disparaître en silence.
+
+    `SettingsDialog` rend un objet NEUF — c'est ce qui rend « Annuler » sans effet, et
+    c'est voulu. Mais un objet neuf reconstruit à partir des seuls widgets perdrait tout
+    ce qui n'a pas de widget : les tempos d'extrusion et la tolérance de rangée, ajoutés
+    au lot D1.
+
+    La perte serait d'autant plus traîtresse qu'elle surviendrait au moment où
+    l'opérateur croit régler la machine — et elle annulerait précisément le travail de
+    mise au point du sous-lot D4, qui règle ces tempos à l'œil, avec la pâte.
+    """
+    original = Settings(
+        travel_speed_mm_min=3000.0,
+        priming_seconds=1.5,
+        end_anticipation_mm=4.0,
+        retract_mm=0.8,
+        row_tolerance_mm=12.0,
+    )
+    dialogue = SettingsDialog(original)
+    qtbot.addWidget(dialogue)
+
+    dialogue._vitesse_deplacement.setValue(1200.0)      # l'opérateur règle ce qu'il voit
+    rendu = dialogue.settings
+
+    assert rendu.travel_speed_mm_min == pytest.approx(1200.0)   # bien pris en compte
+    assert rendu.priming_seconds == pytest.approx(1.5)          # ... et le reste intact
+    assert rendu.end_anticipation_mm == pytest.approx(4.0)
+    assert rendu.retract_mm == pytest.approx(0.8)
+    assert rendu.row_tolerance_mm == pytest.approx(12.0)
+
+
 def test_vitesses_bornees_contre_les_valeurs_aberrantes(qtbot) -> None:
     """Les bornes ne sont pas cosmétiques : une vitesse aberrante partirait telle quelle
     en G-code vers la machine."""

@@ -294,6 +294,57 @@ def test_capture_automatique_attend_de_voir_le_plateau(ecran: ScreenPlateau) -> 
     assert "recherche du plateau" in ecran._status_label.text()
 
 
+def test_capture_automatique_ne_pose_aucune_question(
+    ecran: ScreenPlateau, monkeypatch,
+) -> None:
+    """Une capture non surveillée ne peut pas attendre une réponse.
+
+    Depuis le 2026-08-04, toute photo du plateau est précédée d'une mise en position de
+    la machine. Sans machine configurée, la capture manuelle demande confirmation — mais
+    la faire aussi en mode automatique figerait l'écran sur une question que personne ne
+    regarde, et le mode ne serait plus automatique du tout.
+
+    Le test échoue par blocage si la règle est violée : c'est précisément ce qui est
+    arrivé en développant, la suite de tests est passée de 35 secondes à un blocage.
+    """
+    appels = []
+    monkeypatch.setattr(
+        "gui.screen_plateau.QMessageBox.question",
+        lambda *args, **kwargs: appels.append(args) or 0,
+    )
+    ecran.set_camera(_CameraFactice(_plateau_synthetique(_deux_zones_saines())))
+    ecran.armer_capture_automatique()
+
+    ecran._update_frame()
+
+    assert appels == [], "la capture automatique ne doit ouvrir aucune fenetre"
+    assert ecran._layout is not None, "la photo devait tout de meme etre prise"
+    # ... et l'opérateur est averti dans la barre de statut, qu'il lira en revenant
+    assert "cadrage" in ecran._status_label.text().lower()
+
+
+def test_capture_manuelle_sans_machine_peut_etre_refusee(
+    ecran: ScreenPlateau, monkeypatch,
+) -> None:
+    """En capture manuelle, l'opérateur est devant l'écran : la question a du sens.
+
+    Répondre « Non » doit vraiment annuler — sinon la question ne serait qu'un
+    avertissement déguisé, et l'opérateur cesserait de la lire.
+    """
+    from PyQt5.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        "gui.screen_plateau.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.No,
+    )
+    ecran.set_camera(_CameraFactice(_plateau_synthetique(_deux_zones_saines())))
+
+    ecran._on_capture()
+
+    assert ecran._layout is None, "aucune photo ne devait etre prise"
+    assert ecran._captured_image is None
+
+
 def test_capture_automatique_rend_la_main_apres_le_garde_temps(
     ecran: ScreenPlateau,
 ) -> None:

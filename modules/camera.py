@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from typing import Optional
 
-from modules.config import CAMERA_WIDTH, CAMERA_HEIGHT
+from modules.config import CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FLUSH_FRAMES
 
 
 class Camera:
@@ -137,12 +137,36 @@ class Camera:
             for _ in range(10):
                 self._cap.read()
 
-    def capture(self) -> np.ndarray:
-        """Capture une image et la retourne sous forme de tableau numpy BGR.
+    def capture(self, flush_frames: int = None) -> np.ndarray:
+        """Capture une image FRAÎCHE et la retourne sous forme de tableau numpy BGR.
 
         Réessaye jusqu'à 3 fois avant d'échouer, pour absorber les ret=False transitoires
         (fréquents avec DSHOW sur Windows en cas de charge CPU ou de perte de frame).
+
+        ⚠️ **Pourquoi on jette des images avant de lire la bonne.** Le pilote garde
+        quelques images d'avance dans un tampon. `read()` rend la plus ancienne, pas la
+        plus récente : si personne n'a lu la caméra depuis un moment, on récupère une
+        image périmée — vieille de tout l'intervalle, pas de quelques millisecondes.
+
+        Le défaut s'est manifesté le 2026-08-04 sur un second cycle de dépose : la photo
+        analysée était celle de la FIN du cycle précédent. L'enchaînement est traître —
+        l'écran d'accueil lit la caméra en continu, l'arrêter fige le tampon, puis le
+        homing et la mise en position durent de 30 à 60 secondes pendant lesquelles plus
+        personne ne lit. L'image rendue datait donc d'avant le déplacement de la machine,
+        et montrait le plateau à sa position précédente.
+
+        Conséquence si on n'y prend pas garde : les zones sont détectées au mauvais
+        endroit, et **rien ne le signale** — la photo est nette, les marqueurs sont
+        dedans, le diagnostic est vert. C'est exactement la famille de défaut silencieux
+        que ce projet traque depuis le lot C2bis.
         """
+        if flush_frames is None:
+            flush_frames = CAMERA_FLUSH_FRAMES
+
+        # Vider le tampon : ces images sont lues puis jetées sans être décodées plus loin
+        for _ in range(max(0, flush_frames)):
+            self._cap.read()
+
         for _ in range(3):
             ret, frame = self._cap.read()
             if ret:

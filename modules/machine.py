@@ -198,7 +198,22 @@ class Machine:
         # Attendre la fin physique de tous les mouvements avant de continuer
         self.send_command('M400')
 
-    def dispense(self, amount_mm: float) -> None:
+    def move_z(self, z: float) -> None:
+        """Déplace UNIQUEMENT l'axe Z, sans toucher à X ni Y.
+
+        Indispensable pour se dégager avant un déplacement horizontal. `move_to()` envoie
+        `G1 X Y` PUIS `G1 Z` : appelé juste après un homing, il balaierait donc tout le
+        plateau à la hauteur du homing avant de monter. Monter d'abord, séparément, est
+        la seule façon de garantir que le premier déplacement horizontal se fait en
+        hauteur.
+        """
+        self.send_command(f'G1 Z{z:.3f} F{self._feedrate_z}')
+
+        # Attendre la fin physique du mouvement : sans M400, la commande suivante
+        # partirait pendant que Z monte encore, et le dégagement ne servirait à rien
+        self.send_command('M400')
+
+    def dispense(self, amount_mm: float, feedrate: float = None) -> None:
         """Pousse la seringue de amount_mm millimètres d'axe E.
 
         Un amount_mm positif pousse la pâte vers la pièce.
@@ -206,12 +221,20 @@ class Machine:
 
         Le mode G91 (relatif) est utilisé pour que chaque appel soit indépendant :
         on indique un déplacement relatif, pas une position absolue de l'axe E.
+
+        `feedrate` (mm/min) permet d'imposer la vitesse d'extrusion de la préparation en
+        cours au lieu de celle configurée pour la machine. C'est ce qui fait descendre
+        jusqu'au G-code la vitesse d'extrusion réglée par l'opérateur : sans elle, les
+        deux vitesses de `Settings` ne serviraient qu'au calcul de la quantité et
+        n'auraient aucun effet sur la machine elle-même.
         """
         # G91 = mode relatif : E+2.0 signifie "avancer de 2 mm" (pas "aller à E=2")
         self.send_command('G91')
 
-        # Pousser (ou rétracter) la seringue à la vitesse de dépose configurée
-        self.send_command(f'G1 E{amount_mm:.3f} F{self._feedrate_dispense}')
+        # Pousser (ou rétracter) la seringue à la vitesse demandée, ou à défaut à celle
+        # configurée pour la machine
+        vitesse = self._feedrate_dispense if feedrate is None else feedrate
+        self.send_command(f'G1 E{amount_mm:.3f} F{vitesse}')
 
         # Attendre la fin physique de l'extrusion avant de bouger ailleurs
         self.send_command('M400')
@@ -219,7 +242,8 @@ class Machine:
         # Revenir en mode absolu pour ne pas perturber les move_to() suivants
         self.send_command('G90')
 
-    def move_and_dispense(self, x: float, y: float, amount_mm: float) -> None:
+    def move_and_dispense(self, x: float, y: float, amount_mm: float,
+                          feedrate: float = None) -> None:
         """Déplace la tête en XY tout en déposant de la pâte simultanément.
 
         Envoie un seul G1 avec X, Y et E — les trois axes bougent en même temps.
@@ -228,6 +252,12 @@ class Machine:
 
         M83 = mode relatif pour E uniquement : E{amount} est un incrément, pas une position.
         M82 en fin de méthode remet E en mode absolu pour cohérence avec le reste du code.
+
+        `feedrate` (mm/min) impose la vitesse de déplacement de la préparation en cours.
+        Elle compte doublement ici : c'est elle qui, rapportée à la vitesse d'extrusion,
+        fixe l'ÉPAISSEUR du cordon. La quantité calculée par le planner suppose que la
+        buse avance à cette vitesse — la laisser à la vitesse de la machine déposerait un
+        cordon d'une autre épaisseur que celle demandée.
         """
         # Passer E en mode relatif (M83) tout en gardant XYZ en mode absolu (G90)
         # C'est différent de G91 qui passerait TOUS les axes en relatif
@@ -235,8 +265,9 @@ class Machine:
 
         # Déplacement XY absolu + extrusion E relative dans la même commande
         # La vitesse F s'applique au déplacement XY ; E suit proportionnellement
+        vitesse = self._feedrate_xy if feedrate is None else feedrate
         self.send_command(
-            f'G1 X{x:.3f} Y{y:.3f} E{amount_mm:.4f} F{self._feedrate_xy}'
+            f'G1 X{x:.3f} Y{y:.3f} E{amount_mm:.4f} F{vitesse}'
         )
 
         # Attendre la fin physique du mouvement avant de continuer

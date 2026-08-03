@@ -20,6 +20,19 @@ CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 960
 CAMERA_HEIGHT_MM = 200.0  # Hauteur physique de la caméra au-dessus de la zone de travail (mm)
 
+# Nombre d'images lues et JETÉES avant celle qu'on garde, à chaque capture.
+#
+# Le pilote garde quelques images d'avance dans un tampon, et `read()` rend la plus
+# ANCIENNE. Quand personne n'a lu la caméra depuis un moment — typiquement pendant un
+# homing de 30 à 60 s — l'image rendue date d'avant, et montre la machine à sa position
+# précédente. Constaté le 2026-08-04 : sur un second cycle de dépose, la photo analysée
+# était celle de la fin du cycle précédent.
+#
+# 5 images suffisent pour les tampons usuels (1 à 4 images). Augmenter si une photo
+# semble encore en retard d'un mouvement ; le coût est de quelques dixièmes de seconde,
+# une seule fois par capture.
+CAMERA_FLUSH_FRAMES: int = int(_local_cfg.get("camera_flush_frames", 5))
+
 # ArUco
 ARUCO_DICT_ID = "DICT_4X4_50"
 ARUCO_MARKER_SIZE_MM = 28.0  # Taille réelle des marqueurs en mm (mesurée : 2.8 cm × 2.8 cm)
@@ -59,11 +72,31 @@ PLATEAU_SIZE_MM: float = float(_local_cfg.get("plateau_size_mm", 220.0))
 PLATEAU_WIDTH_MM: float = float(_local_cfg.get("plateau_width_mm", PLATEAU_SIZE_MM))
 PLATEAU_HEIGHT_MM: float = float(_local_cfg.get("plateau_height_mm", PLATEAU_SIZE_MM))
 
-# Zone de travail = distance CENTRE-À-CENTRE des marqueurs, seule grandeur qu'utilise
-# l'homographie. Elle se déduit de la mesure bord-à-bord en retranchant une largeur de
-# marqueur : 220 - 28 = 192 mm.
-WORK_AREA_WIDTH_MM = PLATEAU_WIDTH_MM - ARUCO_MARKER_SIZE_MM   # 192.0 par défaut
-WORK_AREA_HEIGHT_MM = PLATEAU_HEIGHT_MM - ARUCO_MARKER_SIZE_MM  # 192.0 par défaut
+# Zone de travail = distance CENTRE-À-CENTRE des marqueurs. C'est la SEULE grandeur
+# qu'utilise l'homographie — tout le reste n'est qu'un moyen d'y arriver.
+#
+# Deux façons de la renseigner, parce qu'on ne mesure pas toujours la même chose :
+#
+#   1. DIRECTEMENT, si l'on a mesuré d'un centre de tag à l'autre — c'est le plus sûr,
+#      il n'y a aucune conversion à faire :
+#          {"work_area_width_mm": 205.5, "work_area_height_mm": 205.5}
+#   2. INDIRECTEMENT, via `plateau_size_mm` mesuré bord EXTÉRIEUR à bord extérieur, dont
+#      on retranche une largeur de marqueur.
+#
+# ⚠️ Le piège que la voie 1 supprime : saisir une mesure centre-à-centre dans
+# `plateau_size_mm` retrancherait une SECONDE fois la largeur d'un marqueur, soit 28 mm
+# d'erreur — silencieuse, et fatale au repli 2 tags qui est le mode nominal.
+#
+# ✅ MESURÉ le 2026-08-04 sur le PoC (action M1) : **205,5 mm centre à centre**, soit
+# 233,5 mm bord à bord. La valeur supposée jusque-là (220 bord à bord → 192 centre à
+# centre) était donc fausse de 13,5 mm. Renseignée dans `local_config.json`, ce fichier
+# étant propre à chaque machine — la CNC aura son propre plateau.
+WORK_AREA_WIDTH_MM: float = float(
+    _local_cfg.get("work_area_width_mm", PLATEAU_WIDTH_MM - ARUCO_MARKER_SIZE_MM)
+)
+WORK_AREA_HEIGHT_MM: float = float(
+    _local_cfg.get("work_area_height_mm", PLATEAU_HEIGHT_MM - ARUCO_MARKER_SIZE_MM)
+)
 DISPENSE_Z_HEIGHT_MM = 1.0      # Hauteur buse au-dessus de la pièce pendant la dépose
 MACHINE_Z_TRAVEL_MM = 5.0      # Hauteur de transit entre les points (assez haut pour ne rien toucher)
 
@@ -116,6 +149,60 @@ MACHINE_Z_TRAVEL_MM = 5.0      # Hauteur de transit entre les points (assez haut
 # puis 5.0/0.0 (2026-08-02, buse sans seringue, réserve sur Y), puis les valeurs actuelles.
 MACHINE_ORIGIN_X = 6.0    # X machine du marqueur 2 (bas-gauche) — pointe, 2026-08-03
 MACHINE_ORIGIN_Y = -2.0   # Y machine du marqueur 2 — NÉGATIF : bas du plateau hors course
+
+# Hauteur Z de la pointe juste après le homing. Sur la Geeetech, `G28` amène Z à 0.
+MACHINE_Z_HOME_MM = 0.0
+
+# Marge ajoutée à la hauteur du homing pour la DÉPOSE À BLANC.
+#
+# ⚠️ Constatée sur la machine le 2026-08-04, en essayant les déplacements : à la hauteur
+# du homing, la pointe passe très près du dessus des zones de dépose. Sans extrusion elle
+# ne touche pas, mais la marge est trop faible pour être rassurante — un plateau posé un
+# peu haut, une pièce plus épaisse que prévu, et la pointe accroche.
+#
+# La valeur du 2026-08-03 (« le Z du homing est sûr tant qu'on n'extrude pas ») reste
+# vraie, elle était simplement trop juste. La dépose à blanc travaille donc à
+# MACHINE_Z_HOME_MM + cette marge, et garde sa propriété essentielle : une hauteur UNIQUE
+# pour le transit comme pour la dépose, donc aucune descente possible pendant le parcours.
+DRY_RUN_Z_CLEARANCE_MM: float = float(
+    _local_cfg.get("dry_run_z_clearance_mm", 2.0)
+)
+
+# ------------------------------------------------------------------ position de prise de vue
+#
+# Position où la machine se place avant TOUTE acquisition caméra (au début d'un cycle de
+# dépose, puis à la fin pour la photo du rapport).
+#
+# Pourquoi un paramètre et non une constante dans le code de l'écran : la caméra n'est pas
+# montée pareil sur les deux machines. Sur la Geeetech (PoC) elle est **fixe sur le bâti**,
+# et le homing convient — d'où les zéros par défaut. Sur la CNC elle sera **solidaire de la
+# seringue**, donc la position de prise de vue y est une vraie inconnue, sans rapport avec
+# le homing (action M10, CLAUDE.md § 7 bis). Passer par local_config.json est ce qui rendra
+# le portage CNC transparent côté code.
+#   Exemple CNC : {"photo_position_x": 100.0, "photo_position_y": 100.0, "photo_position_z": 150.0}
+PHOTO_POSITION_X: float = float(_local_cfg.get("photo_position_x", 0.0))
+PHOTO_POSITION_Y: float = float(_local_cfg.get("photo_position_y", 0.0))
+PHOTO_POSITION_Z: float = float(_local_cfg.get("photo_position_z", MACHINE_Z_HOME_MM))
+
+# ------------------------------------------------------------------ course utile des axes
+#
+# Bornes du domaine atteignable, en coordonnées machine depuis le homing. Elles servent au
+# contrôle de course effectué AVANT le premier mouvement d'une dépose.
+#
+# ⚠️ Pourquoi ce contrôle existe : Marlin ne refuse pas une coordonnée hors course, il la
+# **rogne en silence**. Sans vérification préalable, une dépose sortirait déformée et
+# passerait pour une erreur de vision ou de calibration — on la chercherait du mauvais côté.
+# Le besoin est concret depuis le 2026-08-03 : `MACHINE_ORIGIN_Y = -2.0` met une bande de
+# 2 mm en bas du plateau hors d'atteinte.
+#
+# ⚠️ ACTION M11 EN ATTENTE (voir CLAUDE.md § 7 bis) : ces trois valeurs sont les dimensions
+# CATALOGUE d'une Geeetech I3, elles n'ont PAS été relevées sur la machine. À confirmer avec
+# `M211` (bornes des butées logicielles) ou dans la configuration Marlin, puis à surcharger :
+#   {"machine_travel_x_max_mm": 200.0, "machine_travel_y_max_mm": 200.0}
+# Une valeur trop GRANDE laisserait passer un dépassement réel — c'est le sens dangereux.
+MACHINE_TRAVEL_X_MAX_MM: float = float(_local_cfg.get("machine_travel_x_max_mm", 200.0))
+MACHINE_TRAVEL_Y_MAX_MM: float = float(_local_cfg.get("machine_travel_y_max_mm", 200.0))
+MACHINE_TRAVEL_Z_MAX_MM: float = float(_local_cfg.get("machine_travel_z_max_mm", 180.0))
 
 # Calibration caméra
 # Nombre minimum d'images à capturer avant de pouvoir lancer la calibration

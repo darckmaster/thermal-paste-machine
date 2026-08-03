@@ -139,6 +139,10 @@ class Settings:
         extrusion_speed_mm_min: float = DEFAULT_EXTRUSION_SPEED_MM_MIN,
         zone_diagonal_tolerance_mm: float = ZONE_DIAGONAL_TOLERANCE_MM,
         zone_max_rotation_deg: float = ZONE_MAX_ROTATION_DEG,
+        priming_seconds: float = 0.0,
+        end_anticipation_mm: float = 0.0,
+        retract_mm: float = 0.0,
+        row_tolerance_mm: float = None,
     ) -> None:
         # Vitesse de déplacement de la buse pendant la dépose (mm/min)
         self.travel_speed_mm_min = float(travel_speed_mm_min)
@@ -150,12 +154,53 @@ class Settings:
         self.zone_diagonal_tolerance_mm = float(zone_diagonal_tolerance_mm)
         self.zone_max_rotation_deg = float(zone_max_rotation_deg)
 
+        # --- Compensation de l'inertie de la pâte, aux deux bouts d'un cordon ---
+        #
+        # La pâte thermique est très visqueuse. Au démarrage elle met un temps à sortir :
+        # sans amorçage, le début du cordon est vide. À l'arrêt elle continue de sortir
+        # sous la pression accumulée dans la seringue : sans anticipation, le cordon bave
+        # au-delà de la fin du tracé. Les deux réglages compensent la même inertie.
+        #
+        # Les unités ne sont pas interchangeables, et ce n'est pas une préférence de
+        # style : l'amorçage se règle en SECONDES parce qu'on regarde la pâte sortir, et
+        # l'anticipation en MILLIMÈTRES parce qu'on regarde le cordon dépasser. Une
+        # anticipation exprimée en secondes se décalerait toute seule dès qu'on changerait
+        # la vitesse de dépose — le réglage ne tiendrait pas d'une session à l'autre.
+        #
+        # Ils valent 0 par défaut, donc sans effet tant qu'ils ne sont pas réglés : c'est
+        # le sous-lot D4, à l'atelier avec la pâte réelle, qui leur donnera leur valeur.
+        # Durée d'extrusion À L'ARRÊT avant de commencer à suivre le cordon (secondes)
+        self.priming_seconds = float(priming_seconds)
+        # Distance avant la fin du cordon où l'extrusion s'arrête ; la buse finit le
+        # tracé à vide (mm de trajet)
+        self.end_anticipation_mm = float(end_anticipation_mm)
+        # Rétraction du piston entre deux cordons, pour couper le fil de pâte (mm d'axe E).
+        # ⚠️ Prévu mais PAS ENCORE UTILISÉ par le planner : à évaluer au sous-lot D4, avec
+        # la pâte sous les yeux. Le paramètre existe dès maintenant pour que les fichiers
+        # de préparation enregistrés d'ici là n'aient pas à être reconvertis.
+        self.retract_mm = float(retract_mm)
+
+        # Écart en Y en deçà duquel deux zones sont considérées sur la MÊME rangée, pour
+        # l'ordre de parcours du plateau. `None` = calcul automatique (la moitié de la
+        # hauteur d'une zone), ce qui convient dans presque tous les cas.
+        #
+        # Pourquoi une tolérance et pas une égalité : la vision ne rendra jamais deux
+        # ordonnées exactement égales. Comparer strictement produirait un ordre de parcours
+        # en escalier, différent d'une photo à l'autre pour un plateau pourtant identique.
+        self.row_tolerance_mm = (
+            None if row_tolerance_mm is None else float(row_tolerance_mm)
+        )
+
     def to_dict(self) -> dict:
         return {
             "travel_speed_mm_min": self.travel_speed_mm_min,
             "extrusion_speed_mm_min": self.extrusion_speed_mm_min,
             "zone_diagonal_tolerance_mm": self.zone_diagonal_tolerance_mm,
             "zone_max_rotation_deg": self.zone_max_rotation_deg,
+            "priming_seconds": self.priming_seconds,
+            "end_anticipation_mm": self.end_anticipation_mm,
+            "retract_mm": self.retract_mm,
+            "row_tolerance_mm": self.row_tolerance_mm,
         }
 
     @staticmethod
@@ -175,6 +220,16 @@ class Settings:
                 "zone_diagonal_tolerance_mm", defauts.zone_diagonal_tolerance_mm),
             zone_max_rotation_deg=data.get(
                 "zone_max_rotation_deg", defauts.zone_max_rotation_deg),
+            priming_seconds=data.get(
+                "priming_seconds", defauts.priming_seconds),
+            end_anticipation_mm=data.get(
+                "end_anticipation_mm", defauts.end_anticipation_mm),
+            retract_mm=data.get("retract_mm", defauts.retract_mm),
+            # `None` est ici une valeur SIGNIFIANTE (« calcul automatique »), pas une
+            # absence : on ne peut donc pas s'appuyer sur le défaut de `get()`, qui ne
+            # distingue pas une clé absente d'une clé explicitement à null. Les deux cas
+            # doivent d'ailleurs donner le même résultat, d'où ce simple passe-plat.
+            row_tolerance_mm=data.get("row_tolerance_mm", defauts.row_tolerance_mm),
         )
 
 

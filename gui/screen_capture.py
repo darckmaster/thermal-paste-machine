@@ -4,15 +4,20 @@
 import numpy as np
 import cv2
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QComboBox
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QComboBox,
+    QMessageBox,
 )
 from PyQt5.QtCore import Qt, QTimer, QThread, QObject, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QImage, QPixmap
 
+from gui.workers import PhotoPositionRunner
 from modules.camera import Camera
 from modules.machine import Machine
 from modules.vision import VisionProcessor
-from modules.config import CAMERA_INDEX, ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM
+from modules.config import (
+    CAMERA_INDEX, ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM,
+    PHOTO_POSITION_X, PHOTO_POSITION_Y, PHOTO_POSITION_Z,
+)
 
 
 # ================================================================ worker homing
@@ -71,6 +76,11 @@ class ScreenCapture(QWidget):
     # sélecteur et applique le chargement : lui seul possède les écrans à alimenter.
     preparation_load_requested = pyqtSignal()
 
+    # Demande de lancement d'un cycle de dépose multi-zones (lot D2). L'écran d'exécution
+    # se charge ensuite de tout : homing, prise de vue, choix du fichier, sélection des
+    # zones, dépose, bilan, retour ici.
+    deposit_requested = pyqtSignal()
+
     # Signaux de changement de matériel. L'écran ne remplace PAS lui-même la caméra ou
     # le port : les objets Camera et Machine appartiennent à MainApp (qui les partage
     # avec les autres écrans), donc seul MainApp peut les échanger proprement. L'écran
@@ -103,7 +113,12 @@ class ScreenCapture(QWidget):
         self._timer = QTimer()
         self._timer.timeout.connect(self._update_frame)
 
+        # Mise en position de prise de vue avant chaque photo — voir _on_capture()
+        self._runner = PhotoPositionRunner(self)
+        self._runner.done.connect(self._on_position_prete)
+
         self._setup_ui()
+        self._runner.progress.connect(self._status_label.setText)
 
     def set_machine(self, machine: Machine) -> None:
         """Fournit la référence machine pour le bouton Homing.
@@ -216,6 +231,14 @@ class ScreenCapture(QWidget):
         self._btn_charger.setProperty("role", "secondary")
         self._btn_charger.clicked.connect(self.preparation_load_requested)
         homing_layout.addWidget(self._btn_charger)
+
+        # Point d'entrée du cycle de dépose multi-zones (lot D2). Bouton mis en avant
+        # (role "success") car c'est l'action normale au quotidien : les deux boutons
+        # précédents servent à PRÉPARER un plateau, celui-ci à l'exécuter.
+        self._btn_depose = QPushButton("Lancer une dépose")
+        self._btn_depose.setProperty("role", "success")
+        self._btn_depose.clicked.connect(self.deposit_requested)
+        homing_layout.addWidget(self._btn_depose)
 
         layout.addLayout(homing_layout)
 
@@ -416,10 +439,58 @@ class ScreenCapture(QWidget):
     # ------------------------------------------------------------------ actions boutons
 
     def _on_capture(self) -> None:
-        """Figer l'image et passer en mode validation."""
+        """Amener la machine en position de prise de vue, puis figer l'image.
+
+        Demandé par l'étudiant le 2026-08-04 : toute photo du plateau est prise depuis la
+        même position machine. Sur le PoC le plateau est solidaire du lit qui bouge en Y,
+        donc photographier là où la machine se trouve donne un cadrage variable.
+        """
         if self._camera is None:
             return
+        if self._runner.busy:
+            return   # mise en position déjà en cours — ignorer le double appui
 
+        if self._machine is None:
+            if not self._confirmer_sans_machine("Aucune machine n'est configuree."):
+                return
+            self._capturer_maintenant()
+            return
+
+        self._btn_capture.setEnabled(False)
+        self._runner.start(
+            self._machine, (PHOTO_POSITION_X, PHOTO_POSITION_Y, PHOTO_POSITION_Z)
+        )
+
+    def _on_position_prete(self, reussi: bool) -> None:
+        """La machine est en position, ou n'a pas pu y aller."""
+        if not reussi and not self._confirmer_sans_machine(
+            f"Mise en position impossible : {self._runner.last_error}"
+        ):
+            self._btn_capture.setEnabled(True)
+            self._status_label.setText("Capture annulee.")
+            return
+        self._capturer_maintenant()
+
+    def _confirmer_sans_machine(self, motif: str) -> bool:
+        """Photographier quand même, sans garantie de cadrage ? « Non » par défaut.
+
+        On ne bloque pas : travailler sans machine reste légitime (mise au point sur le
+        PC de développement). Mais la photo sera prise là où la machine se trouve, et le
+        dire vaut mieux que de le taire.
+        """
+        reponse = QMessageBox.question(
+            self, "Photographier sans mise en position ?",
+            f"{motif}\n\n"
+            "La photo sera prise a la position actuelle de la machine. Sur le PoC, le "
+            "plateau bouge avec le lit : le cadrage peut differer d'une photo a "
+            "l'autre.\n\nPhotographier quand meme ?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return reponse == QMessageBox.Yes
+
+    def _capturer_maintenant(self) -> None:
+        """La capture proprement dite, une fois la question de la position réglée."""
         # Arrêter le flux pour figer l'image
         self._timer.stop()
 

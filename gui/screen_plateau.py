@@ -12,12 +12,17 @@ import cv2
 import numpy as np
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QDialog,
+    QMessageBox,
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
 
 from gui.dialogs import ProductNameDialog
-from modules.config import ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM
+from gui.workers import PhotoPositionRunner
+from modules.config import (
+    ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM,
+    PHOTO_POSITION_X, PHOTO_POSITION_Y, PHOTO_POSITION_Z,
+)
 from modules.vision import (
     VisionProcessor,
     ANOMALIE_ANGLE,
@@ -89,7 +94,12 @@ class ScreenPlateau(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._camera = None
+        self._machine = None
         self._vision = VisionProcessor(ARUCO_DICT_ID, ARUCO_MARKER_SIZE_MM)
+
+        # Mise en position de prise de vue avant chaque photo — voir _on_capture()
+        self._runner = PhotoPositionRunner(self)
+        self._runner.done.connect(self._on_position_prete)
 
         # Nom du produit, saisi à l'ouverture de l'écran
         self._product_name: str = ""
@@ -109,15 +119,26 @@ class ScreenPlateau(QWidget):
         # Capture automatique (rechargement d'un plateau) : armée, elle déclenche dès
         # que les marqueurs du plateau sont vus. Voir armer_capture_automatique().
         self._capture_auto_armee = False
+        # Vrai pendant tout le parcours d'une capture automatique, y compris la partie
+        # asynchrone : sert à ne poser aucune question dans ce mode.
+        self._capture_auto_en_cours = False
+        # Avertissement à joindre au prochain diagnostic (photo prise sans mise en
+        # position). Vidé dès qu'il a été affiché.
+        self._avertissement_cadrage = ""
         self._timer_capture_auto = QTimer()
         self._timer_capture_auto.setSingleShot(True)
         self._timer_capture_auto.timeout.connect(self._abandonner_capture_automatique)
 
         self._setup_ui()
+        self._runner.progress.connect(self._status_label.setText)
 
     def set_camera(self, camera) -> None:
         """Reçoit la caméra partagée, créée et possédée par MainApp."""
         self._camera = camera
+
+    def set_machine(self, machine) -> None:
+        """Reçoit la machine partagée — sert à se mettre en position avant de photographier."""
+        self._machine = machine
 
     # ------------------------------------------------------------------ interface
 
@@ -310,7 +331,7 @@ class ScreenPlateau(QWidget):
             if len(ids_plateau) >= 2:
                 self._capture_auto_armee = False
                 self._timer_capture_auto.stop()
-                self._on_capture()
+                self._on_capture(auto=True)
                 return
             self._status_label.setText(
                 f"Capture automatique — recherche du plateau… "
@@ -326,11 +347,85 @@ class ScreenPlateau(QWidget):
 
     # ------------------------------------------------------------------ analyse
 
-    def _on_capture(self) -> None:
-        """Figer l'image et lancer l'analyse du plateau."""
+    def _on_capture(self, auto: bool = False) -> None:
+        """Amener la machine en position de prise de vue, puis figer l'image.
+
+        Demandé par l'étudiant le 2026-08-04 : toute photo du plateau doit être prise
+        depuis la même position machine. Sur le PoC, le plateau est solidaire du lit qui
+        bouge en Y — photographier là où la machine se trouve donne un cadrage différent
+        à chaque fois, et deux plateaux créés à deux moments ne sont pas comparables.
+        """
         if self._camera is None:
             return
+        if self._runner.busy:
+            return   # une mise en position est déjà en cours : ignorer le double appui
 
+        # Mémorisé pour que la suite du parcours, qui passe par un thread, sache si elle
+        # a le droit de poser une question à l'opérateur.
+        self._capture_auto_en_cours = auto
+
+        if self._machine is None:
+            # Pas de machine configurée : on peut encore travailler, mais l'opérateur
+            # doit savoir que la garantie de cadrage ne s'applique pas.
+            if not self._accepter_sans_machine(
+                "Aucune machine n'est configuree.", auto
+            ):
+                return
+            self._capturer_maintenant()
+            return
+
+        self._btn_capture.setEnabled(False)
+        self._runner.start(
+            self._machine, (PHOTO_POSITION_X, PHOTO_POSITION_Y, PHOTO_POSITION_Z)
+        )
+
+    def _on_position_prete(self, reussi: bool) -> None:
+        """La machine est en position (ou n'a pas pu y aller) — on décide de la suite."""
+        if not reussi and not self._accepter_sans_machine(
+            f"Mise en position impossible : {self._runner.last_error}",
+            self._capture_auto_en_cours,
+        ):
+            self._btn_capture.setEnabled(True)
+            self._status_label.setText("Capture annulee.")
+            return
+        self._capturer_maintenant()
+
+    def _accepter_sans_machine(self, motif: str, auto: bool) -> bool:
+        """Photographier quand même, sans garantie de cadrage ?
+
+        ⚠️ **En capture AUTOMATIQUE, on ne demande rien.** Une capture non surveillée qui
+        ouvre une fenêtre et attend une réponse n'est plus automatique : elle laisserait
+        l'écran figé sur une question que personne ne regarde. On avertit dans la barre
+        de statut et on continue — l'opérateur verra le message en revenant.
+
+        En capture manuelle, la question se pose : l'opérateur vient d'appuyer, il est
+        devant l'écran. « Non » par défaut. On ne bloque pas — travailler sans machine
+        reste légitime (mise au point sur le PC de développement) — mais la photo sera
+        prise là où la machine se trouve, et le dire vaut mieux que de le taire.
+        """
+        if auto:
+            # ⚠️ Mémorisé et non écrit directement : l'analyse qui suit remplace le texte
+            # de la barre de statut par son diagnostic, et l'avertissement disparaîtrait
+            # avant d'avoir été lu. Il est réinjecté par _texte_diagnostic().
+            self._avertissement_cadrage = (
+                f"{motif} Photo prise a la position actuelle de la machine : "
+                f"le cadrage peut differer d'une photo a l'autre."
+            )
+            return True
+
+        reponse = QMessageBox.question(
+            self, "Photographier sans mise en position ?",
+            f"{motif}\n\n"
+            "La photo sera prise a la position actuelle de la machine. Sur le PoC, le "
+            "plateau bouge avec le lit : le cadrage peut differer d'une photo a "
+            "l'autre.\n\nPhotographier quand meme ?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return reponse == QMessageBox.Yes
+
+    def _capturer_maintenant(self) -> None:
+        """La capture proprement dite, une fois la question de la position réglée."""
         self._timer.stop()
         self._captured_image = self._camera.capture()
         self._btn_capture.setEnabled(False)
@@ -442,7 +537,16 @@ class ScreenPlateau(QWidget):
         plateau configurée. L'opérateur doit pouvoir voir que la précision de sa
         dépose repose alors sur un paramètre, pas sur une mesure (action M1).
         """
-        parties = [self._reference.status_text]
+        parties = []
+
+        # Avertissement de cadrage EN TÊTE, avant le diagnostic : il conditionne la
+        # confiance qu'on peut accorder à tout ce qui suit. Consommé au passage — il ne
+        # vaut que pour la photo qui vient d'être prise.
+        if self._avertissement_cadrage:
+            parties.append(self._avertissement_cadrage)
+            self._avertissement_cadrage = ""
+
+        parties.append(self._reference.status_text)
 
         valides = len(self._layout.valid_zones)
         total = len(self._layout.zones)

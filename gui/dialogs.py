@@ -12,8 +12,9 @@
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QPushButton, QDoubleSpinBox, QFormLayout, QDialogButtonBox,
+    QCheckBox, QProgressBar, QMessageBox,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 
 from modules.preparation import (
     Settings,
@@ -231,6 +232,14 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Paramètres du plateau")
         self.setMinimumWidth(520)
 
+        # Les paramètres que ce dialogue n'édite PAS sont conservés tels quels et
+        # recopiés dans l'objet rendu (voir `values()`). Sans cela, ouvrir puis valider
+        # cette fenêtre les remettrait à leur valeur par défaut **sans rien signaler** —
+        # une perte de réglage d'autant plus traîtresse qu'elle survient au moment où
+        # l'opérateur croit justement régler la machine. C'est aujourd'hui sans effet
+        # (les tempos valent tous 0), mais ce ne le sera plus dès le sous-lot D4.
+        self._settings_recus = settings
+
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
@@ -320,4 +329,282 @@ class SettingsDialog(QDialog):
             extrusion_speed_mm_min=self._vitesse_extrusion.value(),
             zone_diagonal_tolerance_mm=self._tolerance_diagonale.value(),
             zone_max_rotation_deg=self._rotation_max.value(),
+            # Report des paramètres non édités ici — voir le commentaire du constructeur.
+            # Les tempos d'extrusion se règlent au sous-lot D4, avec la pâte sous les
+            # yeux ; les leur faire perdre au passage par cette fenêtre annulerait
+            # précisément le travail de mise au point qu'elle est censée servir.
+            priming_seconds=self._settings_recus.priming_seconds,
+            end_anticipation_mm=self._settings_recus.end_anticipation_mm,
+            retract_mm=self._settings_recus.retract_mm,
+            row_tolerance_mm=self._settings_recus.row_tolerance_mm,
         )
+
+
+# ===========================================================================
+# Lot D2 — les trois modales du cycle de dépose
+# ===========================================================================
+
+class ConfirmDepositDialog(QDialog):
+    """Dernier point d'arrêt avant que la machine ne bouge.
+
+    Rappelle ce qui va se passer — combien de zones, quel produit — et laisse revenir en
+    arrière. « Annuler » ramène à la sélection des zones et **pas** à l'écran d'accueil :
+    se tromper d'une zone est l'erreur la plus probable à cet instant, et refaire tout le
+    cycle pour un clic de trop serait décourageant.
+
+    La case « dépose à blanc » est ici plutôt que dans les paramètres parce que c'est une
+    décision qui se prend **pour cette exécution-là**, en regardant le plateau : y a-t-il
+    de la pâte dans la seringue, est-ce un essai ou une pièce à livrer.
+    """
+
+    def __init__(self, product_name: str, zone_count: int,
+                 dry_run_default: bool = True, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Confirmer la depose")
+        self.setMinimumWidth(520)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        resume = QLabel(
+            f"Produit : <b>{product_name}</b><br>"
+            f"Zones a deposer : <b>{zone_count}</b>"
+        )
+        resume.setTextFormat(Qt.RichText)
+        resume.setWordWrap(True)
+        layout.addWidget(resume)
+
+        self._case_a_blanc = QCheckBox("Depose a blanc (aucune extrusion)")
+        self._case_a_blanc.setChecked(dry_run_default)
+        self._case_a_blanc.setMinimumHeight(_HAUTEUR_CHAMP_PX)
+        layout.addWidget(self._case_a_blanc)
+
+        explication = QLabel(
+            "En depose a blanc, la machine parcourt exactement le meme chemin mais "
+            "n'extrude rien et ne descend pas : elle reste a la hauteur du homing. "
+            "C'est le mode pour verifier un plateau neuf, ou montrer le cycle sans "
+            "gacher de pate."
+        )
+        explication.setProperty("role", "status")
+        explication.setWordWrap(True)
+        layout.addWidget(explication)
+
+        avertissement = QLabel(
+            "/!\\ La machine va faire un homing puis se deplacer. Degager la zone de "
+            "travail avant de confirmer."
+        )
+        avertissement.setWordWrap(True)
+        layout.addWidget(avertissement)
+
+        boutons = QDialogButtonBox()
+        # Libellés explicites plutôt que « OK / Annuler » : à cet instant, l'opérateur
+        # doit pouvoir lire ce que fait le bouton sans relire toute la fenêtre.
+        self._btn_lancer = boutons.addButton("Lancer la depose",
+                                             QDialogButtonBox.AcceptRole)
+        self._btn_lancer.setProperty("role", "success")
+        boutons.addButton("Revenir a la selection", QDialogButtonBox.RejectRole)
+        boutons.accepted.connect(self.accept)
+        boutons.rejected.connect(self.reject)
+        layout.addWidget(boutons)
+
+    @property
+    def dry_run(self) -> bool:
+        """Vrai si l'opérateur a laissé la dépose à blanc active."""
+        return self._case_a_blanc.isChecked()
+
+
+class DepositProgressDialog(QDialog):
+    """Suivi de la dépose en cours : avancement, zones faites, temps écoulé.
+
+    Modale et **non refermable par la croix** : tant que la machine bouge, la seule
+    sortie légitime est le bouton d'arrêt. Fermer la fenêtre laisserait le thread
+    d'exécution tourner en retirant à l'opérateur l'accès à l'arrêt — c'est exactement le
+    trou de sécurité relevé sur `app.py::closeEvent` (dette L2), qu'on ne va pas
+    reproduire ici.
+    """
+
+    pause_toggled = pyqtSignal(bool)   # True = mettre en pause, False = reprendre
+    stop_requested = pyqtSignal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Depose en cours")
+        self.setMinimumWidth(560)
+        # Retirer la croix de fermeture — voir la docstring
+        self.setWindowFlags(
+            (self.windowFlags() | Qt.CustomizeWindowHint) & ~Qt.WindowCloseButtonHint
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        self._label_zones = QLabel("Preparation...")
+        self._label_zones.setWordWrap(True)
+        layout.addWidget(self._label_zones)
+
+        self._barre = QProgressBar()
+        self._barre.setMinimum(0)
+        # En millièmes : la progression est une FRACTION de longueur, pas un compte
+        self._barre.setMaximum(1000)
+        self._barre.setValue(0)
+        self._barre.setMinimumHeight(40)
+        self._barre.setFormat("%p%")
+        layout.addWidget(self._barre)
+
+        self._label_temps = QLabel("Temps ecoule : 0:00")
+        layout.addWidget(self._label_temps)
+
+        self._label_etat = QLabel("")
+        self._label_etat.setProperty("role", "status")
+        self._label_etat.setWordWrap(True)
+        layout.addWidget(self._label_etat)
+
+        boutons = QHBoxLayout()
+        boutons.setSpacing(8)
+
+        self._btn_pause = QPushButton("Pause")
+        self._btn_pause.setProperty("role", "secondary")
+        self._btn_pause.setCheckable(True)
+        self._btn_pause.clicked.connect(self._on_pause)
+        boutons.addWidget(self._btn_pause)
+
+        self._btn_stop = QPushButton("ARRET")
+        self._btn_stop.setProperty("role", "danger")
+        self._btn_stop.clicked.connect(self._on_stop)
+        boutons.addWidget(self._btn_stop)
+
+        layout.addLayout(boutons)
+
+    # ------------------------------------------------------------------ mises à jour
+
+    def set_progress(self, fraction: float, zones_faites: int, zones_total: int) -> None:
+        """Avancement, exprimé en FRACTION DE LONGUEUR déposée et non en steps.
+
+        Un step de dépose de 80 mm et un déplacement de 2 mm comptent pareil dans une
+        progression en steps : la barre avancerait par à-coups et mentirait sur le temps
+        restant. La longueur, elle, est à peu près proportionnelle au temps.
+        """
+        self._barre.setValue(int(max(0.0, min(1.0, fraction)) * 1000))
+        self._label_zones.setText(
+            f"Zone {min(zones_faites + 1, zones_total)} sur {zones_total} — "
+            f"{zones_faites} terminee(s)"
+        )
+
+    def set_elapsed(self, secondes: int) -> None:
+        self._label_temps.setText(f"Temps ecoule : {secondes // 60}:{secondes % 60:02d}")
+
+    def set_state_text(self, texte: str) -> None:
+        self._label_etat.setText(texte)
+
+    def set_finished(self, message: str) -> None:
+        """La dépose est terminée : les commandes n'ont plus lieu d'être."""
+        self._btn_pause.setEnabled(False)
+        self._btn_stop.setEnabled(False)
+        self._label_etat.setText(message)
+
+    # ------------------------------------------------------------------ actions
+
+    def _on_pause(self) -> None:
+        en_pause = self._btn_pause.isChecked()
+        self._btn_pause.setText("Reprendre" if en_pause else "Pause")
+        self.pause_toggled.emit(en_pause)
+
+    def _on_stop(self) -> None:
+        """Arrêt : demande confirmation, car il est irréversible.
+
+        L'arrêt coupe les actionneurs et impose de redémarrer la machine — ce n'est pas
+        une pause. Le bouton étant volontairement gros et rouge, à portée de doigt sur un
+        tactile, la confirmation évite qu'un appui de trop ruine un plateau en cours.
+        « Non » est le choix par défaut.
+        """
+        reponse = QMessageBox.question(
+            self, "Arreter la depose ?",
+            "Arreter maintenant coupe tous les actionneurs et interrompt le plateau "
+            "en cours.\nLa machine devra etre redemarree avant le prochain cycle.\n\n"
+            "Arreter vraiment ?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reponse == QMessageBox.Yes:
+            self.stop_requested.emit()
+
+    def keyPressEvent(self, event) -> None:
+        """Neutraliser Échap : il déclencherait `reject()`, donc une fermeture masquée.
+
+        Même motif que le retrait de la croix — pendant que la machine bouge, on ne sort
+        d'ici que par le bouton d'arrêt.
+        """
+        if event.key() == Qt.Key_Escape:
+            return
+        super().keyPressEvent(event)
+
+
+class DepositSummaryDialog(QDialog):
+    """Bilan de fin de dépose, nominal ou interrompu.
+
+    Le détail par zone n'est affiché **qu'en cas d'interruption**. Un tableau dont toutes
+    les lignes disent « fait » n'apporte rien et noie l'information ; après un arrêt,
+    c'est exactement l'inverse — savoir quelles pièces ont reçu de la pâte est le seul
+    renseignement qui compte.
+
+    ⚠️ Sous-lot D2 : la vue de fin et le bouton d'impression PDF arrivent au sous-lot D3.
+    """
+
+    def __init__(self, product_name: str, zones_faites: list, zones_prevues: list,
+                 secondes: int, interrompu: bool, dry_run: bool, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Depose interrompue" if interrompu else "Depose terminee")
+        self.setMinimumWidth(520)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        titre = QLabel(
+            "<b>Depose INTERROMPUE</b>" if interrompu else "<b>Depose terminee</b>"
+        )
+        titre.setTextFormat(Qt.RichText)
+        layout.addWidget(titre)
+
+        resume = QLabel(
+            f"Produit : <b>{product_name}</b><br>"
+            f"Zones deposees : <b>{len(zones_faites)} / {len(zones_prevues)}</b><br>"
+            f"Temps total : <b>{secondes // 60} min {secondes % 60:02d} s</b>"
+        )
+        resume.setTextFormat(Qt.RichText)
+        resume.setWordWrap(True)
+        layout.addWidget(resume)
+
+        if dry_run:
+            rappel = QLabel(
+                "Depose a blanc : aucune pate n'a ete extrudee, et la machine n'a pas "
+                "quitte la hauteur du homing."
+            )
+            rappel.setProperty("role", "status")
+            rappel.setWordWrap(True)
+            layout.addWidget(rappel)
+
+        # Détail par zone : seulement quand il porte une information — voir la docstring
+        if interrompu:
+            faites = set(zones_faites)
+            lignes = [
+                f"- Zone {zone_id} : "
+                f"{'deposee' if zone_id in faites else 'NON deposee'}"
+                for zone_id in zones_prevues
+            ]
+            detail = QLabel("\n".join(lignes))
+            detail.setWordWrap(True)
+            layout.addWidget(detail)
+
+            consigne = QLabel(
+                "Verifier les zones non deposees avant de relancer : une zone "
+                "interrompue en cours de cordon a recu une dose partielle."
+            )
+            consigne.setProperty("role", "status")
+            consigne.setWordWrap(True)
+            layout.addWidget(consigne)
+
+        boutons = QDialogButtonBox()
+        btn = boutons.addButton("Terminer", QDialogButtonBox.AcceptRole)
+        btn.setProperty("role", "success")
+        boutons.accepted.connect(self.accept)
+        layout.addWidget(boutons)

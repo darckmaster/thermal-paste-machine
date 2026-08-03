@@ -152,3 +152,85 @@ def test_list_devices_retourne_des_index_ouvrables() -> None:
             )
         finally:
             cam.release()
+
+
+# ------------------------------------------------------------------ fraîcheur de l'image
+#
+# Ces trois tests n'ont besoin d'aucun matériel : ils remplacent le flux vidéo par un
+# faux qui rend une suite d'images distinctes. Ce qu'on vérifie n'est pas la caméra, mais
+# le fait de ne PAS rendre une image périmée — un comportement de la classe, pas du
+# pilote.
+
+class _FluxSimule:
+    """Faux flux vidéo qui rend des images numérotées, une par lecture.
+
+    Reproduit le tampon du pilote : les premières lectures rendent des images anciennes,
+    les suivantes des images récentes. L'image `n` correspond à la n-ième lecture.
+    """
+
+    def __init__(self, nombre: int = 20) -> None:
+        self.images = [
+            np.full((4, 4, 3), i, dtype=np.uint8) for i in range(nombre)
+        ]
+        self.lectures = 0
+
+    def read(self):
+        image = self.images[min(self.lectures, len(self.images) - 1)]
+        self.lectures += 1
+        return True, image
+
+
+def _camera_sur_flux(flux) -> Camera:
+    """Une Camera branchée sur un faux flux, sans ouvrir de matériel.
+
+    `__new__` court-circuite `__init__`, qui sonderait les caméras réelles du système —
+    c'est précisément ce qu'on veut éviter ici.
+    """
+    camera = Camera.__new__(Camera)
+    camera._cap = flux
+    return camera
+
+
+def test_capture_jette_les_images_du_tampon_avant_de_lire() -> None:
+    """L'image rendue doit être la FRAÎCHE, pas la première du tampon.
+
+    Défaut réel du 2026-08-04 : sur un second cycle de dépose, la photo analysée était
+    celle de la fin du cycle précédent. Entre les deux, le homing avait duré 30 à 60 s
+    sans que personne ne lise la caméra — `read()` rendait donc l'image figée d'avant.
+
+    C'est le pire genre de défaut : la photo est nette, les marqueurs sont dedans, le
+    diagnostic ressort vert, et les zones sont détectées au mauvais endroit.
+    """
+    flux = _FluxSimule()
+    camera = _camera_sur_flux(flux)
+
+    image = camera.capture(flush_frames=4)
+
+    # 4 images jetées puis la 5e gardée → celle d'indice 4
+    assert image[0, 0, 0] == 4
+    assert flux.lectures == 5
+
+
+def test_capture_flush_zero_rend_la_premiere_image() -> None:
+    """L'échappatoire explicite reste possible, pour un appelant qui lit déjà en continu."""
+    flux = _FluxSimule()
+    camera = _camera_sur_flux(flux)
+
+    image = camera.capture(flush_frames=0)
+
+    assert image[0, 0, 0] == 0
+    assert flux.lectures == 1
+
+
+def test_capture_vide_le_tampon_par_defaut() -> None:
+    """Le comportement sûr doit être celui qu'on obtient sans y penser.
+
+    Un appelant qui écrit simplement `camera.capture()` ne doit pas hériter d'une image
+    périmée : c'est le défaut par défaut qui compte, pas l'option.
+    """
+    flux = _FluxSimule()
+    camera = _camera_sur_flux(flux)
+
+    camera.capture()
+
+    assert flux.lectures > 1, "capture() sans argument doit vider le tampon"

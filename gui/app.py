@@ -27,6 +27,7 @@ from gui.screen_report import ScreenReport
 from gui.screen_calibration import ScreenCalibration
 from gui.screen_plateau import ScreenPlateau
 from gui.screen_cordons import ScreenCordons
+from gui.screen_execution import ScreenExecution
 
 
 # Feuille de style globale appliquée à toute l'application
@@ -126,6 +127,7 @@ class MainApp(QMainWindow):
         self._screen_calibration = ScreenCalibration()
         self._screen_plateau = ScreenPlateau()
         self._screen_cordons = ScreenCordons()
+        self._screen_execution = ScreenExecution()
 
         # Ajouter les écrans à la pile — l'index correspond à l'ordre d'ajout
         self._stack.addWidget(self._screen_capture)     # index 0
@@ -135,9 +137,15 @@ class MainApp(QMainWindow):
         self._stack.addWidget(self._screen_calibration) # index 4
         self._stack.addWidget(self._screen_plateau)     # index 5
         self._stack.addWidget(self._screen_cordons)     # index 6
+        self._stack.addWidget(self._screen_execution)   # index 7
 
         # Fournir la machine à screen_capture pour le bouton Homing
         self._screen_capture.set_machine(self._machine)
+        # ... et à l'écran d'exécution, qui la pilote de bout en bout
+        self._screen_execution.set_machine(self._machine)
+        # ... et à la création de plateau, qui s'en sert pour se mettre en position de
+        # prise de vue avant chaque photo (demandé le 2026-08-04)
+        self._screen_plateau.set_machine(self._machine)
 
         # Caméra unique partagée entre screen_capture et screen_calibration
         # → évite un release+open de 1-2 s à chaque changement d'écran
@@ -151,6 +159,7 @@ class MainApp(QMainWindow):
         self._screen_capture.set_camera(self._camera)
         self._screen_calibration.set_camera(self._camera)
         self._screen_plateau.set_camera(self._camera)
+        self._screen_execution.set_camera(self._camera)
 
         # Remplir les listes déroulantes de choix du matériel de l'écran 1. À faire APRÈS
         # set_machine() et set_camera() : les listes présélectionnent le port et la caméra
@@ -180,6 +189,8 @@ class MainApp(QMainWindow):
         self._screen_plateau.back_requested.connect(self._go_from_plateau_to_capture)
         self._screen_plateau.plateau_validated.connect(self._go_to_cordons)
         self._screen_cordons.back_requested.connect(self._go_from_cordons_to_plateau)
+        self._screen_capture.deposit_requested.connect(self._go_to_execution)
+        self._screen_execution.back_requested.connect(self._go_from_execution_to_capture)
 
         # Changements de matériel demandés depuis l'écran 1 — appliqués ici, car MainApp
         # est propriétaire de la Camera et de la Machine partagées par tous les écrans
@@ -275,6 +286,22 @@ class MainApp(QMainWindow):
         """Revenir à la création de plateau — typiquement pour reprendre une photo."""
         self._screen_plateau.start_camera()
         self._stack.setCurrentIndex(5)
+
+    def _go_to_execution(self) -> None:
+        """Lancer le cycle de dépose multi-zones (lot D2).
+
+        La caméra de l'écran d'accueil est arrêtée d'abord : le cycle va prendre sa
+        propre photo, et deux lectures concurrentes sur le même flux se disputeraient les
+        images. L'écran est affiché AVANT de démarrer le cycle, pour que l'opérateur voie
+        la progression du homing plutôt qu'une interface figée.
+        """
+        self._screen_capture.stop_camera()
+        self._stack.setCurrentIndex(7)
+        self._screen_execution.start_cycle()
+
+    def _go_from_execution_to_capture(self) -> None:
+        """Retour à l'accueil à la fin du cycle, ou après une annulation."""
+        self._go_to_capture()
 
     # ------------------------------------------------------------------ reprise au démarrage
 
