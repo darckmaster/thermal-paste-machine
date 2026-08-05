@@ -36,3 +36,7 @@ local_config.json
 # Calibration caméra — dépend du capteur/objectif physique de chaque machine,
 # ne doit pas être partagée entre machines différentes (voir local_config.json)
 assets/camera_calibration.npz
+
+# Sorties de repli du generateur de planches, quand le fichier principal est
+# ouvert dans PowerPoint : ce sont des doublons horodates, jamais a commiter.
+assets/bilan_soutenance_*.pptx
