@@ -363,6 +363,39 @@ Deux tests le gardent désormais : `test_compute_homography_approx_conserve_le_s
 
 **Résultats sessions 1 & 2 (2026-06-11) :** 14/14 tests passés. Détection 4 marqueurs simultanée confirmée. Image redressée validée visuellement (le miroir vertical n'a été détecté que le 2026-08-01, par le calcul et non à l'œil).
 
+#### Vue oblique sur la CNC — la prédiction du 2026-08-01 confirmée, et un second défaut trouvé (2026-08-25)
+
+La CNC n'a pas simplement « la place de reculer la caméra » comme envisagé plus haut :
+sa caméra (une DFRobot **FIT0729**, qui remplace la Philips SPC1330NC réutilisée jusque-là)
+est montée **décalée** du plateau plutôt qu'au-dessus, avec un angle d'environ **45°**. Deux
+défauts distincts s'y sont manifestés, à ne pas confondre :
+
+**(a) Confirmation de la prédiction.** En mode 2-3 marqueurs, les zones détectées ne
+correspondaient pas au plateau réel — l'image redressée ressortait plus petite et déformée.
+Cause : `estimateAffinePartial2D` (similitude, 4 degrés de liberté) ne peut par construction
+pas corriger un effet de perspective, quel que soit l'angle. C'est négligeable en vue
+verticale (Geeetech), où la perspective est déjà proche de nulle, et rédhibitoire en vue
+oblique. Une fois les 4 marqueurs de coin bien détectés, `compute_homography()` (perspective
+complète, 8 degrés de liberté) a donné une reconstruction correcte, confirmant qu'aucun
+changement de calcul n'était nécessaire côté vision — le mode 4 marqueurs, secondaire sur la
+Geeetech, devient le mode **nominal** sur la CNC.
+
+**(b) Un second défaut, indépendant du premier : l'autofocus.** Même en mode 4 marqueurs, la
+détection restait par moments intermittente. Cause : la FIT0729 refait le point à chaque
+capture, produisant un flou transitoire qui déplace légèrement les coins ArUco détectés —
+invisible en vue verticale (l'erreur de coin se traduit par un déplacement minime après
+homographie), amplifié en vue oblique. Solution : couper l'autofocus et fixer une valeur de
+mise au point trouvée empiriquement (`Camera.set_autofocus()` / `Camera.set_focus()` dans
+`modules/camera.py`, pilotées par `camera_autofocus_off` / `camera_focus_value` dans
+`local_config.json` — voir `MANUEL_MAINTENANCE.md` section 4.11 pour la procédure complète).
+Aucun effet sur la Philips, qui n'a pas d'autofocus logiciel.
+
+> **Leçon** : un symptôme unique (« les zones sont fausses ») peut avoir plusieurs causes
+> superposées. Les traiter dans l'ordre où elles bloquent la suivante — ici, corriger d'abord
+> ce qui empêche de voir si le calcul géométrique est juste (l'autofocus) aurait été plus
+> risqué que l'inverse : sans les 4 marqueurs déjà confirmés visuellement corrects une fois
+> détectés, la panne de focus aurait pu être imputée à tort à l'homographie elle-même.
+
 ### 4.2 bis Zones de dépose — reconstruction géométrique (lot A, 2026-08-01)
 
 **Besoin** : le plateau porte **plusieurs zones de dépose**, chacune accueillant un

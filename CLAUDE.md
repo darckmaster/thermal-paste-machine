@@ -225,9 +225,10 @@ Le soir à la maison : `git pull` sur le PC, on continue sur grand écran.
 | Contrôleur machine | Carte CNC — firmware **Marlin dernière version** (même protocole G-code) | ✅ Intégrée, câblée, sous tension, flashée (2026-07-11) |
 | Câblage capteurs + moteurs | Fins de course, caméra, moteurs Nema 17 | 🔄 En cours — reste à câbler |
 | Ordinateur de contrôle | Même Raspberry Pi 3B+ | ✅ Réutilisé |
-| Caméra + écran | Même Philips SPC 1330NC USB + écran 7" | ✅ Réutilisés |
+| Écran | Même écran tactile 7" | ✅ Réutilisé |
+| Caméra | **DFRobot FIT0729** (autofocus logiciel) — ⚠️ **remplace la Philips SPC1330NC**, décidé au montage CNC (constaté le 2026-08-25, à documenter précisément avec l'étudiant). Montée **décalée** du plateau (pas au-dessus) et à **~45°**, contrairement au montage vertical de la Geeetech | 🔄 Détection ArUco et calibration ChArUco faites ; homographie en cours de validation |
 
-> Le portage logiciel Geeetech → CNC se limite aux paramètres de `config.py` (port série, limites de déplacement, zone de travail).
+> Le portage logiciel Geeetech → CNC se limite aux paramètres de `config.py` (port série, limites de déplacement, zone de travail) **et à la caméra**, qui n'est plus la même sur les deux machines : la CNC a sa propre géométrie de prise de vue (vue oblique) et son propre fichier de calibration `assets/camera_calibration.npz` (gitignoré, propre à chaque caméra).
 
 ### Connexions E/S
 
@@ -291,7 +292,8 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 | **M3** | **Hauteur Z de la pointe de seringue après homing** | ⚠️ **Recadrée le 2026-08-03 : ne bloque plus que le sous-lot D4** (extrusion réelle). Erwann a confirmé que le **Z du homing est sûr tant qu'on n'extrude pas** — d'où la décision « dépose à blanc » de D1 : `z_travel = z_dispense = Z du homing`, aucun mouvement en Z. D1 à D3, donc la démo de l'oral blanc, n'ont **pas** besoin de `M3`. Demande le dispositif de seringue monté, donc **au boulot** |
 | **M4** | **Sens des axes machine vs axes plateau** (X, Y, Z) — à établir **en interactif**, machine sous tension | Décidé le 2026-08-01 : on ne le déduit pas sur le papier. Le relevé de `M2 bis` est **cohérent** avec les deux additions du code (un X vers la droite, un Y qui monte), mais il ne les prouve pas : il a été fait *dans* cette convention. Reste à valider par un mouvement réel — c'est précisément ce que le **passage au zéro de chaque zone** de D1 rendra visible à l'œil |
 | **M11** | **Relever la course utile réelle des axes** (`M211`, ou la configuration Marlin) | Créée le 2026-08-03 avec le lot D1. Le contrôle de course s'appuie sur `MACHINE_TRAVEL_X/Y/Z_MAX_MM`, dont les valeurs actuelles (200/200/180) sont les dimensions **catalogue** d'une Geeetech I3 — **jamais relevées**. ⚠️ Une valeur trop **grande** laisse passer un dépassement réel : c'est le sens dangereux, et celui qu'on ne voit pas. Une minute machine sous tension, à grouper avec `M2 bis`/`M4` |
-| **M10** | **CNC — coordonnées de prise de vue** `(x, y, z)` et origine plateau | Nouveau le 2026-08-03. Sur la CNC la caméra est **solidaire de la seringue** : la position de prise de vue est une vraie inconnue, sans rapport avec le homing. Sur le POC elle vaut le homing (caméra fixe sur le bâti). À renseigner dans `local_config.json` de la CNC. **Tout reste à mesurer côté CNC** (dixit Erwann, 2026-08-03) |
+| **M10** | **CNC — coordonnées de prise de vue** `(x, y, z)` et origine plateau | Nouveau le 2026-08-03. Sur la CNC la caméra est **solidaire de la seringue** : la position de prise de vue est une vraie inconnue, sans rapport avec le homing. Sur le POC elle vaut le homing (caméra fixe sur le bâti). À renseigner dans `local_config.json` de la CNC. **Tout reste à mesurer côté CNC** (dixit Erwann, 2026-08-03). 🔄 **Étudiée le 2026-08-25** : le point de vue nominal est identifié et donne une détection 4 marqueurs correcte une fois l'autofocus traité (voir `M12`) — **mais la mesure `(x, y, z)` elle-même n'est toujours pas consignée**, reportée volontairement par l'étudiant |
+| **M12** | **CNC — trouver `camera_focus_value`** avec `python tests/demo_camera.py --focus`, à la distance de capture réelle, puis l'enregistrer avec `camera_autofocus_off: true` dans `local_config.json` de la CNC | Créée le 2026-08-25. La caméra CNC (**DFRobot FIT0729**, autofocus logiciel — remplace la Philips) refait le point à chaque capture, ce qui floute transitoirement l'image et rend la détection des 4 marqueurs intermittente en vue oblique à 45°. Voir `MANUEL_MAINTENANCE.md` section 4.11 pour la procédure complète |
 | **M5** | **Calibration ChArUco sur le RPi et la caméra Philips réels** (15 poses) | Le pipeline n'a été validé que sur le PC de dev. Cause connue de l'**écart résiduel de ~10 %** (distorsion de l'objectif) |
 | **M6** | **Q8 — volume de pâte de référence** (par mm de cordon) | Calibrage expérimental. Alimente la quantité déposée et le volume estimé du rapport PDF |
 | **M7** | **Créer `local_config.json` sur le RPi** (`camera_index: 0`, `serial_port: "/dev/ttyUSB0"`, **et surtout `work_area_width_mm` / `work_area_height_mm` = 205.5**) | Fichier gitignoré, donc absent d'un dépôt fraîchement cloné : l'appli démarre sur la mauvaise caméra sans lui. ⚠️ **Devenu critique le 2026-08-04** : sans les deux clés de zone de travail, le RPi déposerait avec la valeur supposée d'avant `M1`, fausse de **13,5 mm** |
@@ -313,39 +315,53 @@ Ces points doivent être documentés dans `CONCEPTION.md` dès qu'ils sont réso
 
 ---
 
-### 🚩 POINT DE REPRISE — D1, D2 et D3 livrés le 2026-08-04 (`v0.5.2`)
+### 🚩 POINT DE REPRISE — session vision CNC livrée le 2026-08-25 (`v0.6.1`)
 
-> **▶️ POUR DÉMARRER LA PROCHAINE SESSION : « on code le lot D4 ».** Rien à redemander —
-> D4 est spécifié plus bas : activer l'extrusion, régler `priming_seconds` et
-> `end_anticipation_mm` à l'œil, évaluer `retract_mm`. **Demande `M3`** (hauteur Z de la
-> pointe), donc l'atelier avec le dispositif de seringue monté.
+> ⚠️ **Écart de journal comblé partiellement le 2026-08-25** : aucune entrée n'existait
+> entre le 2026-08-05 et aujourd'hui. Ce qui suit est ce qui a été confirmé **en
+> conversation** ce jour-là — **PAS un audit du code ni de la machine**. Le point de
+> reprise du 2026-08-05 (D2 jamais essayé sur machine) est **caduc** : l'étudiant a
+> confirmé que l'essai a été fait et **validé** depuis. Mais l'état exact de `M4`
+> (sens des axes), `M11` (course réelle) et du lot **D4** (extrusion) sur la Geeetech
+> n'a **pas** été revérifié en détail cette session — à confirmer en tout début de la
+> prochaine, ne pas supposer qu'ils sont clos parce que D2 l'est.
 >
-> ⏰ **MAIS LA PRIORITÉ RESTE L'ESSAI SUR MACHINE, et elle n'a pas bougé depuis deux
-> sessions.** Le critère de fin de D2 — « la machine parcourt un plateau réel **en
-> l'air**, du bouton d'accueil au retour à l'accueil » — n'a **jamais** été essayé. D3
-> s'empile dessus sans l'avoir validé. Tant que ce n'est pas fait, trois sous-lots
-> reposent sur du code qu'aucun test ne peut valider — le sens réel des axes reste
-> inconnu.
+> **✅ Confirmé le 2026-08-25** :
+> - Rapport final IUT **rendu**.
+> - Soutenances blanches **#2 (05/08) et #3 (12/08) faites**. Une **4e soutenance
+>   ajoutée le 28/08** (dans 3 jours), **en plus** de la finale IUT du 31/08 (inchangée,
+>   dans 6 jours).
+> - Lot **D2 validé sur la Geeetech** : la machine parcourt un plateau réel en l'air,
+>   du bouton d'accueil au retour à l'accueil.
+> - **CNC** : la caméra n'est plus la Philips mais une **DFRobot FIT0729** (autofocus
+>   logiciel), montée **décalée** du plateau à **~45°** (pas au-dessus comme sur la
+>   Geeetech). Calibration ChArUco déjà refaite pour cette caméra spécifique.
 >
-> **Les trois mesures à grouper au même moment, machine sous tension** :
-> - `M11` — course réelle des axes (`M211`). Le contrôle de course s'appuie sur des
->   dimensions **catalogue** ; une valeur trop grande laisse passer un dépassement réel.
-> - `M4` — sens des axes. Elle se lève **à l'œil** pendant l'essai : la buse passe
->   visiblement au coin bas-gauche de chaque zone avant de la tracer. Si elle vise juste,
->   `M4` est levée ; sinon, un signe est faux.
-> - `M7` — reporter `work_area_width_mm` / `work_area_height_mm` = **205.5** dans le
->   `local_config.json` **du RPi**. Fichier gitignoré, donc absent après un clone : sans
->   lui, le RPi déposerait avec l'ancienne valeur, fausse de 13,5 mm.
+> **🔧 Diagnostiqué et traité ce jour** — deux causes superposées à la mauvaise détection
+> des zones en vue oblique sur la CNC (détail complet en `CONCEPTION.md` section 4.2 et
+> `MANUEL_MAINTENANCE.md` section 4.11) :
+> 1. Le mode 2-3 marqueurs (`estimateAffinePartial2D`, une similitude) ne corrige pas la
+>    perspective — confirmé sans conséquence en pratique : le mode 4 marqueurs
+>    (`compute_homography()`, projectif complet) donne une reconstruction **correcte**
+>    une fois les 4 tags détectés. Aucun changement de calcul nécessaire.
+> 2. L'autofocus de la FIT0729 refait le point à chaque capture → détection intermittente.
+>    Traité : `Camera.set_autofocus()` / `Camera.set_focus()` + clés
+>    `camera_autofocus_off` / `camera_focus_value` dans `local_config.json`, et un mode
+>    `python tests/demo_camera.py --focus` pour trouver la bonne valeur à l'œil.
 >
-> Ordre de démarrage : checklist section 3 → **rappeler la section 7 bis** → essai machine
-> si l'on est à l'atelier, sinon D4 ne peut pas commencer (il demande `M3`) → à défaut,
-> les dettes logicielles `L1` à `L4`.
+> **▶️ POUR DÉMARRER LA PROCHAINE SESSION** : action `M12` — sur la CNC, lancer
+> `python tests/demo_camera.py --focus` à la distance de capture réelle, trouver la
+> valeur nette, l'enregistrer dans `local_config.json`, puis répéter plusieurs fois la
+> détection à 4 marqueurs pour vérifier que c'est désormais **fiable et répétable**
+> (une seule vérification a été faite jusqu'ici). Une fois stable : mesurer et consigner
+> `M10` (position de prise de vue CNC), volontairement reportée par l'étudiant cette
+> session.
 >
 > 📊 **Support de soutenance** : `assets/generate_bilan_soutenance.py` produit 9 planches
 > (processus métier, carte des modules, bilan, portage CNC) dans la charte du deck
 > existant. Les chiffres y sont **mesurés**, avec la commande de rafraîchissement en
 > commentaire — les relancer avant toute nouvelle soutenance plutôt que de recréer les
-> planches.
+> planches. Utile pour la soutenance du **28/08**, dans 3 jours.
 
 ---
 
@@ -981,19 +997,22 @@ Phase 7 ✅ :
 
 ## 9. Plan de développement — avancement
 
-### 📅 Calendrier des échéances 2026 (mis à jour 2026-07-11)
+### 📅 Calendrier des échéances 2026 (mis à jour 2026-08-25)
 
-| Échéance | Date | Type |
-|---|---|---|
-| MàJ rapport entreprise | **17/07** (ven) | Rapport |
-| Soutenance blanche #1 (partie en anglais) | **22/07** (mer) | Entreprise |
-| Soutenance blanche #2 | **05/08** (mer) | Entreprise |
-| **2 machines fonctionnelles (Geeetech + CNC)** | **avant le 12/08** | Contrainte |
-| Soutenance blanche #3 | **12/08** (mer) | Entreprise |
-| Rapport final | **17/08** (lun) | IUT |
-| Soutenance finale (démo Geeetech acceptée) | **31/08** (lun) | IUT |
+| Échéance | Date | Type | Statut |
+|---|---|---|---|
+| MàJ rapport entreprise | **17/07** (ven) | Rapport | ✅ |
+| Soutenance blanche #1 (partie en anglais) | **22/07** (mer) | Entreprise | ✅ (confirmée 2026-08-25) |
+| Soutenance blanche #2 | **05/08** (mer) | Entreprise | ✅ (confirmée 2026-08-25) |
+| **2 machines fonctionnelles (Geeetech + CNC)** | **avant le 12/08** | Contrainte | ⚠️ non confirmé — voir Phase 10 §9, à revérifier |
+| Soutenance blanche #3 | **12/08** (mer) | Entreprise | ✅ (confirmée 2026-08-25) |
+| Rapport final | **17/08** (lun) | IUT | ✅ rendu (confirmé 2026-08-25) |
+| **Soutenance blanche #4 (ajoutée)** | **28/08** (ven) | Entreprise | ⬜ à venir dans 3 jours |
+| Soutenance finale (démo Geeetech acceptée) | **31/08** (lun) | IUT | ⬜ à venir dans 6 jours, inchangée |
 
-> Les autres échéances de rapport (entreprise) seront communiquées **après le 17/07** — à insérer ici dès réception.
+> Calendrier initial du 2026-07-11 confirmé dans les grandes lignes le 2026-08-25, avec un
+> ajout (soutenance #4 le 28/08) et une inconnue (le jalon des 2 machines fonctionnelles,
+> non revérifié — voir la remarque en section 9, Partie B).
 
 ### 🗓️ Planning détaillé jour par jour (11/07 → 31/08)
 
@@ -1067,6 +1086,7 @@ Phase 7 ✅ :
 | Jour | Lieu | Tâche |
 |---|---|---|
 | 18→28 | 🏠🏭 | Phase 12 : corrections de bugs (retours blanches) ; prépa démo Geeetech (acceptée IUT) ; slides finaux ; répétitions |
+| **Ven 28** | 🎤 | **Soutenance blanche #4 (ajoutée)** — non prévue au calendrier initial du 11/07, confirmée le 2026-08-25 |
 | **Lun 31** | 🎤 | **Soutenance finale IUT** ✅ |
 
 > **Marge** : la CNC étant déjà quasi assemblée, la contrainte « 2 machines avant le 12/08 » vise une CNC fonctionnelle **dès le 07/08** — les 10-12/08 servent de tampon de sécurité.
@@ -1096,10 +1116,12 @@ Phase 7 ✅ :
 | Phase | Description | Statut | Durée estimée |
 |---|---|---|---|
 | 9 | Assemblage de la CNC cible (mécanique + câblage) | 🔄 Quasi terminé (méca + carte + Marlin flashé) — reste câblage capteurs/moteurs | ~2-3 jours |
-| 10 | Portage logiciel : adaptation `config.py` + tests sur CNC | ⬜ À faire | 0 / 2 sessions |
+| 10 | Portage logiciel : adaptation `config.py` + tests sur CNC | 🔄 En cours — caméra CNC choisie (FIT0729), détection ArUco et calibration ChArUco faites, diagnostic homographie en vue oblique traité le 2026-08-25 (voir point de reprise §8) | 1+ / 2 sessions |
 | 11 | Validation complète du système sur CNC cible | ⬜ À faire | 0 / 3 sessions |
 
-**Jalon B : Système validé sur CNC ≈ 07/08 (avant la 3e soutenance blanche du 12/08)**
+**Jalon B : Système validé sur CNC ≈ 07/08 (avant la 3e soutenance blanche du 12/08)** — ⚠️
+**date dépassée sans confirmation que le jalon est atteint** ; état réel du câblage/homing CNC
+non revérifié le 2026-08-25, à faire en tout début de prochaine session plutôt que supposer.
 
 ### Partie C — Finalisation · deadline fin août 2026
 
@@ -1359,6 +1381,7 @@ Fichiers modifiés :
 | 2026-07-01 | **Fix test ArUco résiduel** — Confirmé au préalable que l'échec de `test_pixel_to_mm_coins_de_la_zone` était déterministe (2 essais identiques) et sans lien avec la caméra (test 100% synthétique, aucun `cv2.VideoCapture`). `tests/test_vision.py::_marqueurs_synthetiques()` remis dans l'ordre ID0=bas-gauche/ID1=haut-gauche/ID2=haut-droit/ID3=bas-droit (aligné sur la convention réelle de `vision.py`), assertions de coins ajustées en conséquence. | 45/45 tests passent ✅. |
 | 2026-07-11 | **Révision planning + cadrage fonctionnel** — Nouvelles contraintes calendaires : 3 soutenances blanches entreprise (22/07, 05/08, 12/08, partie en anglais), rapport final IUT le 17/08, soutenance finale IUT le 31/08 (démo Geeetech acceptée), MàJ rapport entreprise le 17/07. CNC déjà quasi assemblée (mécanique + carte + firmware Marlin dernière version flashés ; reste câblage capteurs/moteurs) → Q9 résolue, chemin critique dé-risqué. Cadrage du process de dépose complet et actage de 4 fonctionnalités : calibration **ChArUco**, **cordons multiples** avec quantité par cordon, **fichier de préparation JSON**, **temps de dépose** au rapport. Planning détaillé jour par jour (11/07→31/08) ajouté en section 9. | CLAUDE.md + CONCEPTION.md mis à jour. Planning validé. Aucune ligne de code produite ce jour. |
 | 2026-07-29 | **Session 🏠 — Détection ChArUco débloquée + fix OpenCV 5.0 + distance mire + manuels.** Deux causes cumulées trouvées et corrigées pour le blocage de `CharucoDetector.detectBoard()` constaté le 2026-07-25 : (1) `camera_index` de `local_config.json` pointait sur la webcam intégrée du PC, pas l'USB ; (2) `charuco_legacy_pattern: true` incompatible avec les mires générées par l'appli (`board.generateImage()` ignore ce réglage, `detectBoard()` non — corrigé à `false`). `cv2.aruco.calibrateCameraCharuco()` (supprimée en OpenCV 5.0) remplacée par `board.matchImagePoints()` + `cv2.calibrateCamera()` dans `modules/calibration.py::calibrate_charuco`. Ajout de `estimate_board_pose()` et `distance_to_board_normal_mm()` (solvePnP) affichant la distance caméra↔mire en direct dans l'écran calibration. Overlay de debug ArUco/ChArUco ajouté sur `screen_capture.py` et `screen_calibration.py` (`detect_charuco` retourne désormais aussi `marker_count`) — c'est cet overlay qui a permis d'isoler les deux causes ci-dessus. `assets/camera_calibration.npz` ajouté au `.gitignore` (spécifique à chaque caméra/objectif, ne doit pas être partagé entre machines). `MANUEL_UTILISATEUR.md` et `MANUEL_MAINTENANCE.md` créés (guide opérateur 5 écrans + guide technique installation/config/dépannage). Rituel de fin de session formalisé en section 15 de ce fichier. | 45/45 tests passés. Points ouverts identifiés cette session : collision d'IDs ArUco plateau/mire (même dictionnaire `DICT_4X4_50` sans plage séparée — contournement : masquer le plateau pendant la calibration), et IDs réels du plateau à confirmer (`{0,3,4,5}` suspecté au lieu de `{0,1,2,3}`). Calibration optique à refaire sur le Raspberry Pi/caméra réels (pipeline validé sur PC de dev cette session). |
+| 2026-08-25 | **Session (`v0.6.1`) — Diagnostic vision CNC : deux causes superposées à la mauvaise détection des zones en vue oblique, et resynchronisation d'un écart de journal de 20 jours.** Reprise après un vide de journal (dernière entrée : 2026-08-05) : confirmé en conversation que le rapport final IUT est rendu, que les soutenances blanches #2 et #3 ont eu lieu (une 4e ajoutée le 28/08, en plus de la finale du 31/08), et que **le lot D2 est désormais validé sur machine réelle** — le point de reprise du 05/08 (jamais essayé) était donc caduc. Sur la CNC (caméra changée pour une **DFRobot FIT0729** montée décalée du plateau à ~45°, au lieu du montage vertical de la Geeetech), les zones détectées ne correspondaient plus au plateau. Diagnostic mené par élimination avec l'étudiant plutôt que par lecture de code : (1) le mode 2-3 marqueurs (`estimateAffinePartial2D`, une similitude) ne peut pas corriger une perspective, quel que soit l'angle — confirmé sans conséquence pratique, le mode 4 marqueurs (`compute_homography()`, projectif) reconstruit correctement une fois les tags détectés ; (2) l'autofocus de la FIT0729 refait le point à chaque capture, floutant transitoirement les coins ArUco — négligeable en vue verticale, amplifié en vue oblique. Traité par deux nouvelles méthodes `Camera.set_autofocus()`/`Camera.set_focus()`, deux clés `local_config.json` (désactivées par défaut, sans effet sur la Philips), et un mode `tests/demo_camera.py --focus` pour trouver la valeur à l'œil. **Demande explicite de l'étudiant, traitée en fin de session** : retrait de toute signature Claude (`Co-Authored-By`) des commits et des documents — gabarit de commit de `CLAUDE.md` section 13 corrigé en conséquence. | 197 passés (+5), 12 sautés (matériel absent sur cette machine de dev), 97 erreurs préexistantes et confirmées indépendantes de la session (`pytest-qt` absent de cet environnement précis, vérifié par comparaison avant/après changement). Action `M12` créée (trouver `camera_focus_value` sur la CNC) ; `M10` (position de prise de vue CNC) toujours non mesurée, reportée par choix de l'étudiant. |
 | 2026-08-05 | **Session 🏠 — Planches de soutenance et audit des mémoires. Aucun code applicatif touché.** Neuf planches produites dans la charte du deck existant (`assets/generate_bilan_soutenance.py`, qui **réutilise** les helpers et la palette de `generate_presentation.py` plutôt que de les redéfinir — une retouche de style se propage ainsi aux deux decks). Contenu : synoptique du processus métier, carte des 20 modules, bilan de l'acquis et du reste à faire, effort de portage CNC. **Tous les chiffres sont MESURÉS sur le dépôt**, avec la commande de rafraîchissement en commentaire au-dessus de chaque constante : c'est ce qui permet de les défendre en question. **Deux constats importants faits en préparant ces planches.** (1) Les descriptions de modules de l'ancienne présentation étaient **périmées** et décrivaient des choix abandonnés — caméra CSI au lieu d'USB, trajectoires en hachures au lieu de cordons, machine à états dans `main.py` alors que la navigation vit dans `app.py`. Les défendre en soutenance aurait obligé à justifier des décisions justement corrigées depuis. (2) L'argument central du portage CNC a été **vérifié et non supposé** : hors `config.py`, les seules occurrences de `/dev/ttyUSB0`, `COM3` ou `250000` dans le code sont dans des **commentaires**. 25 paramètres sont déjà externalisés hors du code, et il reste 9 valeurs numériques à ajuster, soit 0,09 % du code applicatif, pour zéro ligne de logique. **Audit des mémoires longues** demandé en cours de session : trois affirmations **fausses** trouvées dans le bloc de faits stables, celui qu'une session future lit en premier — zone de travail annoncée « 192×192 supposés, jamais mesurée » alors que `M1` est faite à 205,5 mm, dépose à blanc décrite sans sa marge de 2 mm, et actions listées `M1`–`M9` au lieu de `M1`–`M11`. La première contredisait frontalement une autre ligne du même fichier. Méthode employée : **confronter chaque affirmation chiffrée au code par un import réel**, et non relire — une mémoire qu'on relit sans exécuter se confirme elle-même. | 300 tests, inchangés. Géométrie des planches vérifiée par script après génération (débordements ET chevauchements) : deux défauts invisibles à la génération mais flagrants à la projection ont été attrapés ainsi. ⚠️ **Le critère de fin de D2 n'est toujours pas validé sur la machine** — c'est la priorité, devant D4 qui demande de toute façon l'atelier. |
 | 2026-08-04 | **Session 🏠 (`v0.5.2`) — Lot D3 : photo de fin et rapport PDF multi-zones.** En fin de cycle nominal, la machine revient en position de prise de vue et photographie le plateau ; le bilan affiche cette vue et un bouton produit un PDF. **Point de sûreté tranché en écrivant** : après un ARRÊT, la machine n'est **pas** redéplacée — `M112` met Marlin hors service jusqu'au redémarrage, et lui demander de bouger échouerait en faisant attendre l'opérateur devant une machine bloquée. On photographie donc là où elle s'est immobilisée, et le rapport **dit** que le cadrage n'est pas celui de référence : sans ce mot, on comparerait deux rapports en croyant comparer deux plateaux. **Choix de conception** : le CONTENU du rapport est séparé de son RENDU (`plateau_report_lines()`), parce que la règle qui le gouverne — détail par zone uniquement si interrompu, décision D9 — est une règle de contenu, et que la vérifier à travers un PDF compressé aurait été fragile. **Trois défauts existants trouvés en chemin, tous silencieux.** (1) `reporter.py` appelait `cvtColor(BGR2RGB)` avant `cv2.imwrite`, qui fait déjà la conversion : **tous les rapports produits depuis la Phase 7 avaient le rouge et le bleu échangés** — peu visible sur un plateau grisâtre, mais faux. (2) Le nom de fichier n'ayant qu'un horodatage à la seconde, deux rapports produits dans la même seconde s'écrasaient ; réimprimer aussitôt après est pourtant un geste normal, et perdre un rapport sans le dire est inacceptable sur un document de traçabilité. (3) Le dossier de sortie était le chemin **relatif** `"reports"`, qui suit le répertoire courant : un lancement par raccourci, par service au démarrage du RPi ou par double-clic aurait dispersé les rapports sans que rien ne le signale — devenu `config.REPORTS_DIR`, absolu, sur le modèle de `PREPARATIONS_DIR`. La leçon vaut au-delà : **tout chemin de sortie doit être calculé depuis `os.path.dirname(__file__)`**, un fichier écrit au mauvais endroit ne provoquant aucune erreur. **Vérification par mutation reconduite** : 7 mutations, toutes attrapées — dont celle qui prouve que le test d'emplacement ne se contente pas de vérifier qu'un chemin est absolu (il pourrait l'être à partir du dossier courant, ce qui reproduirait le défaut) mais change réellement de répertoire courant. | 300 tests (+22). ⚠️ **Le critère de fin de D2 n'est TOUJOURS pas validé** : le cycle n'a jamais tourné sur la machine, et D3 s'empile dessus. Trois sous-lots reposent désormais sur du code qu'aucun test ne peut valider — le sens réel des axes (`M4`) reste inconnu. C'est la priorité, devant D4. |
 | 2026-08-04 | **Session 🏠 (`v0.5.1`) — Lots D1 et D2 livrés : le planner multi-zones et l'écran d'exécution.** D1 rend `generate_plateau_path()`, qui produit la liste de steps de tout le plateau en coordonnées machine — ordre par rangées avec tolérance (la vision ne rend jamais deux ordonnées égales, un tri strict donnerait un ordre changeant d'une photo à l'autre), passage **visible** au zéro de chaque zone, tempos d'extrusion, mode **dépose à blanc**, contrôle de course. Aucun fichier de `gui/` n'était censé bouger ; `gui/dialogs.py` a dû l'être, `SettingsDialog` reconstruisant un `Settings` neuf à partir de ses seuls widgets et **effaçant silencieusement** les quatre nouveaux réglages — inoffensif tant qu'ils valent 0, destructeur dès D4. D2 ajoute `gui/screen_execution.py` et `gui/workers.py` : le cycle complet du bouton d'accueil au retour à l'accueil, trois modales, et un worker de dépose avec pause et arrêt. **La méthode a compté autant que le code : chaque batterie de tests a été validée par MUTATION** — on casse volontairement le code pour vérifier que les tests réagissent. Trois défauts de test ont ainsi été trouvés alors que tout était vert : l'invariant I2, censé attraper la buse qui traîne dans la pâte, regardait la hauteur du step qui bouge alors que `move_to()` envoie `G1 X Y` **puis** `G1 Z` — le déplacement XY a donc lieu à la hauteur du step PRÉCÉDENT ; une docstring attribuait à `self._paused = False` un rôle que la condition de boucle assurait déjà ; et un avertissement de cadrage était écrit dans la barre de statut puis **écrasé** par le diagnostic avant d'avoir été lu. **Quatre découvertes machine dans la foulée**, toutes de la même famille — un résultat plausible qui ne l'est pas. (1) La buse traversait le plateau à la hauteur du homing avant de monter : d'où `Machine.move_z()`, qui ne bouge que Z, et un dégagement systématique après chaque homing. (2) Marge de 2 mm ajoutée à la dépose à blanc, la hauteur du homing passant trop près des zones. (3) **`M1` faite : 205,5 mm centre à centre**, soit **13,5 mm d'écart** avec la valeur supposée — sur le repli 2 tags, le mode nominal de la Geeetech, cet écart décalait toute la dépose. Nouvelles clés `work_area_*_mm` pour saisir directement la mesure centre-à-centre : la mettre dans `plateau_size_mm` retrancherait une seconde fois les 28 mm du marqueur, en silence. (4) La photo analysée au second cycle était celle de la **fin du cycle précédent** — le tampon du pilote rend la plus ANCIENNE image, et personne ne lisait la caméra pendant les 30 à 60 s de homing. Photo nette, marqueurs dedans, diagnostic vert, zones fausses. Enfin, à la demande de l'étudiant, **toute capture d'image est désormais précédée d'un homing** et d'une mise en position, partagée entre les trois écrans concernés via `gui/workers.py` — au prix de 30 à 60 s par photo, y compris pour un « Reprendre ». L'écran de calibration ChArUco en est volontairement exclu : la mire est tenue à la main, 15 poses × 45 s pour aucun gain. | 278 tests (+70 sur la session), dont 37 pour D1 et 27 pour D2. ⚠️ **Le critère de fin de D2 n'est PAS validé** : « la machine parcourt un plateau réel en l'air » n'a jamais été essayé, la session s'étant faite à la maison. C'est la priorité absolue avant la soutenance du 05/08, avec `M11` (course réelle des axes), `M4` (sens des axes, qui se lève à l'œil au passage au zéro de zone) et `M7` (reporter la mesure du plateau sur le RPi). |
