@@ -6,6 +6,7 @@
 # est capturée une seule fois pour toute la session, et la plupart des tests
 # travaillent sur cette image plutôt que de rouvrir la caméra.
 
+import cv2
 import numpy as np
 import pytest
 
@@ -234,3 +235,93 @@ def test_capture_vide_le_tampon_par_defaut() -> None:
     camera.capture()
 
     assert flux.lectures > 1, "capture() sans argument doit vider le tampon"
+
+
+# ------------------------------------------------------------------ mise au point (focus)
+#
+# Comme pour la fraîcheur de l'image ci-dessus : ces tests ne vérifient pas une caméra
+# réelle (aucune n'a d'autofocus sur la Geeetech), mais le comportement de la classe face
+# à ses réglages — utile dès maintenant pour la FIT0729 (DFRobot) de la CNC, qui refait le
+# point à chaque déplacement machine et floute les coins des marqueurs ArUco au moment de
+# la capture (invisible en vue verticale, très visible en vue oblique à 45°).
+
+class _FluxAvecReglages:
+    """Faux flux qui mémorise les appels à set(), pour vérifier les réglages sans matériel."""
+
+    def __init__(self) -> None:
+        self.reglages = {}
+
+    def set(self, propriete, valeur) -> bool:
+        self.reglages[propriete] = valeur
+        return True
+
+    def get(self, propriete):
+        # Relit ce qui a été fixé par set() — suffisant pour que le warmup de __init__
+        # (qui lit la résolution juste après l'avoir demandée) ne trouve rien d'incohérent
+        return self.reglages.get(propriete, 0)
+
+    def read(self):
+        return True, np.zeros((4, 4, 3), dtype=np.uint8)
+
+    def isOpened(self) -> bool:
+        return True
+
+    def release(self) -> None:
+        pass
+
+
+def test_set_autofocus_desactive_la_propriete_opencv() -> None:
+    flux = _FluxAvecReglages()
+    camera = _camera_sur_flux(flux)
+
+    camera.set_autofocus(False)
+
+    assert flux.reglages[cv2.CAP_PROP_AUTOFOCUS] == 0
+
+
+def test_set_autofocus_active_la_propriete_opencv() -> None:
+    flux = _FluxAvecReglages()
+    camera = _camera_sur_flux(flux)
+
+    camera.set_autofocus(True)
+
+    assert flux.reglages[cv2.CAP_PROP_AUTOFOCUS] == 1
+
+
+def test_set_focus_applique_la_valeur_donnee() -> None:
+    flux = _FluxAvecReglages()
+    camera = _camera_sur_flux(flux)
+
+    camera.set_focus(120)
+
+    assert flux.reglages[cv2.CAP_PROP_FOCUS] == 120
+
+
+def test_init_applique_le_focus_manuel_si_configure(monkeypatch) -> None:
+    """Régression pour la FIT0729 (CNC) : si `camera_autofocus_off` est activé dans
+    local_config.json, l'ouverture de la caméra doit couper l'autofocus et fixer la valeur
+    configurée — sans quoi la mise au point recommencerait à chaque déplacement machine."""
+    flux = _FluxAvecReglages()
+
+    monkeypatch.setattr("modules.camera.CAMERA_AUTOFOCUS_OFF", True)
+    monkeypatch.setattr("modules.camera.CAMERA_FOCUS_VALUE", 42)
+    monkeypatch.setattr(Camera, "_open_cap", staticmethod(lambda device_index: flux))
+
+    Camera(device_index=0)
+
+    assert flux.reglages[cv2.CAP_PROP_AUTOFOCUS] == 0
+    assert flux.reglages[cv2.CAP_PROP_FOCUS] == 42
+
+
+def test_init_ne_touche_pas_au_focus_si_non_configure(monkeypatch) -> None:
+    """Comportement par défaut : une caméra sans ce réglage (Philips SPC1330NC) ne doit
+    voir aucun appel de mise au point — `camera_autofocus_off` vaut False par défaut."""
+    flux = _FluxAvecReglages()
+
+    monkeypatch.setattr("modules.camera.CAMERA_AUTOFOCUS_OFF", False)
+    monkeypatch.setattr(Camera, "_open_cap", staticmethod(lambda device_index: flux))
+
+    Camera(device_index=0)
+
+    assert cv2.CAP_PROP_AUTOFOCUS not in flux.reglages
+    assert cv2.CAP_PROP_FOCUS not in flux.reglages

@@ -3,6 +3,10 @@
 
     "camera_index": 1,
 
+    "_comment_focus": "camera_autofocus_off / camera_focus_value : a activer UNIQUEMENT pour une camera avec autofocus qui refait le point a chaque deplacement machine (ex. FIT0729 DFRobot sur la CNC) - sans effet sur une camera sans ce reglage (Philips SPC1330NC de la Geeetech). Le symptome : la detection ArUco reussit mais les COINS des marqueurs sont mal localises au moment de la capture, invisible en vue verticale, tres visible en vue oblique. camera_focus_value se trouve EMPIRIQUEMENT avec 'python tests/demo_camera.py --focus', a la distance de capture reelle - aucune formule ne la donne.",
+    "camera_autofocus_off": false,
+    "camera_focus_value": 0,
+
     "_comment_serial": "serial_port : port de la carte Marlin. '/dev/ttyUSB0' sur le RPi, 'COM3' (ou autre) sous Windows — le repérer dans la liste deroulante 'Machine' de l'ecran 1, c'est celui dont la description mentionne la puce serie USB (CH340), pas un port Bluetooth. serial_baudrate : doit correspondre au firmware de la carte (250000 sur la Geeetech, souvent 115200 ailleurs) ; si le port est bon mais que la machine ne repond pas, c'est le premier parametre a verifier.",
     "serial_port": "COM3",
     "serial_baudrate": 250000,

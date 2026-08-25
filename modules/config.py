@@ -33,6 +33,23 @@ CAMERA_HEIGHT_MM = 200.0  # Hauteur physique de la caméra au-dessus de la zone 
 # une seule fois par capture.
 CAMERA_FLUSH_FRAMES: int = int(_local_cfg.get("camera_flush_frames", 5))
 
+# Mise au point manuelle — désactivée par défaut, ce qui NE CHANGE RIEN pour la Philips
+# SPC1330NC (Geeetech) : elle n'a pas d'autofocus logiciel, ces deux réglages n'ont donc
+# aucun effet dessus.
+#
+# À activer pour une caméra qui refait le point à chaque déplacement machine — constaté le
+# 2026-08-25 avec la FIT0729 (DFRobot) sur la CNC. Le symptôme est trompeur : la détection
+# ArUco elle-même fonctionne (4 marqueurs vus), mais l'image est floue au moment précis de
+# la capture, donc les COINS des marqueurs sont mal localisés. Invisible en vue verticale
+# (Geeetech), où une petite erreur de coin ne déplace presque rien après homographie ; très
+# visible en vue oblique à 45° (CNC), où l'homographie amplifie tout écart de coin.
+#
+# `camera_focus_value` s'obtient EMPIRIQUEMENT, à la distance de capture réelle — aucune
+# formule ne la donne, elle dépend du pilote et de l'objectif. Utiliser
+# `python tests/demo_camera.py --focus` pour la trouver, puis la reporter ici.
+CAMERA_AUTOFOCUS_OFF: bool = bool(_local_cfg.get("camera_autofocus_off", False))
+CAMERA_FOCUS_VALUE: int = int(_local_cfg.get("camera_focus_value", 0))
+
 # ArUco
 ARUCO_DICT_ID = "DICT_4X4_50"
 ARUCO_MARKER_SIZE_MM = 28.0  # Taille réelle des marqueurs en mm (mesurée : 2.8 cm × 2.8 cm)

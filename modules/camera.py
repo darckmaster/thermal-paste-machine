@@ -3,7 +3,13 @@ import cv2
 import numpy as np
 from typing import Optional
 
-from modules.config import CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FLUSH_FRAMES
+from modules.config import (
+    CAMERA_WIDTH,
+    CAMERA_HEIGHT,
+    CAMERA_FLUSH_FRAMES,
+    CAMERA_AUTOFOCUS_OFF,
+    CAMERA_FOCUS_VALUE,
+)
 
 
 class Camera:
@@ -136,6 +142,31 @@ class Camera:
             self.height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             for _ in range(10):
                 self._cap.read()
+
+        # Mise au point manuelle — n'a d'effet que si activée dans local_config.json (voir
+        # modules/config.py). Sur une caméra sans autofocus (Philips SPC1330NC), ces deux
+        # appels ne changent rien : la propriété n'existe simplement pas pour le pilote.
+        if CAMERA_AUTOFOCUS_OFF:
+            self.set_autofocus(False)
+            self.set_focus(CAMERA_FOCUS_VALUE)
+
+    def set_autofocus(self, enabled: bool) -> None:
+        """Active ou désactive la mise au point automatique (best-effort).
+
+        `cv2.VideoCapture.set()` ne signale pas fiablement l'échec : certains pilotes
+        rendent `True` sans que le réglage ait le moindre effet. On l'appelle donc sans
+        rien garantir, comme le reste du code fait déjà pour la résolution.
+        """
+        self._cap.set(cv2.CAP_PROP_AUTOFOCUS, 1 if enabled else 0)
+
+    def set_focus(self, value: int) -> None:
+        """Fixe une valeur de mise au point manuelle (best-effort).
+
+        L'échelle de `value` dépend entièrement du pilote et de l'objectif — il n'y a pas
+        d'unité universelle. Elle se détermine à l'œil avec `tests/demo_camera.py --focus`,
+        à la distance de capture réelle de la machine.
+        """
+        self._cap.set(cv2.CAP_PROP_FOCUS, value)
 
     def capture(self, flush_frames: int = None) -> np.ndarray:
         """Capture une image FRAÎCHE et la retourne sous forme de tableau numpy BGR.
