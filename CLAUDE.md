@@ -115,8 +115,6 @@ Ajouts fonctionnels :
 
 Fichiers modifiés :
 - ... (nouveau / modifié)
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1324,9 +1322,11 @@ qu'un autre. C'est ici que va le "comment" et le "pourquoi" détaillé.>
 Fichiers modifiés :
 - <fichier> (nouveau / modifié / supprimé) : <brève description du changement dans ce fichier>
 - ...
-
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 ```
+
+> **Pas de signature Claude.** Aucune ligne `Co-Authored-By: Claude ...` dans les commits,
+> ni aucune mention/signature Claude dans un document écrit (`CLAUDE.md`, `CONCEPTION.md`,
+> manuels...) — demandé explicitement le 2026-08-25.
 
 ### Style général
 
