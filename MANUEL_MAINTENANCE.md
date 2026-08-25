@@ -318,6 +318,7 @@ Paramètres surchargeables (voir `modules/config.py` pour les valeurs par défau
 | `machine_travel_x_max_mm` / `_y_` / `_z_` | Bornes du domaine atteignable, pour le contrôle de course fait avant chaque dépose. ⚠️ Valeurs actuelles = dimensions **catalogue** d'une Geeetech I3, **jamais relevées** (action `M11`). Une valeur trop **grande** laisse passer un dépassement réel : c'est le sens dangereux |
 | `dry_run_z_clearance_mm` | Marge ajoutée à la hauteur du homing pour la **dépose à blanc** (défaut 2,0). Constatée nécessaire le 2026-08-04 : à la hauteur du homing seule, la pointe passe trop près du dessus des zones |
 | `camera_flush_frames` | Nombre d'images jetées avant celle qu'on garde, à chaque capture (défaut 5). Voir section 4.7 |
+| `camera_autofocus_off` / `camera_focus_value` | Mise au point manuelle. Défaut `false` — sans effet sur une caméra sans autofocus (Philips SPC1330NC). Voir section 4.11 |
 
 `assets/camera_calibration.npz` (coefficients de distorsion objectif) est **gitignoré**
 lui aussi depuis la session v0.1 : il dépend du capteur/objectif physique exact de
@@ -539,6 +540,47 @@ le même nom. `Reporter._chemin_libre()` suffixe désormais plutôt que d'écras
 ⚠️ **Règle générale** : tout chemin de sortie du projet doit être calculé depuis
 `os.path.dirname(__file__)`, jamais relatif au répertoire courant. Un fichier écrit au
 mauvais endroit ne provoque aucune erreur — il disparaît simplement de la vue.
+
+### 4.11 Les 4 marqueurs sont bien vus mais l'homographie ressort fausse en vue oblique
+
+**Symptôme constaté sur la CNC le 2026-08-25** (caméra DFRobot FIT0729, montée
+**décalée** du plateau et à ~45°, contrairement à la Geeetech où elle est fixe et
+quasi verticale au-dessus) : les zones de dépose détectées ne correspondent pas au
+plateau réel, l'image redressée ressort plus petite et déformée.
+
+**Deux causes distinctes à distinguer, dans cet ordre :**
+
+**(a) Mode 2-3 marqueurs (repli).** `compute_homography_approx()` utilise
+`cv2.estimateAffinePartial2D`, qui n'ajuste qu'une **similitude** (rotation, échelle
+uniforme, translation) — 4 degrés de liberté, aucune correction de perspective. C'est le
+mode nominal sur la Geeetech, où l'angle de vue quasi vertical rend la perspective
+négligeable. **Il ne peut structurellement pas corriger une vue oblique à 45°** : viser le
+mode 4 marqueurs (`compute_homography()`, une vraie transformation projective) comme cas
+nominal sur toute machine à vue oblique.
+
+**(b) Autofocus qui refait le point à chaque capture.** Même avec 4 marqueurs vus, une
+caméra à autofocus logiciel (ex. FIT0729) peut flouter transitoirement l'image au moment
+de la capture — les coins ArUco perdent en précision. Négligeable en vue verticale
+(l'erreur de coin se traduit par un déplacement minime), amplifié en vue oblique. Deux
+nouvelles clés dans `local_config.json` (voir section 2) :
+
+```json
+"camera_autofocus_off": true,
+"camera_focus_value": 60
+```
+
+`camera_focus_value` se détermine **empiriquement**, à la distance de capture réelle, avec :
+
+```bash
+python tests/demo_camera.py --focus
+```
+
+Flèches Haut/Bas pour ajuster en direct (la fenêtre affiche la valeur courante dans son
+titre) jusqu'à ce que les marqueurs soient nets à l'écran. Aucune formule ne donne cette
+valeur à l'avance : elle dépend du pilote et de l'objectif.
+
+⚠️ Sans effet sur une caméra sans autofocus (Philips SPC1330NC de la Geeetech) : les deux
+clés valent `false` / `0` par défaut, `Camera.__init__` ne touche alors à rien.
 
 ## 5. Lancer les tests
 
