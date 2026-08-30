@@ -221,6 +221,18 @@ def test_une_zone_au_mauvais_format_est_ecartee_sans_intervention(
     assert ecran._vue._selection == set()
 
 
+def test_les_reglages_par_defaut_sont_ceux_de_la_soutenance(ecran) -> None:
+    """Les valeurs affichées à l'ouverture de l'écran, avant toute saisie.
+
+    Les nombres sont écrits en dur et non repris des constantes du module : un test qui
+    relit la même constante que le code passerait quelle que soit sa valeur, et ne dirait
+    donc rien. Ici, changer un défaut doit faire échouer ce test — c'est le but.
+    """
+    assert ecran._spin_cycles.value() == 1      # un seul plateau, pas de boucle sans fin
+    assert ecran._spin_pause.value() == 2       # 2 s entre deux cycles
+    assert ecran._case_a_blanc.isChecked()      # aucune extrusion tant que M3 n'est pas faite
+
+
 def test_marqueurs_insuffisants_ne_selectionne_rien(ecran) -> None:
     """Une photo sans marqueur ne doit pas produire de trajectoire, mais un message."""
     image_vide = np.full((_HAUTEUR, _LARGEUR, 3), 240, dtype=np.uint8)

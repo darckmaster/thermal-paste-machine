@@ -557,9 +557,10 @@ Une fois « Démarrer la boucle » appuyé, **il n'y a plus rien à toucher**.
 2. Vérifier les quatre réglages de la ligne du haut :
    - **Plateau** : le fichier à rejouer. **AIVC est présélectionné** s'il existe.
    - **Pause (s)** : le temps d'arrêt entre deux cycles, pendant lequel la photo de fin
-     reste affichée. 10 s par défaut ; `0` enchaîne sans pause.
-   - **Cycles** : combien de cycles enchaîner. **`0` = sans fin**, jusqu'à ce que vous
-     arrêtiez.
+     reste affichée. **2 s par défaut** ; `0` enchaîne sans pause.
+   - **Cycles** : combien de cycles enchaîner. **1 par défaut** — le mode s'arrête donc
+     de lui-même après un plateau. Mettre **`0` pour une boucle sans fin**, jusqu'à ce
+     que vous arrêtiez.
    - **Dépose à blanc** : cochée par défaut — voir l'avertissement ci-dessous.
 3. Appuyer sur **« Démarrer la boucle »**. La configuration se verrouille : elle ne peut
    plus être modifiée en cours de route, pour que l'écran ne mente jamais sur ce que la

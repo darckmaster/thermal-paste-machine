@@ -79,9 +79,16 @@ ETAT_ATTENTE = "attente"        # compte à rebours entre deux cycles
 # signalent un problème que la boucle ne réglera pas en insistant.
 MAX_ECHECS_CONSECUTIFS = 3
 
-# Pause par défaut entre deux cycles, en secondes. Assez pour qu'un spectateur voie la
-# photo de fin et que l'orateur puisse commenter, assez court pour ne pas créer un blanc.
-PAUSE_DEFAUT_S = 10
+# Pause par défaut entre deux cycles, en secondes. Volontairement courte : le temps mort
+# d'un cycle est déjà occupé par les trois homings, et un blanc supplémentaire devant un
+# jury se remarque bien plus qu'il ne sert.
+PAUSE_DEFAUT_S = 2
+
+# Nombre de cycles par défaut. Un seul : le mode s'arrête donc de lui-même après un
+# plateau, et il faut une action délibérée pour le faire tourner en boucle. Une machine
+# qui repart toute seule alors qu'on la croyait finie est une mauvaise surprise ; mettre
+# 0 dans le champ redonne la boucle sans fin.
+CYCLES_DEFAUT = 1
 
 # Produit présélectionné à l'ouverture de l'écran, s'il existe dans les préparations.
 PRODUIT_PAR_DEFAUT = "AIVC"
@@ -178,7 +185,7 @@ class ScreenShowroom(QWidget):
         config.addWidget(QLabel("Cycles (0 = sans fin) :"))
         self._spin_cycles = QSpinBox()
         self._spin_cycles.setRange(0, 999)
-        self._spin_cycles.setValue(0)
+        self._spin_cycles.setValue(CYCLES_DEFAUT)
         self._spin_cycles.setMinimumHeight(44)
         config.addWidget(self._spin_cycles)
 
