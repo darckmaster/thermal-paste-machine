@@ -465,9 +465,16 @@ class MainApp(QMainWindow):
             self._camera = None
             message = f"Camera {device_index} indisponible : {e}"
 
-        # Redistribuer la nouvelle référence (ou None) aux deux écrans concernés
+        # Redistribuer la nouvelle référence (ou None) à TOUS les écrans qui photographient.
+        # ⚠️ Les trois derniers manquaient : ils conservaient l'objet Camera libéré
+        # juste au-dessus, et leur première capture après un changement de caméra
+        # échouait — alors que l'aperçu de l'écran 1, lui, fonctionnait. Symptôme
+        # trompeur, et sur le chemin le plus emprunté le jour d'une démonstration.
         self._screen_capture.set_camera(self._camera)
         self._screen_calibration.set_camera(self._camera)
+        self._screen_plateau.set_camera(self._camera)
+        self._screen_execution.set_camera(self._camera)
+        self._screen_showroom.set_camera(self._camera)
 
         # Relancer l'aperçu : on est forcément sur l'écran 1, seul écran à porter la liste
         self._screen_capture.start_camera()
