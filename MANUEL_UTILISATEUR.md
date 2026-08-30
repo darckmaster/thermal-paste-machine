@@ -530,3 +530,99 @@ pour corriger un cadrage repart pour un homing complet.
 Si aucune machine n'est disponible, le logiciel **demande** s'il faut photographier quand
 même — « Non » par défaut. Vous pouvez accepter : la photo sera prise à la position
 actuelle, et le message vous le rappellera à côté du diagnostic.
+
+---
+
+## 11. Écran « Mode démonstration » — le cycle en boucle
+
+> **Écran présent uniquement dans la release de soutenance** (branche `v0.5.2-showroom`).
+> Il n'existe pas sur `master`.
+
+### À quoi il sert
+
+Pendant une soutenance, l'orateur parle et répond aux questions : il ne peut pas en même
+temps conduire la machine écran par écran. Ce mode enchaîne donc **tout seul, en boucle**,
+le cycle complet de l'écran « Lancer une dépose » :
+
+```
+homing → position de prise de vue → photo → détection des zones →
+sélection automatique des zones valides → dépose → photo de fin → pause → (on recommence)
+```
+
+Une fois « Démarrer la boucle » appuyé, **il n'y a plus rien à toucher**.
+
+### Marche à suivre
+
+1. Sur l'écran d'accueil, appuyer sur **« Mode démonstration »**.
+2. Vérifier les quatre réglages de la ligne du haut :
+   - **Plateau** : le fichier à rejouer. **AIVC est présélectionné** s'il existe.
+   - **Pause (s)** : le temps d'arrêt entre deux cycles, pendant lequel la photo de fin
+     reste affichée. 10 s par défaut ; `0` enchaîne sans pause.
+   - **Cycles** : combien de cycles enchaîner. **`0` = sans fin**, jusqu'à ce que vous
+     arrêtiez.
+   - **Dépose à blanc** : cochée par défaut — voir l'avertissement ci-dessous.
+3. Appuyer sur **« Démarrer la boucle »**. La configuration se verrouille : elle ne peut
+   plus être modifiée en cours de route, pour que l'écran ne mente jamais sur ce que la
+   machine est en train de faire.
+
+### Ce que le jury voit à l'écran
+
+- la **photo du plateau** avec les zones retenues en vert et les cordons reportés en
+  orange — donc exactement ce qui va être déposé, et où ;
+- une **barre de progression** qui suit le chemin parcouru ;
+- une ligne de compteurs : numéro de cycle, cycles réussis, temps du cycle en cours,
+  temps total depuis le démarrage ;
+- une ligne d'état qui dit ce que fait la machine à cet instant.
+
+### ⚠️ La dépose à blanc reste cochée par défaut
+
+En dépose à blanc, la machine parcourt **exactement le même chemin**, mais n'extrude rien
+et **ne descend jamais** : elle reste à la hauteur du homing, augmentée de 2 mm.
+
+C'est délibéré : la hauteur Z de la pointe de seringue n'est pas encore mesurée (action
+`M3`). Une dépose réelle enchaînée en boucle, sans surveillance, planterait la buse dans
+les pièces. **Ne décochez cette case qu'après avoir réglé et vérifié la hauteur Z**, et
+jamais pour une démonstration où vous avez le dos tourné.
+
+### Les deux boutons d'arrêt
+
+| Bouton | Effet | Quand s'en servir |
+|---|---|---|
+| **Arrêter après ce cycle** | Le plateau en cours va à son terme, puis la boucle s'arrête. La machine reste utilisable. | Arrêt normal en fin de démonstration |
+| **ARRET IMMEDIAT** | Coupe tous les actionneurs sur-le-champ (`M112`). **La machine doit être redémarrée** avant tout nouveau cycle. | Seulement en cas de problème |
+
+L'arrêt immédiat demande une confirmation, avec « Non » par défaut. Après lui, la boucle
+ne repart pas d'elle-même : elle affiche le rappel qu'il faut redémarrer la machine.
+
+### Ce que la boucle fait quand quelque chose rate
+
+Un cycle raté (plateau non reconnu, quelqu'un passe devant la caméra, capture manquée)
+n'arrête pas la démonstration : le motif est affiché, et le cycle suivant repart après la
+pause. En revanche, **trois échecs consécutifs arrêtent la boucle** — une machine qui
+s'agite en vain devant un jury est pire qu'une machine à l'arrêt.
+
+Le compteur d'échecs est remis à zéro dès qu'un cycle réussit.
+
+### Différences avec « Lancer une dépose »
+
+| | Lancer une dépose | Mode démonstration |
+|---|---|---|
+| Choix du plateau | à chaque cycle | une fois, avant de démarrer |
+| Sélection des zones | au doigt, par l'opérateur | automatique : **toutes** les zones valides |
+| Confirmation avant mouvement | oui, une modale | non — elle attendrait un clic |
+| Bilan de fin, rapport PDF | oui | non : la boucle enchaîne |
+| Nombre de plateaux | un | en boucle |
+
+**Conséquence à connaître** : le mode démonstration suppose que **toutes** les zones
+valides du plateau portent un produit. Il ne peut pas savoir qu'une zone est vide — en
+dépose à blanc c'est sans effet, mais avec de la pâte, une zone vide serait salie.
+
+Les contrôles de sûreté du cycle manuel sont conservés à l'identique : contrôle de format
+des zones, contrôle de course avant tout mouvement, et arrêt d'urgence accessible en
+permanence.
+
+### Combien de temps dure un cycle
+
+Chaque cycle comporte **trois homings** (mise en position, dépose, retour pour la photo de
+fin), soit 1,5 à 3 minutes de homing à eux seuls, auxquels s'ajoutent le parcours du
+plateau et la pause choisie. Prévoyez-le en réglant votre temps de parole.

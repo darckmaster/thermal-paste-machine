@@ -704,3 +704,93 @@ affiché à l'écran.
 traitement, `json.dumps(indent=2)` éclaterait chaque `[x, y]` sur six lignes et un
 plateau réaliste ferait plusieurs centaines de lignes de crochets quasi vides. Le
 résultat reste du JSON strictement standard.
+
+---
+
+## 7. Mode démonstration (branche `v0.5.2-showroom` uniquement)
+
+> Ce chapitre ne concerne **que la release de soutenance**. Le module
+> `gui/screen_showroom.py` n'existe pas sur `master`.
+
+### Ce que c'est, et ce que ce n'est pas
+
+`ScreenShowroom` enchaîne en boucle le cycle de `ScreenExecution`. **Ce n'est pas un
+second moteur de dépose** : le worker de dépose (`DepositWorker`), la mise en position
+(`PhotoPositionRunner`), la détection des zones, le contrôle de format
+(`controler_format_des_zones`) et le contrôle de course sont **repris tels quels**.
+
+Seules les **décisions de l'opérateur** sont remplacées : choix du fichier (fait une fois
+avant de démarrer), sélection des zones (toutes les valides), et les trois modales du
+cycle manuel (supprimées).
+
+⚠️ **Règle à respecter pour toute modification** : ce qui est commun aux deux écrans doit
+rester dans un seul endroit. Le contrôle de format a été sorti de `ScreenExecution` en
+fonction de module pour cette raison précise — le projet a déjà payé une règle dupliquée
+entre deux écrans (le choix d'homographie, regroupé au lot C2bis après avoir divergé).
+
+### La contrainte qui a dicté la structure : aucune modale
+
+Une fenêtre modale attend un clic. En boucle automatique, elle arrêterait la
+démonstration à la première itération. D'où :
+
+- un seul écran, tout l'état visible dessus (barre de progression, compteurs, état) ;
+- des transitions déclenchées par des **signaux**, jamais par un `exec_()` ;
+- un automate explicite (`ETAT_ARRET`, `ETAT_POSITION`, `ETAT_ANALYSE`, `ETAT_DEPOSE`,
+  `ETAT_PHOTO_FIN`, `ETAT_ATTENTE`) plutôt qu'une poignée de booléens, qui
+  autoriseraient des combinaisons impossibles — et c'est là que se logent les doubles
+  lancements sur le port série.
+
+La seule modale de l'écran est la **confirmation d'arrêt immédiat**, qui par définition
+n'arrive que lorsqu'un humain appuie sur le bouton.
+
+### Trois pièges propres à la mise en boucle
+
+Ils ne se posent pas dans le cycle manuel, qui ne s'exécute qu'une fois :
+
+1. **Threads recréés à chaque cycle.** Remplacer `self._thread_depose` lâche la dernière
+   référence Python sur le précédent : s'il n'est pas complètement sorti, le
+   ramasse-miettes détruit un `QThread` vivant. D'où le `wait(5000)` avant d'en créer un
+   nouveau — sur un thread déjà terminé, il rend la main immédiatement.
+2. **Récursion infinie avec une pause à 0.** L'enchaînement passe par
+   `QTimer.singleShot(0, ...)` et non par un appel direct : un appel direct empilerait
+   les cycles dans la pile d'appels Python, qui déborderait après quelques centaines
+   d'itérations — soit après une nuit de démonstration.
+3. **`PhotoPositionRunner.start()` ne fait rien si son thread précédent tourne encore**,
+   et le fait en silence. La boucle attendrait alors un signal qui n'arrivera jamais.
+   D'où le garde-fou en tête de `_cycle_suivant()`, qui réessaie au lieu de lancer dans
+   le vide.
+
+### Les trois arrêts, et pourquoi ils sont trois
+
+| Arrêt | Déclencheur | Effet |
+|---|---|---|
+| Nombre de cycles atteint | compteur | fin normale |
+| `MAX_ECHECS_CONSECUTIFS` (3) | échecs de suite | fin, message de vérification |
+| Arrêt immédiat (`M112`) | bouton, ou `shutdown()` | fin, **machine à redémarrer** |
+
+Après un `M112`, Marlin est hors service jusqu'au redémarrage : la boucle **doit**
+s'arrêter, sinon l'écran afficherait une cascade d'erreurs. C'est traité dans
+`_on_thread_depose_fini()`, sur le statut `"stop"`.
+
+`shutdown()` est appelé par `MainApp.closeEvent` : fermer l'application pendant la boucle
+laisserait sinon le thread de dépose tourner, en retirant à l'opérateur l'accès au bouton
+d'arrêt — c'est le trou de sécurité connu du projet (dette L2 #1).
+
+### Dépose à blanc par défaut
+
+La case est cochée à l'ouverture de l'écran, et c'est un choix de sûreté : la hauteur Z
+de la pointe de seringue n'est pas mesurée (action `M3`). Une dépose réelle enchaînée en
+boucle sans surveillance planterait la buse dans les pièces.
+
+Le test `test_en_depose_a_blanc_la_boucle_n_extrude_pas_et_ne_descend_pas` vérifie que ce
+choix arrive bien jusqu'au planner : le mode court-circuitant la modale de confirmation
+qui portait ce réglage, rien d'autre ne le garantirait.
+
+### Tests
+
+`tests/test_screen_showroom.py` — 16 tests, dont un **enchaînement complet de deux
+cycles** avec machine et caméra simulées. Tous ont été validés **par mutation** (11
+mutations, toutes attrapées) : un test qui reste vert sur du code volontairement cassé ne
+prouve rien. Une première version du test « le compteur d'échecs est remis à zéro » a
+justement été trouvée **inerte** par ce moyen — elle appelait `demarrer()`, qui remet
+lui-même le compteur à zéro.
