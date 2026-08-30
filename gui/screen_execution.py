@@ -71,6 +71,44 @@ _BLANC = (255, 255, 255)
 _TOLERANCE_FORMAT_MM = 5.0
 
 
+def controler_format_des_zones(zones: list, reference_zone,
+                               tolerance_mm: float = _TOLERANCE_FORMAT_MM) -> dict:
+    """Écarte les zones dont le format ne correspond pas au produit enregistré.
+
+    La photo fait foi pour la GÉOMÉTRIE — le plateau a pu bouger ou être remonté depuis
+    l'enregistrement, et c'est la position vue maintenant qui compte. Mais les cordons ont
+    été tracés pour CE produit-là : sur une zone d'un autre format, ils déborderaient. Le
+    contrôle porte donc sur la taille, pas sur la position.
+
+    Retourne un dictionnaire `id de zone → motif de refus`, et **marque les zones
+    refusées** en leur ajoutant l'anomalie `format_incompatible` : elles deviennent ainsi
+    invalides, donc non sélectionnables et affichées en rouge, sans cas particulier
+    ailleurs dans le code.
+
+    Fonction de module et non méthode d'écran : le cycle manuel (`ScreenExecution`) et le
+    mode démonstration (`ScreenShowroom`) doivent appliquer **exactement** le même
+    contrôle. Ce projet a déjà payé une règle dupliquée entre deux écrans — le choix
+    d'homographie, regroupé au lot C2bis après avoir divergé.
+    """
+    if reference_zone is None:
+        return {}
+
+    largeur_ref, hauteur_ref = reference_zone.size_mm
+    motifs = {}
+    for zone in zones:
+        if not zone.is_valid:
+            continue
+        ecart = max(abs(zone.size_mm[0] - largeur_ref),
+                    abs(zone.size_mm[1] - hauteur_ref))
+        if ecart > tolerance_mm:
+            motifs[zone.id_top_left] = (
+                f"format {zone.size_mm[0]:.0f}x{zone.size_mm[1]:.0f} mm, "
+                f"attendu {largeur_ref:.0f}x{hauteur_ref:.0f} mm"
+            )
+            zone.anomalies.append("format_incompatible")
+    return motifs
+
+
 # ===========================================================================
 # Vue de sélection — la photo du plateau, zones cliquables
 # ===========================================================================
@@ -607,34 +645,9 @@ class ScreenExecution(QWidget):
         self._status.setText(self._texte_selection())
 
     def _controler_format(self, zones: list) -> dict:
-        """Écarte les zones dont le format ne correspond pas au produit enregistré.
-
-        La photo fait foi pour la GÉOMÉTRIE — le plateau a pu bouger ou être remonté
-        depuis l'enregistrement, et c'est la position vue maintenant qui compte. Mais les
-        cordons ont été tracés pour CE produit-là : sur une zone d'un autre format, ils
-        déborderaient. Le contrôle porte donc sur la taille, pas sur la position.
-        """
+        """Contrôle de format des zones vues, pour CETTE préparation."""
         reference = self._preparation.reference_zone if self._preparation else None
-        if reference is None:
-            return {}
-
-        largeur_ref, hauteur_ref = reference.size_mm
-        motifs = {}
-        for zone in zones:
-            if not zone.is_valid:
-                continue
-            ecart = max(abs(zone.size_mm[0] - largeur_ref),
-                        abs(zone.size_mm[1] - hauteur_ref))
-            if ecart > _TOLERANCE_FORMAT_MM:
-                motifs[zone.id_top_left] = (
-                    f"format {zone.size_mm[0]:.0f}x{zone.size_mm[1]:.0f} mm, "
-                    f"attendu {largeur_ref:.0f}x{hauteur_ref:.0f} mm"
-                )
-                # Marquer la zone comme non sélectionnable en la sortant des valides :
-                # l'anomalie est ajoutée à la zone elle-même pour que l'affichage la
-                # montre en rouge, comme les autres défauts, sans cas particulier.
-                zone.anomalies.append("format_incompatible")
-        return motifs
+        return controler_format_des_zones(zones, reference)
 
     def _zones_selectionnables(self) -> list:
         return [z for z in self._zones if z.is_valid]

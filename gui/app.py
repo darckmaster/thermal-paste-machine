@@ -28,6 +28,7 @@ from gui.screen_calibration import ScreenCalibration
 from gui.screen_plateau import ScreenPlateau
 from gui.screen_cordons import ScreenCordons
 from gui.screen_execution import ScreenExecution
+from gui.screen_showroom import ScreenShowroom
 
 
 # Feuille de style globale appliquée à toute l'application
@@ -128,6 +129,7 @@ class MainApp(QMainWindow):
         self._screen_plateau = ScreenPlateau()
         self._screen_cordons = ScreenCordons()
         self._screen_execution = ScreenExecution()
+        self._screen_showroom = ScreenShowroom()
 
         # Ajouter les écrans à la pile — l'index correspond à l'ordre d'ajout
         self._stack.addWidget(self._screen_capture)     # index 0
@@ -138,6 +140,7 @@ class MainApp(QMainWindow):
         self._stack.addWidget(self._screen_plateau)     # index 5
         self._stack.addWidget(self._screen_cordons)     # index 6
         self._stack.addWidget(self._screen_execution)   # index 7
+        self._stack.addWidget(self._screen_showroom)    # index 8
 
         # Fournir la machine à screen_capture pour le bouton Homing
         self._screen_capture.set_machine(self._machine)
@@ -146,6 +149,8 @@ class MainApp(QMainWindow):
         # ... et à la création de plateau, qui s'en sert pour se mettre en position de
         # prise de vue avant chaque photo (demandé le 2026-08-04)
         self._screen_plateau.set_machine(self._machine)
+        # ... et au mode démonstration, qui rejoue le même cycle en boucle
+        self._screen_showroom.set_machine(self._machine)
 
         # Caméra unique partagée entre screen_capture et screen_calibration
         # → évite un release+open de 1-2 s à chaque changement d'écran
@@ -160,6 +165,7 @@ class MainApp(QMainWindow):
         self._screen_calibration.set_camera(self._camera)
         self._screen_plateau.set_camera(self._camera)
         self._screen_execution.set_camera(self._camera)
+        self._screen_showroom.set_camera(self._camera)
 
         # Remplir les listes déroulantes de choix du matériel de l'écran 1. À faire APRÈS
         # set_machine() et set_camera() : les listes présélectionnent le port et la caméra
@@ -191,6 +197,8 @@ class MainApp(QMainWindow):
         self._screen_cordons.back_requested.connect(self._go_from_cordons_to_plateau)
         self._screen_capture.deposit_requested.connect(self._go_to_execution)
         self._screen_execution.back_requested.connect(self._go_from_execution_to_capture)
+        self._screen_capture.showroom_requested.connect(self._go_to_showroom)
+        self._screen_showroom.back_requested.connect(self._go_from_showroom_to_capture)
 
         # Changements de matériel demandés depuis l'écran 1 — appliqués ici, car MainApp
         # est propriétaire de la Camera et de la Machine partagées par tous les écrans
@@ -301,6 +309,24 @@ class MainApp(QMainWindow):
 
     def _go_from_execution_to_capture(self) -> None:
         """Retour à l'accueil à la fin du cycle, ou après une annulation."""
+        self._go_to_capture()
+
+    def _go_to_showroom(self) -> None:
+        """Basculer vers le mode démonstration (cycle automatique en boucle).
+
+        Même précaution que pour l'écran d'exécution : l'aperçu de l'accueil est coupé
+        avant, car la boucle prend ses propres photos et deux lectures concurrentes sur
+        le même flux se disputeraient les images.
+
+        La liste des plateaux est rafraîchie à chaque entrée : un plateau enregistré
+        entre-temps doit y figurer sans avoir à redémarrer l'application.
+        """
+        self._screen_capture.stop_camera()
+        self._screen_showroom.refresh_preparations()
+        self._stack.setCurrentIndex(8)
+
+    def _go_from_showroom_to_capture(self) -> None:
+        """Retour à l'accueil depuis le mode démonstration."""
         self._go_to_capture()
 
     # ------------------------------------------------------------------ reprise au démarrage
@@ -470,6 +496,11 @@ class MainApp(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Nettoyer les ressources avant de fermer la fenêtre."""
+        # ⚠️ D'ABORD arrêter la boucle de démonstration, si elle tourne. Sans cela, le
+        # thread de dépose survivrait à la fenêtre : la machine continuerait de bouger
+        # alors que l'opérateur n'a plus aucun bouton d'arrêt sous la main.
+        self._screen_showroom.shutdown()
+
         # Arrêter les timers d'aperçu des trois écrans qui utilisent la caméra
         self._screen_capture.stop_camera()
         self._screen_calibration.stop_camera()

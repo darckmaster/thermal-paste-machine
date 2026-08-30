@@ -81,6 +81,13 @@ class ScreenCapture(QWidget):
     # zones, dépose, bilan, retour ici.
     deposit_requested = pyqtSignal()
 
+    # Demande d'entrée dans le mode démonstration : le même cycle, mais enchaîné tout
+    # seul en boucle. Destiné aux soutenances, où l'orateur parle au lieu de conduire la
+    # machine. Écran distinct et non option du cycle normal : un cycle automatique n'a
+    # aucune des modales de confirmation du cycle manuel, et mélanger les deux dans le
+    # même écran ferait dépendre la sûreté d'un booléen.
+    showroom_requested = pyqtSignal()
+
     # Signaux de changement de matériel. L'écran ne remplace PAS lui-même la caméra ou
     # le port : les objets Camera et Machine appartiennent à MainApp (qui les partage
     # avec les autres écrans), donc seul MainApp peut les échanger proprement. L'écran
@@ -239,6 +246,15 @@ class ScreenCapture(QWidget):
         self._btn_depose.setProperty("role", "success")
         self._btn_depose.clicked.connect(self.deposit_requested)
         homing_layout.addWidget(self._btn_depose)
+
+        # Mode démonstration — le même cycle, enchaîné en boucle sans intervention.
+        # Volontairement en "secondary" et non en "success" : ce n'est pas le chemin de
+        # production, et il ne doit pas se confondre avec le bouton voisin, qui lui
+        # s'arrête après un seul plateau.
+        self._btn_showroom = QPushButton("Mode démonstration")
+        self._btn_showroom.setProperty("role", "secondary")
+        self._btn_showroom.clicked.connect(self.showroom_requested)
+        homing_layout.addWidget(self._btn_showroom)
 
         layout.addLayout(homing_layout)
 
